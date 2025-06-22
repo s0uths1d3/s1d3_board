@@ -17,6 +17,7 @@ const formatDate = (dateString: string): string => {
     const now = new Date();
 
     if (!dateString) {
+        console.log(dateString)
         return '无效日期';
     }
 
@@ -73,5 +74,31 @@ const formatDate = (dateString: string): string => {
     }
 };
 
-export { formatDate };
+function formatTimestamp(timestamp: number): string {
+    // 将毫秒级的时间戳转换为秒级的时间戳
+    const seconds = Math.floor(timestamp / 1000);
+    const date = new Date(seconds * 1000);
 
+    // 获取年份
+    const year = date.getFullYear();
+
+    // 获取月份（要加1，因为月份是从0开始的），并补零
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+
+    // 获取日，并补零
+    const day = String(date.getDate()).padStart(2, '0');
+
+    // 获取小时，并补零
+    const hours = String(date.getHours()).padStart(2, '0');
+
+    // 获取分钟，并补零
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+
+    // 获取秒，并补零
+    const secs = String(date.getSeconds()).padStart(2, '0');
+
+    // 组合成“年-月-日 时:分:秒”的格式
+    return `${year}-${month}-${day} ${hours}:${minutes}:${secs}`;
+}
+
+export { formatTimestamp };

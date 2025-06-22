@@ -1,19 +1,29 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import type { Command } from './Command';
+import type { Command } from '../Command';
+import { ref } from 'vue';
 
-let isWindowVisible = true;
+let isWindowVisible = ref(true);
 
 export class ToggleWindowCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {
         if (event?.state !== 'Pressed') return;
 
         const win = getCurrentWindow();
-        isWindowVisible = !isWindowVisible;
-
-        if (isWindowVisible) {
-            await win.show();
-        } else {
-            await win.hide();
+        isWindowVisible.value = !isWindowVisible.value;
+        try {
+            if (isWindowVisible.value) {
+                await win.show();
+                await win.setAlwaysOnTop(true);
+                await win.setFocus();
+            } else {
+                await win.hide();
+            }
+        } catch (error) {
+            console.error('Error toggling window visibility:', error);
         }
     }
+}
+
+export function setIsWindowVisible(is: boolean) {
+    isWindowVisible.value = is;
 }

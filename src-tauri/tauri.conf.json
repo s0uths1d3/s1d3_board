@@ -1,20 +1,20 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "s1de_borad_rust",
-  "version": "0.1.0",
-  "identifier": "com.tauri.app",
+  "productName": "s1de_board",
+  "version": "0.0.1",
+  "identifier": "top.s1de.s1de-board",
   "build": {
-    "frontendDist": "../dist/public",
+    "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run generate"
   },
   "app": {
     "windows": [
       {
-        "title": "nuxt-app",
-        "width": 800,
-        "height": 600,
+        "title": "s1de board",
+        "width": 854,
+        "height": 480,
         "resizable": true,
         "fullscreen": false
       }
