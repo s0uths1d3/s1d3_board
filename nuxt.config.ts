@@ -18,7 +18,7 @@ export default defineNuxtConfig({
     envPrefix: ['VITE_', 'TAURI_'],
     server: {
       // Tauri requires a consistent port
-      strictPort: true,
+      strictPort: false,
     }
   },
   nitro: {
