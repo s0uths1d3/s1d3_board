@@ -1,26 +1,48 @@
 <script setup lang="ts">
-import type { ClipboardData } from '~/src/ClipboardData';
-import { formatTimestamp } from "~/src/utils/formatDate";
-import { ref, onMounted, onBeforeUnmount } from 'vue';
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { setIsWindowVisible } from "~/src/commands/global/ToggleWindowCommand";
+import type {ClipboardData} from '~/src/ClipboardData';
+import {formatTimestamp} from "~/src/utils/formatDate";
+import {onBeforeUnmount, onMounted, ref} from 'vue';
+import {getCurrentWindow} from "@tauri-apps/api/window";
+import {setIsWindowVisible} from "~/src/commands/global/ToggleWindowCommand";
 import {
-  selectedRowIndex,
-  dataLength,
-  ArrowUpTargetMovementCommand,
   ArrowDownTargetMovementCommand,
+  ArrowUpTargetMovementCommand,
+  dataLength,
+  selectedRowIndex,
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
-import {
-  fetchClipboardData,
-  updateFavorite,
-  increaseUseCount
-} from '~/src/db/dbSeivice';
+import {fetchClipboardData, increaseUseCount, updateFavorite} from '~/src/db/dbSeivice';
 
 const data = ref<ClipboardData[]>([]);
 const listElement = ref<HTMLElement | null>(null);
 
 let updateInterval: NodeJS.Timeout;
+
+const tooltip = ref({
+  visible: false,
+  text: '',
+  x: 0,
+  y: 0,
+});
+
+function showTooltip(index: number, text: string, event: MouseEvent) {
+  // 判断是否超出两行显示范围
+  const target = (event.currentTarget as HTMLElement).querySelector('span');
+  if (target && target.scrollHeight > target.clientHeight + 5) {
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    tooltip.value = {
+      visible: true,
+      text,
+      x: rect.left,
+      y: rect.bottom + 4,
+    };
+  }
+}
+
+function hideTooltip() {
+  tooltip.value.visible = false;
+}
+
 
 onMounted(async () => {
   await fetchData();
@@ -36,8 +58,7 @@ onBeforeUnmount(() => {
 
 async function fetchData() {
   try {
-    const result = await fetchClipboardData();
-    data.value = result;
+    data.value = await fetchClipboardData();
     dataLength.value = data.value.length;
     if (selectedRowIndex.value >= data.value.length) {
       selectedRowIndex.value = data.value.length - 1;
@@ -59,9 +80,13 @@ async function handleKeyDown(event: KeyboardEvent) {
     await new ArrowDownTargetMovementCommand().execute();
   } else if (event.key === 'Enter') {
     await increaseUseCount(data.value[selectedRowIndex.value].id);
-    getCurrentWindow().hide();
+    await getCurrentWindow().hide();
     setIsWindowVisible(false);
   }
+}
+
+async function handleDelete(value:number){
+  // 弹出提升提示框
 }
 </script>
 
@@ -73,13 +98,14 @@ async function handleKeyDown(event: KeyboardEvent) {
         v-for="(item, index) in data"
         :key="index"
         :class="{ 'bg-blue-200': index === selectedRowIndex }"
-        @click="selectRow(index)"
-    >
+        @click="selectRow(index)">
       <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 + '\t' }}</div>
       <div class="list-col-grow" style="height: 4em">
         <div
-            style="display: -webkit-box; -webkit-box-orient: vertical; line-clamp: 2; overflow: hidden; text-overflow: ellipsis; padding: 3px; word-wrap: break-word; white-space: pre-wrap;">
-          <span class="tabular-nums">{{ item.content.replace(/<\(b<>r\)>/g, '\n') }}</span>
+            style="position: relative"
+            @mouseenter="showTooltip(index, item.content, $event)"
+            @mouseleave="hideTooltip">
+          <span style="display: -webkit-box; -webkit-box-orient: vertical; line-clamp: 2; overflow: hidden; text-overflow: ellipsis; padding: 3px; word-wrap: break-word; white-space: pre-wrap;" class="tabular-nums">{{ item.content }}</span>
         </div>
         <div class="text-xs uppercase font-semibold opacity-60">Text
           {{ formatTimestamp(item.create_time) }}
@@ -101,8 +127,7 @@ async function handleKeyDown(event: KeyboardEvent) {
               fill="#ffffff"></path>
         </svg>
       </button>
-
-      <button class="btn btn-square btn-ghost">
+      <button class="btn btn-square btn-ghost" @click="handleDelete(item.id)">
         <svg class="size-[1.2em]" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg"
              p-id="4580">
           <path
@@ -112,6 +137,14 @@ async function handleKeyDown(event: KeyboardEvent) {
       </button>
     </li>
   </ul>
+  <div
+      v-if="tooltip.visible"
+      class="fixed max-w-[500px] bg-black shadow-lg p-3 rounded-lg text-sm leading-relaxed z-50"
+      :style="{ top: tooltip.y + 'px', left: tooltip.x + 'px' }"
+  >
+    {{ tooltip.text }}
+  </div>
+
   <div role="alert" class="alert alert-vertical sm:alert-horizontal fixed-center">
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info h-6 w-6 shrink-0">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -122,4 +155,5 @@ async function handleKeyDown(event: KeyboardEvent) {
       <button class="btn btn-sm btn-primary">确定</button>
     </div>
   </div>
+
 </template>
