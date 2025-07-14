@@ -28,6 +28,7 @@
     "active": true,
     "targets": "all",
     "icon": [
+      "icons/icon_64x64.ico",
       "icons/icon.png"
     ]
   }

@@ -26,7 +26,6 @@ const tooltip = ref({
 });
 
 function showTooltip(index: number, text: string, event: MouseEvent) {
-  // 判断是否超出两行显示范围
   const target = (event.currentTarget as HTMLElement).querySelector('span');
   if (target && target.scrollHeight > target.clientHeight + 5) {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -68,9 +67,9 @@ async function fetchData() {
   }
 }
 
-async function favorite(value: number) {
+async function favorite(id:number,value: number) {
   value = value === 0 ? 1 : 0;
-  await updateFavorite(data.value[selectedRowIndex.value].id, value);
+  await updateFavorite(id, value);
 }
 
 async function handleKeyDown(event: KeyboardEvent) {
@@ -86,7 +85,7 @@ async function handleKeyDown(event: KeyboardEvent) {
 }
 
 async function handleDelete(value:number){
-  // 弹出提升提示框
+
 }
 </script>
 
@@ -105,7 +104,11 @@ async function handleDelete(value:number){
             style="position: relative"
             @mouseenter="showTooltip(index, item.content, $event)"
             @mouseleave="hideTooltip">
-          <span style="display: -webkit-box; -webkit-box-orient: vertical; line-clamp: 2; overflow: hidden; text-overflow: ellipsis; padding: 3px; word-wrap: break-word; white-space: pre-wrap;" class="tabular-nums">{{ item.content }}</span>
+          <span
+              class="tabular-nums overflow-hidden text-ellipsis break-words whitespace-pre-wrap p-[3px]
+                   [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+            {{ item.content }}
+          </span>
         </div>
         <div class="text-xs uppercase font-semibold opacity-60">Text
           {{ formatTimestamp(item.create_time) }}
@@ -113,7 +116,7 @@ async function handleDelete(value:number){
           lastUse:{{ formatTimestamp(item.last_use) }}
         </div>
       </div>
-      <button class="btn btn-square btn-ghost" @click="favorite(item.is_favorite)">
+      <button class="btn btn-square btn-ghost" @click="favorite(item.id,item.is_favorite)">
         <svg v-if="item.is_favorite===0" class="size-[1.2em]" viewBox="0 0 1059 1024" version="1.1"
              xmlns="http://www.w3.org/2000/svg">
           <path
@@ -139,7 +142,7 @@ async function handleDelete(value:number){
   </ul>
   <div
       v-if="tooltip.visible"
-      class="fixed max-w-[500px] bg-black shadow-lg p-3 rounded-lg text-sm leading-relaxed z-50"
+      class="fixed max-w-[500px] bg-black shadow-lg p-3 rounded-lg text-sm leading-relaxed z-50 whitespace-pre-wrap tabular-nums"
       :style="{ top: tooltip.y + 'px', left: tooltip.x + 'px' }"
   >
     {{ tooltip.text }}
