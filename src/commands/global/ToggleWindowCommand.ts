@@ -4,6 +4,12 @@ import { ref } from 'vue';
 
 let isWindowVisible = ref(true);
 
+let listElement: HTMLElement | null = null;
+
+onMounted(() => {
+    listElement = document.querySelector('ul[listElement]');
+});
+
 export class ToggleWindowCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {
         if (event?.state !== 'Pressed') return;
@@ -20,6 +26,9 @@ export class ToggleWindowCommand implements Command {
             }
         } catch (error) {
             console.error('Error toggling window visibility:', error);
+        }
+        if (isWindowVisible.value && listElement) {
+            listElement.focus();
         }
     }
 }

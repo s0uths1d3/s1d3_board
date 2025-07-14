@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import type {ClipboardData} from '~/src/ClipboardData';
-import Database from "@tauri-apps/plugin-sql";
-import {formatTimestamp} from "~/src/utils/formatDate";
-import {ref, onMounted, onBeforeUnmount, watch} from 'vue';
-import {getCurrentWindow} from "@tauri-apps/api/window";
-import {setIsWindowVisible} from "~/src/commands/global/ToggleWindowCommand";
-
+import type { ClipboardData } from '~/src/ClipboardData';
+import { formatTimestamp } from "~/src/utils/formatDate";
+import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { setIsWindowVisible } from "~/src/commands/global/ToggleWindowCommand";
 import {
   selectedRowIndex,
   dataLength,
@@ -13,12 +11,16 @@ import {
   ArrowDownTargetMovementCommand,
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
+import {
+  fetchClipboardData,
+  updateFavorite,
+  increaseUseCount
+} from '~/src/db/dbSeivice';
 
 const data = ref<ClipboardData[]>([]);
 const listElement = ref<HTMLElement | null>(null);
 
 let updateInterval: NodeJS.Timeout;
-const db = await Database.load('sqlite:s1de_board.db');
 
 onMounted(async () => {
   await fetchData();
@@ -34,25 +36,20 @@ onBeforeUnmount(() => {
 
 async function fetchData() {
   try {
-    const result = await db.select(
-        "SELECT * FROM clipboard ORDER BY last_use DESC LIMIT 100",
-    );
-    data.value = result as ClipboardData[];
+    const result = await fetchClipboardData();
+    data.value = result;
     dataLength.value = data.value.length;
     if (selectedRowIndex.value >= data.value.length) {
       selectedRowIndex.value = data.value.length - 1;
     }
   } catch (err) {
-    console.log(err);
+    console.error(err);
   }
 }
 
 async function favorite(value: number) {
   value = value === 0 ? 1 : 0;
-  await db?.execute(
-      "UPDATE clipboard SET is_favorite = $2 WHERE id = $1",
-      [data.value[selectedRowIndex.value].id, value]
-  );
+  await updateFavorite(data.value[selectedRowIndex.value].id, value);
 }
 
 async function handleKeyDown(event: KeyboardEvent) {
@@ -61,19 +58,15 @@ async function handleKeyDown(event: KeyboardEvent) {
   } else if (event.key === 'ArrowDown') {
     await new ArrowDownTargetMovementCommand().execute();
   } else if (event.key === 'Enter') {
-    await db?.execute(
-        "UPDATE clipboard SET count = count + 1, last_use = $2 WHERE id = $1",
-        [data.value[selectedRowIndex.value].id, Math.floor(Date.now())]
-    ).then(() => {
-      getCurrentWindow().hide();
-      setIsWindowVisible(false);
-    });
+    await increaseUseCount(data.value[selectedRowIndex.value].id);
+    getCurrentWindow().hide();
+    setIsWindowVisible(false);
   }
 }
 </script>
 
 <template>
-  <ul ref="listElement" class="list bg-base-100 rounded-box shadow-md" style="outline: none" tabindex="0" @keydown="handleKeyDown">
+  <ul ref="listElement" id="listElement" class="list bg-base-100 rounded-box shadow-md" style="outline: none" tabindex="0" @keydown="handleKeyDown">
     <li class="p-4 pb-2 text-xs opacity-60 tracking-wide">Most history</li>
     <li
         class="list-row cursor-pointer"
@@ -119,13 +112,13 @@ async function handleKeyDown(event: KeyboardEvent) {
       </button>
     </li>
   </ul>
-  <div role="alert" class="alert alert-vertical sm:alert-horizontal fixed-center" >
+  <div role="alert" class="alert alert-vertical sm:alert-horizontal fixed-center">
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info h-6 w-6 shrink-0">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
     </svg>
     <span>确定要删除吗？</span>
     <div>
-      <button class="btn btn-sm" >取消</button>
+      <button class="btn btn-sm">取消</button>
       <button class="btn btn-sm btn-primary">确定</button>
     </div>
   </div>

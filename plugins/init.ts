@@ -26,8 +26,6 @@ const options = {
 
 await TrayIcon.new(options);
 
-
-
 const dbName = 'sqlite:s1de_board.db';
 export let db: Database;
 
