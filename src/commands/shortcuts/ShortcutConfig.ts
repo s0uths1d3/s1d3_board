@@ -1,5 +1,5 @@
 // src/shortcuts/ShortcutConfig.ts
-import type { Command } from '../commands/Command';
+import type { Command } from '../Command';
 
 export type ShortcutScope = 'global' | 'local';
 

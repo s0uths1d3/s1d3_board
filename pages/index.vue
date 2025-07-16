@@ -11,7 +11,9 @@ import {
   selectedRowIndex,
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
-import {fetchClipboardData, increaseUseCount, updateFavorite} from '~/src/db/dbSeivice';
+import {deleteClipboardData, fetchClipboardData, increaseUseCount, updateFavorite} from '~/src/db/dbSeivice';
+
+import { showSearch } from '~/src/commands/local/SearchCommand';
 
 const data = ref<ClipboardData[]>([]);
 const listElement = ref<HTMLElement | null>(null);
@@ -84,9 +86,39 @@ async function handleKeyDown(event: KeyboardEvent) {
   }
 }
 
-async function handleDelete(value:number){
+// 新增状态
+const showConfirm = ref(false);
+const deleteTarget = ref<ClipboardData | null>(null);
 
+// 点击删除按钮
+async function handleDelete(id: number) {
+  const target = data.value.find(item => item.id === id);
+  if (target) {
+    deleteTarget.value = target;
+    showConfirm.value = true;
+  }
 }
+
+// 确认删除
+function confirmDelete() {
+  if (deleteTarget.value) {
+    deleteClipboardData(deleteTarget.value.id)
+    fetchData()
+    showConfirm.value = false;
+    deleteTarget.value = null;
+  }
+}
+
+// 取消删除
+function cancelDelete() {
+  showConfirm.value = false;
+  deleteTarget.value = null;
+}
+
+function closeSearch() {
+  showSearch.value = false;
+}
+
 </script>
 
 <template>
@@ -147,16 +179,118 @@ async function handleDelete(value:number){
   >
     {{ tooltip.text }}
   </div>
-
-  <div role="alert" class="alert alert-vertical sm:alert-horizontal fixed-center">
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="stroke-info h-6 w-6 shrink-0">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-    </svg>
-    <span>确定要删除吗？</span>
-    <div>
-      <button class="btn btn-sm">取消</button>
-      <button class="btn btn-sm btn-primary">确定</button>
+  <div
+      v-if="showConfirm"
+      role="alert"
+      class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
+         bg-base-200 p-4 rounded-xl shadow-lg z-50 max-w-[90vw] w-[400px]
+         flex flex-col items-center"
+  >
+    <div class="flex items-start gap-2 w-full mb-2">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+           class="stroke-info h-6 w-6 shrink-0 mt-1">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      <div class="flex-1 font-bold text-base">
+        确定要删除吗？
+      </div>
+    </div>
+    <div class="w-full text-sm text-left break-words whitespace-pre-wrap
+              max-h-[160px] overflow-y-auto pr-1 border rounded bg-base-100 p-2">
+      {{ deleteTarget?.content }}
+    </div>
+    <div class="flex justify-center gap-4 w-full mt-4">
+      <button class="btn btn-sm" @click="cancelDelete">取消</button>
+      <button class="btn btn-sm btn-primary" @click="confirmDelete">确定</button>
     </div>
   </div>
 
+  <div
+      v-if="showSearch"
+      class="fixed inset-0 z-40 bg-transparent"
+      @click="closeSearch"
+  ></div>
+
+  <transition name="slide-from-top" mode="out-in">
+    <div
+        v-if="showSearch"
+        key="searchbox"
+        class="fixed left-1/2 top-6 transform -translate-x-1/2 z-50 w-full max-w-xl px-4"
+        @click.stop
+    >
+      <div
+          class="bg-base-200 text-base-content shadow-lg rounded-xl p-3 flex items-center gap-2"
+      >
+        <svg
+            class="h-5 w-5 opacity-60"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            viewBox="0 0 24 24"
+        >
+          <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 104.5 4.5a7.5 7.5 0 0012.15 12.15z"
+          />
+        </svg>
+        <input
+            type="text"
+            placeholder="搜索内容..."
+            class="input input-ghost w-full focus:outline-none bg-transparent"
+        />
+        <button
+            type="button"
+            class="btn btn-ghost btn-sm p-0 ml-2"
+            @click="closeSearch"
+            aria-label="关闭搜索框"
+        >
+          <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-5 w-5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              stroke-width="2"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </transition>
+
 </template>
+
+
+<style>
+/* 可以放在 style 标签或全局样式里 */
+.fixed-center {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.slide-from-top-enter-active,
+.slide-from-top-leave-active {
+  transition: transform 1s ease, opacity 1s ease;
+}
+.slide-from-top-enter-from {
+  transform: translateY(-100%);
+  opacity: 0;
+}
+.slide-from-top-enter-to {
+  transform: translateY(0);
+  opacity: 1;
+}
+.slide-from-top-leave-from {
+  transform:translateY(0);
+  opacity: 1;
+}
+.slide-from-top-leave-to {
+  transform: translateY(-100%);
+  opacity: 0;
+}
+</style>

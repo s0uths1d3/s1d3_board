@@ -1,6 +1,6 @@
 import { ShortcutManager } from './ShortcutManager';
-import { ToggleWindowCommand } from '../commands/global/ToggleWindowCommand';
-import { HideWindowCommand } from '../commands/local/HideWindowCommand';
+import { ToggleWindowCommand } from '../global/ToggleWindowCommand';
+import { HideWindowCommand } from '../local/HideWindowCommand';
 import type { ShortcutConfig } from './ShortcutConfig';
 import {ArrowDownTargetMovementCommand, ArrowUpTargetMovementCommand} from "~/src/commands/local/TargetMovementCommand";
 import {SearchCommand} from "~/src/commands/local/SearchCommand";
