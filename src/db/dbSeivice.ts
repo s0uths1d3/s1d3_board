@@ -3,9 +3,12 @@ import type { ClipboardData } from "../ClipboardData";
 
 const dbPromise = Database.load("sqlite:s1de_board.db");
 
-export async function fetchClipboardData(): Promise<ClipboardData[]> {
+export async function fetchClipboardData(filter:any): Promise<ClipboardData[]> {
+    const favorite:number = filter.value.favorite
     const db = await dbPromise;
-    const result = await db.select("SELECT * FROM clipboard ORDER BY last_use DESC LIMIT 100");
+    console.log(favorite)
+    let result;
+     result = await db.select(`SELECT * FROM clipboard WHERE is_favorite = ${favorite} ORDER BY last_use DESC LIMIT 100`);
     return result as ClipboardData[];
 }
 
