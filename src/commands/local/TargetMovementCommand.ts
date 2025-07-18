@@ -31,7 +31,8 @@ export function selectRow(index: number) {
     }
 }
 
-function scrollToSelectedRow() {
+async function scrollToSelectedRow() {
+    await nextTick();
     const listElement = document.querySelector('.list');
     const listItems = listElement?.querySelectorAll('.list-row');
     const currentItem = listItems?.[selectedRowIndex.value];

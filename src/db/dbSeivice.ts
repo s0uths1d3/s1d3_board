@@ -7,9 +7,7 @@ export async function fetchClipboardData(filter:any): Promise<ClipboardData[]> {
     const favorite:number = filter.value.favorite
     const db = await dbPromise;
     console.log(favorite)
-    let result;
-     result = await db.select(`SELECT * FROM clipboard WHERE is_favorite = ${favorite} ORDER BY last_use DESC LIMIT 100`);
-    return result as ClipboardData[];
+    return await db.select(`SELECT * FROM clipboard WHERE is_favorite = ${favorite} ORDER BY last_use DESC LIMIT 100`) as ClipboardData[]
 }
 
 export async function updateFavorite(id: number, value: number): Promise<void> {
