@@ -4,8 +4,6 @@ import {formatTimestamp} from "~/src/utils/formatDate";
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import {setIsWindowVisible} from "~/src/commands/global/ToggleWindowCommand";
 import {
-  ArrowDownTargetMovementCommand,
-  ArrowUpTargetMovementCommand,
   dataLength,
   selectedRowIndex,
   selectRow
@@ -14,6 +12,7 @@ import {deleteClipboardData, fetchClipboardData, increaseUseCount, updateFavorit
 import SearchBar from "~/components/mainpage/SearchBar.vue";
 import DeleteConfirmation from "~/components/mainpage/DeleteConfirmation.vue";
 import Tooltip from "~/components/mainpage/Tooltip.vue";
+import HighlightText from "~/components/mainpage/HighlightText.vue";
 
 const data = ref<ClipboardData[]>([]);
 const listElement = ref<HTMLElement | null>(null);
@@ -23,6 +22,17 @@ const deleteTarget = ref<ClipboardData | null>(null);
 
 let updateInterval: NodeJS.Timeout;
 
+const highlightState = ref(false);
+const highlightContent = ref('')
+
+watch(highlightState, (newValue, oldValue) => {
+  console.log(`高亮状态从 ${oldValue} 变为 ${newValue}`);
+});
+watch(highlightContent, (newValue, oldValue) => {
+  filter.value.searchContent = newValue;
+});
+
+
 const tooltip = ref({
   visible: false,
   text: '',
@@ -31,8 +41,10 @@ const tooltip = ref({
 });
 
 const filter = ref({
-  favorite:0
+  favorite:0,
+  searchContent:''
 })
+
 
 function showTooltip(index: number, text: string, event: MouseEvent) {
   const target = (event.currentTarget as HTMLElement).querySelector('span');
@@ -85,11 +97,7 @@ async function favorite(id: number, value: number) {
 }
 
 async function handleKeyDown(event: KeyboardEvent) {
-  if (event.key === 'ArrowUp') {
-    await new ArrowUpTargetMovementCommand().execute();
-  } else if (event.key === 'ArrowDown') {
-    await new ArrowDownTargetMovementCommand().execute();
-  } else if (event.key === 'Enter') {
+if (event.key === 'Enter') {
     await increaseUseCount(data.value[selectedRowIndex.value].id);
     await getCurrentWindow().hide();
     setIsWindowVisible(false);
@@ -117,13 +125,25 @@ function cancelDelete() {
   showConfirm.value = false;
   deleteTarget.value = null;
 }
+
+function getFirstTwoLines(input: string): string {
+  const lines = input.split('\n');
+  if (lines.length === 0) {
+    return '';
+  }
+  if (lines.length === 1) {
+    return lines[0];
+  }
+  return lines[0] + '\n' + lines[1];
+}
+
 </script>
 
 <template>
 
   <div class="tabs tabs-lift">
     <label class="tab">
-      <input type="radio" name="my_tabs_4"  checked="checked" />
+      <input type="radio" name="my_tabs_4" checked="checked" />
       <span>history</span>
     </label>
     <div class="tab-content bg-base-100 border-base-300 p-6">
@@ -144,7 +164,14 @@ function cancelDelete() {
           <span
               class="tabular-nums overflow-hidden text-ellipsis break-words whitespace-pre-wrap p-[3px]
                    [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
-            {{ item.content }}
+            <HighlightText
+                :text="getFirstTwoLines(item.content)"
+                :highlightString="highlightContent"
+                :active="highlightState"
+            />
+            <p>
+              {{getFirstTwoLines(item.content)}}
+            </p>
           </span>
             </div>
             <div class="text-xs uppercase font-semibold opacity-60">Text
@@ -196,10 +223,7 @@ function cancelDelete() {
         </li>
       </ul>
     </div>
-
-
   </div>
-
 
   <Tooltip
       :visible="tooltip.visible"
@@ -210,5 +234,5 @@ function cancelDelete() {
 
   <DeleteConfirmation :show="showConfirm" :deleteTarget="deleteTarget" @confirm="confirmDelete" @cancel="cancelDelete"/>
 
-  <SearchBar/>
+  <SearchBar v-model:search="highlightContent" v-model:highlight="highlightState"/>
 </template>

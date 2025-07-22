@@ -1,4 +1,3 @@
-// src/commands/TargetMovementCommand.ts
 import type { Command } from '../Command';
 
 export const selectedRowIndex = ref(0);
@@ -9,7 +8,7 @@ export class ArrowUpTargetMovementCommand implements Command {
         const newIndex = selectedRowIndex.value - 1;
         if (newIndex >= 0) {
             selectedRowIndex.value = newIndex;
-            scrollToSelectedRow();
+            await scrollToSelectedRow();
         }
     }
 }
@@ -19,7 +18,7 @@ export class ArrowDownTargetMovementCommand implements Command {
         const newIndex = selectedRowIndex.value + 1;
         if (newIndex < dataLength.value) {
             selectedRowIndex.value = newIndex;
-            scrollToSelectedRow();
+            await scrollToSelectedRow();
         }
     }
 }

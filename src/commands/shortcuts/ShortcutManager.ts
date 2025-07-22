@@ -31,8 +31,13 @@ export class ShortcutManager {
                     e.preventDefault();
                 }
 
+                if (e.key.toLowerCase() === 'f2' ||
+                    // e.key.toLowerCase() === 'f5' ||
+                    e.key.toLowerCase() === 'f7') {
+                    e.preventDefault();
+                }
                 if (isMatch) {
-                    await config.command.execute({ state: 'Pressed' });
+                    await config.command.execute({state: 'Pressed'});
                 }
                 if (pressedKey === 'arrowup' || pressedKey === 'arrowdown') {
                     e.preventDefault();

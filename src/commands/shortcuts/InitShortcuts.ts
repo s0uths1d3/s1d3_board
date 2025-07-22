@@ -21,8 +21,8 @@ const shortcuts: ShortcutConfig[] = [
         key: 'Escape',
         scope: 'local',
         command: hideWindowCommand,
-    }
-    ,{
+    },
+    {
         key: 'ArrowUp',
         scope: 'local',
         command: arrowUpTargetMovementCommand
@@ -30,7 +30,8 @@ const shortcuts: ShortcutConfig[] = [
         key: 'ArrowDown',
         scope: 'local',
         command: arrowDownTargetMovementCommand
-    },{
+    },
+    {
         key: 'Control+F',
         scope: 'local',
         command: searchCommand

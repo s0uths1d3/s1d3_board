@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import { initShortcuts, unregisterAllShortcuts } from '~/src/commands/shortcuts/initShortcuts';
+import { initShortcuts, unregisterAllShortcuts } from '~/src/commands/shortcuts/InitShortcuts';
 import { addDate } from "~/src/clip";
 
 

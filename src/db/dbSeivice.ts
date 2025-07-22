@@ -5,9 +5,12 @@ const dbPromise = Database.load("sqlite:s1de_board.db");
 
 export async function fetchClipboardData(filter:any): Promise<ClipboardData[]> {
     const favorite:number = filter.value.favorite
+    const content:string = filter.value.searchContent
     const db = await dbPromise;
-    console.log(favorite)
-    return await db.select(`SELECT * FROM clipboard WHERE is_favorite = ${favorite} ORDER BY last_use DESC LIMIT 100`) as ClipboardData[]
+    let sql= `SELECT * FROM clipboard WHERE content like '%${content}%' ORDER BY last_use DESC LIMIT 100`
+    if (favorite===1)
+        sql = `SELECT * FROM clipboard WHERE is_favorite = ${favorite} and content like '%${content}%' ORDER BY last_use DESC LIMIT 100`
+    return await db.select(sql) as ClipboardData[]
 }
 
 export async function updateFavorite(id: number, value: number): Promise<void> {
