@@ -1,5 +1,4 @@
 import type { Command } from '~/src/commands/Command';
-
 export const showSearch = ref(false);
 
 export class SearchCommand implements Command {

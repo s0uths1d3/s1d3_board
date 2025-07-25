@@ -7,7 +7,7 @@
 <script setup lang="ts">
 
 import {unregisterAllShortcuts} from "~/src/commands/shortcuts/InitShortcuts";
-import clipboardService from "~/src/db/dbSeivice";
+import clipboardService from "~/src/db/dbService";
 
 onMounted(async () => {
   try {

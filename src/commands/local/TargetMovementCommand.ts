@@ -1,7 +1,12 @@
 import type { Command } from '../Command';
+import type {ClipboardData} from "~/src/ClipboardData";
+import clipboardService from "~/src/db/dbService";
 
 export const selectedRowIndex = ref(0);
 export const dataLength = ref(0);
+
+
+const data = ref<ClipboardData[]>([]);
 
 export class ArrowUpTargetMovementCommand implements Command {
     async execute(): Promise<void> {
@@ -41,4 +46,15 @@ async function scrollToSelectedRow() {
 
 export function getSelectedRowIndex(){
     return selectedRowIndex.value;
+}
+
+export function getSelectedRowId():number{
+    const filter = ref({
+        favorite: 0,
+        searchContent: ''
+    })
+    clipboardService.fetchClipboardData(filter).then(res =>{
+        data.value = res
+    })
+    return data.value[getSelectedRowIndex()].id
 }

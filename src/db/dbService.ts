@@ -1,6 +1,7 @@
 import Database from "@tauri-apps/plugin-sql";
 import { onTextUpdate, startListening } from 'tauri-plugin-clipboard-api';
 import type { ClipboardData } from "../ClipboardData";
+import {value} from "valibot";
 
 class ClipboardService {
     private static instance: ClipboardService;
@@ -69,6 +70,12 @@ class ClipboardService {
         }
 
         return await this.db!.select(sql) as ClipboardData[];
+    }
+
+    public async fetchClipboardSingleData(id: number): Promise<ClipboardData> {
+        let sql = `SELECT * FROM clipboard WHERE id = ${id}`;
+        const data =  await this.db!.select(sql) as ClipboardData[]
+        return data[0]
     }
 
     public async updateFavorite(id: number, value: number): Promise<void> {

@@ -32,10 +32,8 @@ const processedText = computed(() => {
   const regex = new RegExp(escapeRegExp(highlightStr), 'gi');
   let lastIndex = 0;
 
-  // 使用正则表达式查找所有匹配
   let match;
   while ((match = regex.exec(text)) !== null) {
-    // 添加匹配前的非高亮字符
     if (match.index > lastIndex) {
 
       console.log(result)
@@ -45,7 +43,6 @@ const processedText = computed(() => {
       );
     }
 
-    // 添加匹配的高亮字符
     result.push(
         ...text.slice(match.index, match.index + match[0].length).split('')
             .map(char => ({ char, isHighlight: true }))
@@ -54,7 +51,7 @@ const processedText = computed(() => {
     lastIndex = regex.lastIndex;
   }
 
-  // 添加剩余的非高亮字符
+
   if (lastIndex < text.length) {
     result.push(
         ...text.slice(lastIndex).split('')

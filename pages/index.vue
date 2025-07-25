@@ -4,7 +4,7 @@ import {formatTimestamp} from "~/src/utils/formatDate";
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import {setIsWindowVisible} from "~/src/commands/global/ToggleWindowCommand";
 import {
-  dataLength,
+  dataLength, getSelectedRowId,
   selectedRowIndex,
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
@@ -15,11 +15,10 @@ import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {initShortcuts, unregisterAllShortcuts} from "~/src/commands/shortcuts/InitShortcuts";
 
 import {deleteTarget, showConfirm} from "~/src/commands/local/DelCommand";
-import clipboardService from "~/src/db/dbSeivice";
+import clipboardService from "~/src/db/dbService";
 
 const data = ref<ClipboardData[]>([]);
 const listElement = ref<HTMLElement | null>(null);
-
 
 let updateInterval: NodeJS.Timeout;
 
@@ -130,7 +129,7 @@ function confirmDelete() {
     clipboardService.deleteClipboardData(deleteTarget.value.id).then(() => {
       fetchData().then(() => {
         showConfirm.value = false;
-        deleteTarget.value = data.value[selectedRowIndex.value]
+        deleteTarget.value = data.value[getSelectedRowId()]
       })
     })
   }

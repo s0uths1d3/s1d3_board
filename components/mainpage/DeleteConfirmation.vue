@@ -32,7 +32,7 @@ import type {ClipboardData} from "~/src/ClipboardData";
 
 const props = defineProps<{
   show: boolean,
-  deleteTarget: ClipboardData | null,
+  deleteTarget: ClipboardData | null | undefined,
 }>();
 
 const emit = defineEmits<{
