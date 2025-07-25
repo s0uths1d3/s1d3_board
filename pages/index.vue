@@ -8,22 +8,24 @@ import {
   selectedRowIndex,
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
-import {deleteClipboardData, fetchClipboardData, increaseUseCount, updateFavorite} from '~/src/db/dbSeivice';
 import SearchBar from "~/components/mainpage/SearchBar.vue";
 import DeleteConfirmation from "~/components/mainpage/DeleteConfirmation.vue";
 import Tooltip from "~/components/mainpage/Tooltip.vue";
 import HighlightText from "~/components/mainpage/HighlightText.vue";
+import {initShortcuts, unregisterAllShortcuts} from "~/src/commands/shortcuts/InitShortcuts";
+
+import {deleteTarget, showConfirm} from "~/src/commands/local/DelCommand";
+import clipboardService from "~/src/db/dbSeivice";
 
 const data = ref<ClipboardData[]>([]);
 const listElement = ref<HTMLElement | null>(null);
 
-const showConfirm = ref(false);
-const deleteTarget = ref<ClipboardData | null>(null);
 
 let updateInterval: NodeJS.Timeout;
 
-const highlightState = ref(false);
+const highlightState = ref(true);
 const highlightContent = ref('')
+const highlightRow = ref<ClipboardData | null>(null);
 
 watch(highlightState, (newValue, oldValue) => {
   console.log(`高亮状态从 ${oldValue} 变为 ${newValue}`);
@@ -31,7 +33,9 @@ watch(highlightState, (newValue, oldValue) => {
 watch(highlightContent, (newValue, oldValue) => {
   filter.value.searchContent = newValue;
 });
-
+watch(selectedRowIndex, (newValue) => {
+  deleteTarget.value = data.value[newValue]
+})
 
 const tooltip = ref({
   visible: false,
@@ -41,10 +45,9 @@ const tooltip = ref({
 });
 
 const filter = ref({
-  favorite:0,
-  searchContent:''
+  favorite: 0,
+  searchContent: ''
 })
-
 
 function showTooltip(index: number, text: string, event: MouseEvent) {
   const target = (event.currentTarget as HTMLElement).querySelector('span');
@@ -59,8 +62,8 @@ function showTooltip(index: number, text: string, event: MouseEvent) {
   }
 }
 
-function handelFilter(){
-  filter.value.favorite = filter.value.favorite===1?0:1
+function handelFilter() {
+  filter.value.favorite = filter.value.favorite === 1 ? 0 : 1
 }
 
 function hideTooltip() {
@@ -68,20 +71,31 @@ function hideTooltip() {
 }
 
 onMounted(async () => {
+  await unregisterAllShortcuts();
+  console.log('mounting...')
+  await initShortcuts()
+
+  const handler = async (e: KeyboardEvent) => {
+  };
+  window.addEventListener('keydown', handler);
   await fetchData();
-  updateInterval = setInterval(fetchData, 50);
+  updateInterval = setInterval(fetchData, 300);
   if (listElement.value) {
     listElement.value.focus();
   }
 });
 
-onBeforeUnmount(() => {
+onBeforeUnmount(async () => {
+  console.log('unmounting outside...')
+  await unregisterAllShortcuts();
   clearInterval(updateInterval);
 });
 
 async function fetchData() {
   try {
-    data.value = await fetchClipboardData(filter);
+    clipboardService.fetchClipboardData(filter).then(result => {
+      data.value = result
+    })
     dataLength.value = data.value.length;
     if (selectedRowIndex.value >= data.value.length) {
       selectedRowIndex.value = data.value.length - 1;
@@ -93,19 +107,18 @@ async function fetchData() {
 
 async function favorite(id: number, value: number) {
   value = value === 0 ? 1 : 0;
-  await updateFavorite(id, value);
+  await clipboardService.updateFavorite(id, value)
 }
 
 async function handleKeyDown(event: KeyboardEvent) {
-if (event.key === 'Enter') {
-    await increaseUseCount(data.value[selectedRowIndex.value].id);
+  if (event.key === 'Enter') {
+    await clipboardService.increaseUseCount(data.value[selectedRowIndex.value].id)
     await getCurrentWindow().hide();
     setIsWindowVisible(false);
   }
 }
 
-async function handleDelete(id: number) {
-  const target = data.value.find(item => item.id === id);
+async function handleDelete(target: ClipboardData) {
   if (target) {
     deleteTarget.value = target;
     showConfirm.value = true;
@@ -114,16 +127,17 @@ async function handleDelete(id: number) {
 
 function confirmDelete() {
   if (deleteTarget.value) {
-    deleteClipboardData(deleteTarget.value.id);
-    fetchData();
-    showConfirm.value = false;
-    deleteTarget.value = null;
+    clipboardService.deleteClipboardData(deleteTarget.value.id).then(() => {
+      fetchData().then(() => {
+        showConfirm.value = false;
+        deleteTarget.value = data.value[selectedRowIndex.value]
+      })
+    })
   }
 }
 
 function cancelDelete() {
   showConfirm.value = false;
-  deleteTarget.value = null;
 }
 
 function getFirstTwoLines(input: string): string {
@@ -143,7 +157,7 @@ function getFirstTwoLines(input: string): string {
 
   <div class="tabs tabs-lift">
     <label class="tab">
-      <input type="radio" name="my_tabs_4" checked="checked" />
+      <input type="radio" name="my_tabs_4" checked="checked"/>
       <span>history</span>
     </label>
     <div class="tab-content bg-base-100 border-base-300 p-6">
@@ -153,7 +167,7 @@ function getFirstTwoLines(input: string): string {
             class="list-row cursor-pointer"
             v-for="(item, index) in data"
             :key="index"
-            :class="{ 'bg-blue-200': index === selectedRowIndex }"
+            :class="{ 'bg-blue-200 highlighted': index === selectedRowIndex}"
             @click="selectRow(index)">
           <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 + '\t' }}</div>
           <div class="list-col-grow" style="height: 4em">
@@ -169,9 +183,6 @@ function getFirstTwoLines(input: string): string {
                 :highlightString="highlightContent"
                 :active="highlightState"
             />
-            <p>
-              {{getFirstTwoLines(item.content)}}
-            </p>
           </span>
             </div>
             <div class="text-xs uppercase font-semibold opacity-60">Text
@@ -194,7 +205,7 @@ function getFirstTwoLines(input: string): string {
                   fill="#ffffff"></path>
             </svg>
           </button>
-          <button class="btn btn-square btn-ghost" @click="handleDelete(item.id)">
+          <button class="btn btn-square btn-ghost" @click="handleDelete(item)">
             <svg class="size-[1.2em]" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"
                  p-id="4580">
               <path
@@ -218,7 +229,7 @@ function getFirstTwoLines(input: string): string {
         <li>
           <div class="flex flex-row items-center justify-between w-full">
             <span class="whitespace-nowrap">仅收藏</span>
-            <input type="checkbox" class="toggle toggle-xs" @click="handelFilter" />
+            <input type="checkbox" class="toggle toggle-xs" @click="handelFilter"/>
           </div>
         </li>
       </ul>
@@ -236,3 +247,41 @@ function getFirstTwoLines(input: string): string {
 
   <SearchBar v-model:search="highlightContent" v-model:highlight="highlightState"/>
 </template>
+
+<style scoped>
+.highlighted {
+  color: #1c222a;
+  font-weight: bold;
+  background: #c1ddff !important;
+  scale: 1;
+}
+
+.highlighted path {
+  fill: #1c222a;
+}
+
+.highlighted button:hover path {
+  fill: #ffffff;
+}
+
+.list-row {
+  transition: all linear(0 0%, 0 1.8%, 0.01 3.6%, 0.03 6.35%, 0.07 9.1%, 0.13 11.4%, 0.19 13.4%, 0.27 15%, 0.34 16.1%, 0.54 18.35%, 0.66 20.6%, 0.72 22.4%, 0.77 24.6%, 0.81 27.3%, 0.85 30.4%, 0.88 35.1%, 0.92 40.6%, 0.94 47.2%, 0.96 55%, 0.98 64%, 0.99 74.4%, 1 86.4%, 1 100%) 0.3s
+}
+
+.list-row:hover {
+  background: #f0f8ff1f;
+  scale: 0.98;
+}
+
+.highlighted:hover {
+  scale: 1.02;
+}
+
+.list-row:active {
+  scale: 0.95;
+}
+
+.highlighted:active {
+  scale: 0.98
+}
+</style>

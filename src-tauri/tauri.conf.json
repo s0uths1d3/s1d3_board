@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "s1de_board",
   "version": "0.0.1",
-  "identifier": "top.s1de.s1de-board",
+  "identifier": "S1deBoard",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:12912",

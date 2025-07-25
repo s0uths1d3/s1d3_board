@@ -5,19 +5,18 @@
 </template>
 
 <script setup lang="ts">
-import { initShortcuts, unregisterAllShortcuts } from '~/src/commands/shortcuts/InitShortcuts';
-import { addDate } from "~/src/clip";
 
+import {unregisterAllShortcuts} from "~/src/commands/shortcuts/InitShortcuts";
+import clipboardService from "~/src/db/dbSeivice";
 
-onBeforeMount(async () => {
-  await initShortcuts()
-  await addDate()
-
-  const handler = async (e: KeyboardEvent) => {
-  };
-
-  window.addEventListener('keydown', handler);
-});
+onMounted(async () => {
+  try {
+    await clipboardService.startClipboardListener();
+    console.log('✅ 数据库初始化完成，剪贴板监听已启动');
+  } catch (error) {
+    console.error('❌ 初始化失败:', error);
+  }
+})
 
 onBeforeUnmount(async () => {
   await unregisterAllShortcuts();

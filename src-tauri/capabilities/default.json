@@ -29,6 +29,11 @@
     "sql:allow-execute",
     "sql:allow-load",
     "sql:allow-select",
-    "global-shortcut:allow-unregister-all"
+    "global-shortcut:allow-unregister-all",
+    "core:window:allow-request-user-attention",
+    "core:webview:allow-set-webview-focus",
+    "core:webview:allow-internal-toggle-devtools",
+    "fs:write-all",
+    "fs:read-all"
   ]
 }

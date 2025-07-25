@@ -4,12 +4,14 @@ import { HideWindowCommand } from '../local/HideWindowCommand';
 import type { ShortcutConfig } from './ShortcutConfig';
 import {ArrowDownTargetMovementCommand, ArrowUpTargetMovementCommand} from "~/src/commands/local/TargetMovementCommand";
 import {SearchCommand} from "~/src/commands/local/SearchCommand";
+import {DelCommand} from  "~/src/commands/local/DelCommand"
 
 export const toggleWindowCommand = new ToggleWindowCommand();
 const hideWindowCommand = new HideWindowCommand();
 const arrowUpTargetMovementCommand = new ArrowUpTargetMovementCommand()
 const arrowDownTargetMovementCommand = new ArrowDownTargetMovementCommand()
 const searchCommand = new SearchCommand()
+const delCommand = new DelCommand;
 
 const shortcuts: ShortcutConfig[] = [
     {
@@ -35,6 +37,11 @@ const shortcuts: ShortcutConfig[] = [
         key: 'Control+F',
         scope: 'local',
         command: searchCommand
+    },
+    {
+        key:'delete',
+        scope:'local',
+        command: delCommand
     }
 ];
 
@@ -49,5 +56,6 @@ export function unregisterLocalShortcuts() {
 }
 
 export async function unregisterAllShortcuts() {
+    console.log('unmounting...')
     await manager.unregisterAll();
 }

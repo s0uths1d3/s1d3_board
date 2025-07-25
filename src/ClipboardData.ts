@@ -6,5 +6,5 @@ export interface ClipboardData {
     is_favorite: number;
     category: string;
     count: number;
-    last_use: number
+    last_use: number;
 }

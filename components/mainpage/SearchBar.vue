@@ -25,7 +25,7 @@ function clearSearchBox() {
 
 const props = defineProps({
   highlight: Boolean,
-  search: String, // 添加search prop 来接收更新的search值
+  search: String,
 });
 
 const setHighlightState = () => {

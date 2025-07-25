@@ -15,6 +15,7 @@ export class ArrowUpTargetMovementCommand implements Command {
 
 export class ArrowDownTargetMovementCommand implements Command {
     async execute(): Promise<void> {
+        console.log(123)
         const newIndex = selectedRowIndex.value + 1;
         if (newIndex < dataLength.value) {
             selectedRowIndex.value = newIndex;
@@ -36,4 +37,8 @@ async function scrollToSelectedRow() {
     const listItems = listElement?.querySelectorAll('.list-row');
     const currentItem = listItems?.[selectedRowIndex.value];
     currentItem?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+export function getSelectedRowIndex(){
+    return selectedRowIndex.value;
 }

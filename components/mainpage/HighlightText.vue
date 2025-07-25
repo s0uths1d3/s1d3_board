@@ -62,8 +62,6 @@ const processedText = computed(() => {
     );
   }
 
-
-
   return result;
 });
 
