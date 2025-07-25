@@ -1,4 +1,3 @@
-<!-- Tooltip.vue -->
 <script setup lang="ts">
 
 interface TooltipProps {

@@ -2,9 +2,9 @@
 import type {ClipboardData} from '~/src/ClipboardData';
 import {formatTimestamp} from "~/src/utils/formatDate";
 import {getCurrentWindow} from "@tauri-apps/api/window";
-import {setIsWindowVisible} from "~/src/commands/global/ToggleWindowCommand";
+import {setWindowVisible} from "~/src/commands/global/ToggleWindowCommand";
 import {
-  dataLength, getSelectedRowId,
+  dataLength, getSelectedRowId, getSelectedRowIndex,
   selectedRowIndex,
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
@@ -16,6 +16,7 @@ import {initShortcuts, unregisterAllShortcuts} from "~/src/commands/shortcuts/In
 
 import {deleteTarget, showConfirm} from "~/src/commands/local/DelCommand";
 import clipboardService from "~/src/db/dbService";
+import clipboard from "clipboardy";
 
 const data = ref<ClipboardData[]>([]);
 const listElement = ref<HTMLElement | null>(null);
@@ -111,9 +112,11 @@ async function favorite(id: number, value: number) {
 
 async function handleKeyDown(event: KeyboardEvent) {
   if (event.key === 'Enter') {
-    await clipboardService.increaseUseCount(data.value[selectedRowIndex.value].id)
+    await clipboardService.increaseUseCount(getSelectedRowId()).then(()=>{
+      clipboard.write(data.value[getSelectedRowId()].content)
+    })
     await getCurrentWindow().hide();
-    setIsWindowVisible(false);
+    setWindowVisible()
   }
 }
 
@@ -166,7 +169,7 @@ function getFirstTwoLines(input: string): string {
             class="list-row cursor-pointer"
             v-for="(item, index) in data"
             :key="index"
-            :class="{ 'bg-blue-200 highlighted': index === selectedRowIndex}"
+            :class="{ 'bg-blue-200 highlighted': index === getSelectedRowIndex()}"
             @click="selectRow(index)">
           <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 + '\t' }}</div>
           <div class="list-col-grow" style="height: 4em">

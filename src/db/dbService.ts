@@ -1,7 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 import { onTextUpdate, startListening } from 'tauri-plugin-clipboard-api';
 import type { ClipboardData } from "../ClipboardData";
-import {value} from "valibot";
 
 class ClipboardService {
     private static instance: ClipboardService;
@@ -32,8 +31,7 @@ class ClipboardService {
 
         await onTextUpdate(async (newText) => {
             const now = Math.floor(Date.now());
-            console.log(`now is ${new Date(now).toLocaleString()}`);
-
+            // console.log(`now is ${new Date(now).toLocaleString()}`);
             const existingRecord: ClipboardData[] = await this.db!.select(
                 "SELECT id FROM clipboard WHERE content = $1",
                 [newText]

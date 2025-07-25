@@ -17,7 +17,7 @@ export class ToggleWindowCommand implements Command {
 
         const win = await getCurrentWindow();
         const wv = await getCurrentWebview();
-        isWindowVisible.value = !isWindowVisible.value;
+        setWindowVisible()
         try {
             if (isWindowVisible.value) {
                 await win.show();
@@ -33,7 +33,6 @@ export class ToggleWindowCommand implements Command {
     }
 }
 
-export function setIsWindowVisible(is: boolean) {
-    isWindowVisible.value = is;
+export function setWindowVisible(){
+    isWindowVisible.value = !isWindowVisible.value
 }
-
