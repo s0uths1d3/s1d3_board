@@ -17,6 +17,7 @@ import {initShortcuts, unregisterAllShortcuts} from "~/src/commands/shortcuts/In
 import {deleteTarget, showConfirm} from "~/src/commands/local/DelCommand";
 import clipboardService from "~/src/db/dbService";
 import clipboard from "clipboardy";
+import {invoke} from "@tauri-apps/api/core";
 
 const data = ref<ClipboardData[]>([]);
 const listElement = ref<HTMLElement | null>(null);
@@ -113,8 +114,17 @@ async function favorite(id: number, value: number) {
 async function handleKeyDown(event: KeyboardEvent) {
   if (event.key === 'Enter') {
     await clipboardService.increaseUseCount(getSelectedRowId()).then(()=>{
-      clipboard.write(data.value[getSelectedRowId()].content)
+      clipboard.write(data.value[getSelectedRowId()].content).then(() => {
+       invoke('paste')
+            .then(() => {
+              console.log('内容已复制到剪贴板并尝试粘贴。');
+            })
+            .catch((error) => {
+              console.error('写入剪贴板或粘贴失败:', error);
+            });
+      })
     })
+
     await getCurrentWindow().hide();
     setWindowVisible()
   }

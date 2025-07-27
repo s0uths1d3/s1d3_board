@@ -1,3 +1,5 @@
+use std::thread::sleep;
+use std::time::Duration;
 use tauri::Manager;
 use tauri_plugin_sql::{Migration, MigrationKind};
 
@@ -77,7 +79,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![close_app])
+        .invoke_handler(tauri::generate_handler![close_app,paste])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -85,4 +87,21 @@ pub fn run() {
 #[tauri::command]
 fn close_app(window: tauri::Window) {
     window.close().unwrap();
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn paste(window: tauri::Window) {
+    use enigo::{
+        Direction::{Press, Release,Click},
+        Enigo, Key, Keyboard, Settings,
+    };
+
+    sleep(Duration::from_millis(300));
+    let mut enigo = Enigo::new(&Settings::default()).unwrap();
+
+    enigo.key(Key::Control, Press).unwrap();
+    enigo.key(Key::Unicode('v'), Click).unwrap();
+    enigo.key(Key::Control, Release).unwrap();
+
 }
