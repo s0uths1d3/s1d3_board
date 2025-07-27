@@ -7,13 +7,14 @@ import {SearchCommand} from "~/src/commands/local/SearchCommand";
 import {DelCommand} from  "~/src/commands/local/DelCommand"
 import {FavoriteCommand} from  "~/src/commands/local/FavoriteCommand"
 
-export const toggleWindowCommand = new ToggleWindowCommand();
+const toggleWindowCommand = new ToggleWindowCommand();
 const hideWindowCommand = new HideWindowCommand();
 const arrowUpTargetMovementCommand = new ArrowUpTargetMovementCommand()
 const arrowDownTargetMovementCommand = new ArrowDownTargetMovementCommand()
 const searchCommand = new SearchCommand()
 const delCommand = new DelCommand();
 const favoriteCommand = new FavoriteCommand()
+
 
 const shortcuts: ShortcutConfig[] = [
     {

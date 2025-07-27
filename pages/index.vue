@@ -113,8 +113,9 @@ async function favorite(id: number, value: number) {
 
 async function handleKeyDown(event: KeyboardEvent) {
   if (event.key === 'Enter') {
-    await clipboardService.increaseUseCount(getSelectedRowId()).then(()=>{
-      clipboard.write(data.value[getSelectedRowId()].content).then(() => {
+    await clipboardService.increaseUseCount(getSelectedRowIndex()).then(()=>{
+      console.log('\t'+getSelectedRowIndex()+'\t'+data.value[getSelectedRowIndex()].content)
+      clipboard.write(data.value[getSelectedRowIndex()].content).then(() => {
        invoke('paste')
             .then(() => {
               console.log('内容已复制到剪贴板并尝试粘贴。');

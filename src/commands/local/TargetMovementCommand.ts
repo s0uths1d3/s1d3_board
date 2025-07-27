@@ -20,7 +20,6 @@ export class ArrowUpTargetMovementCommand implements Command {
 
 export class ArrowDownTargetMovementCommand implements Command {
     async execute(): Promise<void> {
-        console.log(123)
         const newIndex = selectedRowIndex.value + 1;
         if (newIndex < dataLength.value) {
             selectedRowIndex.value = newIndex;
