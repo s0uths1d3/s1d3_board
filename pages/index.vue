@@ -114,7 +114,6 @@ async function favorite(id: number, value: number) {
 async function handleKeyDown(event: KeyboardEvent) {
   if (event.key === 'Enter') {
     await clipboardService.increaseUseCount(getSelectedRowIndex()).then(()=>{
-      console.log('\t'+getSelectedRowIndex()+'\t'+data.value[getSelectedRowIndex()].content)
       clipboard.write(data.value[getSelectedRowIndex()].content).then(() => {
        invoke('paste')
             .then(() => {
@@ -232,9 +231,11 @@ function getFirstTwoLines(input: string): string {
 
     <label class="tab">
       <input type="radio" name="my_tabs_4"/>
-      Laugh
+      Setting
     </label>
-    <div class="tab-content bg-base-100 border-base-300 p-6">Tab content 2</div>
+    <div class="tab-content bg-base-100 border-base-300 p-6">
+      <SettingMain/>
+    </div>
 
     <div class="dropdown dropdown-end ml-auto">
       <div tabindex="0" role="button" class="btn btn-ghost rounded-field">筛选</div>

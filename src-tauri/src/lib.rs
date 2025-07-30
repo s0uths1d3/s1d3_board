@@ -103,5 +103,4 @@ fn paste(window: tauri::Window) {
     enigo.key(Key::Control, Press).unwrap();
     enigo.key(Key::Unicode('v'), Click).unwrap();
     enigo.key(Key::Control, Release).unwrap();
-
 }
