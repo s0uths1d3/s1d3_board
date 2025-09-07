@@ -16,14 +16,11 @@ export class ToggleWindowCommand implements Command {
         if (event?.state !== 'Pressed') return;
 
         const win = await getCurrentWindow();
-        const wv = await getCurrentWebview();
         setWindowVisible()
         try {
             if (isWindowVisible.value) {
                 await win.show();
-                await win.setAlwaysOnTop(true);
                 await win.setFocus();
-                await wv.setFocus()
             } else {
                 await win.hide();
             }

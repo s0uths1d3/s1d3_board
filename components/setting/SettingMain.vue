@@ -40,7 +40,6 @@ function controlDisplayText(key:string):any{
   return key;
 }
 
-
 </script>
 
 <template>

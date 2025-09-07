@@ -13,7 +13,6 @@ import DeleteConfirmation from "~/components/mainpage/DeleteConfirmation.vue";
 import Tooltip from "~/components/mainpage/Tooltip.vue";
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {initShortcuts, unregisterAllShortcuts} from "~/src/commands/shortcuts/InitShortcuts";
-
 import {deleteTarget, showConfirm} from "~/src/commands/local/DelCommand";
 import clipboardService from "~/src/db/dbService";
 import clipboard from "clipboardy";
@@ -26,11 +25,10 @@ let updateInterval: NodeJS.Timeout;
 
 const highlightState = ref(true);
 const highlightContent = ref('')
-const highlightRow = ref<ClipboardData | null>(null);
 
-watch(highlightState, (newValue, oldValue) => {
-  console.log(`高亮状态从 ${oldValue} 变为 ${newValue}`);
-});
+// watch(highlightState, (newValue, oldValue) => {
+//   console.log(`高亮状态从 ${oldValue} 变为 ${newValue}`);
+// });
 watch(highlightContent, (newValue, oldValue) => {
   filter.value.searchContent = newValue;
 });
@@ -79,7 +77,6 @@ onMounted(async () => {
   const handler = async (e: KeyboardEvent) => {
   };
   window.addEventListener('keydown', handler);
-  await fetchData();
   updateInterval = setInterval(fetchData, 300);
   if (listElement.value) {
     listElement.value.focus();
@@ -113,18 +110,11 @@ async function favorite(id: number, value: number) {
 
 async function handleKeyDown(event: KeyboardEvent) {
   if (event.key === 'Enter') {
-    await clipboardService.increaseUseCount(getSelectedRowIndex()).then(()=>{
+    await clipboardService.increaseUseCount(getSelectedRowIndex()).then(() => {
       clipboard.write(data.value[getSelectedRowIndex()].content).then(() => {
-       invoke('paste')
-            .then(() => {
-              console.log('内容已复制到剪贴板并尝试粘贴。');
-            })
-            .catch((error) => {
-              console.error('写入剪贴板或粘贴失败:', error);
-            });
+        invoke('paste')
       })
     })
-
     await getCurrentWindow().hide();
     setWindowVisible()
   }
@@ -163,10 +153,18 @@ function getFirstTwoLines(input: string): string {
   return lines[0] + '\n' + lines[1];
 }
 
+function handleDragStart(item: ClipboardData, event: DragEvent) {
+  event.dataTransfer?.setData('text/plain', item.content);
+}
+
+function handleDragEnd(item: ClipboardData, event: DragEvent) {
+  if (event.dataTransfer?.dropEffect === 'copy')
+    clipboardService.increaseUseCount(item.id)
+}
+
 </script>
 
 <template>
-
   <div class="tabs tabs-lift">
     <label class="tab">
       <input type="radio" name="my_tabs_4" checked="checked"/>
@@ -180,6 +178,9 @@ function getFirstTwoLines(input: string): string {
             v-for="(item, index) in data"
             :key="index"
             :class="{ 'bg-blue-200 highlighted': index === getSelectedRowIndex()}"
+            draggable="true"
+            @dragstart="handleDragStart(item, $event)"
+            @dragend="handleDragEnd(item,$event)"
             @click="selectRow(index)">
           <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 + '\t' }}</div>
           <div class="list-col-grow" style="height: 4em">
@@ -233,6 +234,7 @@ function getFirstTwoLines(input: string): string {
       <input type="radio" name="my_tabs_4"/>
       Setting
     </label>
+
     <div class="tab-content bg-base-100 border-base-300 p-6">
       <SettingMain/>
     </div>
@@ -263,39 +265,5 @@ function getFirstTwoLines(input: string): string {
 </template>
 
 <style scoped>
-.highlighted {
-  color: #1c222a;
-  font-weight: bold;
-  background: #c1ddff !important;
-  scale: 1;
-}
-
-.highlighted path {
-  fill: #1c222a;
-}
-
-.highlighted button:hover path {
-  fill: #ffffff;
-}
-
-.list-row {
-  transition: all linear(0 0%, 0 1.8%, 0.01 3.6%, 0.03 6.35%, 0.07 9.1%, 0.13 11.4%, 0.19 13.4%, 0.27 15%, 0.34 16.1%, 0.54 18.35%, 0.66 20.6%, 0.72 22.4%, 0.77 24.6%, 0.81 27.3%, 0.85 30.4%, 0.88 35.1%, 0.92 40.6%, 0.94 47.2%, 0.96 55%, 0.98 64%, 0.99 74.4%, 1 86.4%, 1 100%) 0.3s
-}
-
-.list-row:hover {
-  background: #f0f8ff1f;
-  scale: 0.98;
-}
-
-.highlighted:hover {
-  scale: 1.02;
-}
-
-.list-row:active {
-  scale: 0.95;
-}
-
-.highlighted:active {
-  scale: 0.98
-}
+@import "~/assets/css/index.css";
 </style>
