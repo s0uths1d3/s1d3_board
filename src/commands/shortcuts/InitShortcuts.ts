@@ -6,6 +6,7 @@ import {ArrowDownTargetMovementCommand, ArrowUpTargetMovementCommand} from "~/sr
 import {SearchCommand} from "~/src/commands/local/SearchCommand";
 import {DelCommand} from  "~/src/commands/local/DelCommand"
 import {FavoriteCommand} from  "~/src/commands/local/FavoriteCommand"
+import dbService from "~/src/db/dbService";
 
 const toggleWindowCommand = new ToggleWindowCommand();
 const hideWindowCommand = new HideWindowCommand();
@@ -62,6 +63,7 @@ export const shortcuts: ShortcutConfig[] = [
 const manager = new ShortcutManager();
 
 export async function initShortcuts() {
+    // console.log(await dbService.getShortcutSetting());
     await manager.registerAll(shortcuts);
 }
 

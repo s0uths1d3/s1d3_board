@@ -28,7 +28,7 @@
 </template>
 
 <script setup lang="ts">
-import type {ClipboardData} from "~/src/ClipboardData";
+import type {ClipboardData} from "~/src/Entities";
 
 const props = defineProps<{
   show: boolean,

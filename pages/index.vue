@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type {ClipboardData} from '~/src/ClipboardData';
-import {formatTimestamp} from "~/src/utils/formatDate";
+import type {ClipboardData} from '~/src/Entities';
+import {formatDate} from "~/src/utils/formatDate";
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import {setWindowVisible} from "~/src/commands/global/ToggleWindowCommand";
 import {
@@ -17,6 +17,7 @@ import {deleteTarget, showConfirm} from "~/src/commands/local/DelCommand";
 import clipboardService from "~/src/db/dbService";
 import clipboard from "clipboardy";
 import {invoke} from "@tauri-apps/api/core";
+import StickyNote from "~/components/note/StickyNote.vue";
 
 const data = ref<ClipboardData[]>([]);
 const listElement = ref<HTMLElement | null>(null);
@@ -32,8 +33,9 @@ const highlightContent = ref('')
 watch(highlightContent, (newValue, oldValue) => {
   filter.value.searchContent = newValue;
 });
+
 watch(selectedRowIndex, (newValue) => {
-  deleteTarget.value = data.value[newValue]
+  deleteTarget.value = data.value[newValue] as ClipboardData;
 })
 
 const tooltip = ref({
@@ -48,9 +50,11 @@ const filter = ref({
   searchContent: ''
 })
 
+const isClipPage = ref(true)
+
 function showTooltip(index: number, text: string, event: MouseEvent) {
   const target = (event.currentTarget as HTMLElement).querySelector('span');
-  if (target && target.scrollHeight > target.clientHeight + 5) {
+  if (target && text.split('\n').length -1 >2) {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     tooltip.value = {
       visible: true,
@@ -77,7 +81,7 @@ onMounted(async () => {
   const handler = async (e: KeyboardEvent) => {
   };
   window.addEventListener('keydown', handler);
-  updateInterval = setInterval(fetchData, 300);
+  updateInterval = setInterval(fetchData, 1000);
   if (listElement.value) {
     listElement.value.focus();
   }
@@ -132,7 +136,7 @@ function confirmDelete() {
     clipboardService.deleteClipboardData(deleteTarget.value.id).then(() => {
       fetchData().then(() => {
         showConfirm.value = false;
-        deleteTarget.value = data.value[getSelectedRowId()]
+        deleteTarget.value = data.value[getSelectedRowId()] as ClipboardData
       })
     })
   }
@@ -147,8 +151,8 @@ function getFirstTwoLines(input: string): string {
   if (lines.length === 0) {
     return '';
   }
-  if (lines.length === 1) {
-    return lines[0];
+  if ( lines.length === 1) {
+    return lines[0] as string;
   }
   return lines[0] + '\n' + lines[1];
 }
@@ -165,10 +169,10 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
 </script>
 
 <template>
-  <div class="tabs tabs-lift">
+  <div class="tabs tabs-lift" @click="isClipPage=true">
     <label class="tab">
       <input type="radio" name="my_tabs_4" checked="checked"/>
-      <span>history</span>
+      <span>Clip</span>
     </label>
     <div class="tab-content bg-base-100 border-base-300 p-6">
       <ul ref="listElement" id="listElement" class="list bg-base-100 rounded-box shadow-md" style="outline: none"
@@ -198,10 +202,11 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
             />
           </span>
             </div>
-            <div class="text-xs uppercase font-semibold opacity-60">Text
-              {{ formatTimestamp(item.create_time) }}
-              count:{{ item.count }}
-              lastUse:{{ formatTimestamp(item.last_use) }}
+            <div class="text-xs uppercase font-semibold opacity-60">
+              文本
+              创建时间{{ formatDate(parseInt(item.created_at)) }}
+              使用次数:{{ item.count }}
+              最后使用:{{ formatDate(parseInt(item.updated_at)) }}
             </div>
           </div>
           <button class="btn btn-square btn-ghost" @click="favorite(item.id,item.is_favorite)">
@@ -230,7 +235,24 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
       </ul>
     </div>
 
-    <label class="tab">
+    <label class="tab" @click="isClipPage=false">
+      <input type="radio" name="my_tabs_4"/>
+      Todo
+    </label>
+    <div class="tab-content bg-base-100 border-base-300 p-6">
+      <TodoList/>
+    </div>
+
+    <label class="tab" @click="isClipPage=false">
+      <input type="radio" name="my_tabs_4"/>
+      Note
+    </label>
+
+    <div class="tab-content bg-base-100 border-base-300 p-6">
+      <StickyNote/>
+    </div>
+
+    <label class="tab" @click="isClipPage=false">
       <input type="radio" name="my_tabs_4"/>
       Setting
     </label>
@@ -239,7 +261,7 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
       <SettingMain/>
     </div>
 
-    <div class="dropdown dropdown-end ml-auto">
+    <div class="dropdown dropdown-end ml-auto" v-show="isClipPage">
       <div tabindex="0" role="button" class="btn btn-ghost rounded-field">筛选</div>
       <ul tabindex="0" class="menu dropdown-content bg-base-200 rounded-box z-[1] mt-1 p-2 shadow-sm">
         <li>

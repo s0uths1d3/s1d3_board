@@ -1,5 +1,5 @@
 import type { Command } from '../Command';
-import type {ClipboardData} from "~/src/ClipboardData";
+import type {ClipboardData} from "~/src/Entities";
 
 export const showConfirm = ref(false);
 export const deleteTarget = ref<ClipboardData | null>(null);

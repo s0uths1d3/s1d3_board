@@ -1,21 +1,56 @@
 <script setup lang="ts">
-import {ref} from 'vue';
-import {shortcuts} from "~/src/commands/shortcuts/InitShortcuts";
-import {getOsTypeFromNavigator} from "~/src/utils/SystemOS";
+import { ref, onMounted } from 'vue';
+import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
+import { getOsTypeFromNavigator } from "~/src/utils/SystemOS";
+import clipboardService from '~/src/db/dbService';
 
-const osTye =ref('')
+const osTye = ref('');
 
-const settings = [
+interface SettingItem {
+  label: string;
+  value: string | string[];
+  type: 'input' | 'select' | 'checkbox';
+}
+
+interface SettingGroup {
+  title: string;
+  type:string;
+  items: SettingItem[];
+}
+const apikey = ref('');
+const maxLimit = ref('');
+const colorScheme = ref(['深色', '浅色']);
+
+const settings: SettingGroup[] = [
   {
     title: '快捷键设置',
-    items: shortcuts.map(shortcut => ({label: shortcut.title, value: controlDisplayText(shortcut.key)}))
+    type: 'shortcut',
+    items: shortcuts.map(shortcut => ({ label: shortcut.title, value: controlDisplayText(shortcut.key), type: 'input' })),
   },
   {
     title: 'Api设置',
-    items:[
+    type: 'ai_setting',
+    items: [
       {
         label: 'API key',
-        value: 'b06b8bd1-8511-4d61-9752-7863f523ddb3'
+        value: apikey,
+        type: 'input'
+      }
+    ]
+  },
+  {
+    title: '通用设置',
+    type: 'general',
+    items: [
+      {
+        label: '最大查询数量',
+        value: maxLimit,
+        type: 'input'
+      },
+      {
+        label: '配色',
+        value: colorScheme.value,
+        type: 'select'
       }
     ]
   }
@@ -24,22 +59,29 @@ const settings = [
 const activeSetting = ref(settings[0]);
 
 onMounted(async () => {
- osTye.value = getOsTypeFromNavigator()
-})
+  osTye.value = getOsTypeFromNavigator();
+  maxLimit.value = await clipboardService.getKeyValue('max_save_count');
+  apikey.value = await clipboardService.getKeyValue('api_key');
+});
 
-function controlDisplayText(key:string):any{
-    let modifiedKey = key;
-    if (modifiedKey.includes('Or')) {
-      if (osTye.value === 'Darwin') {
-        console.log(1)
-        return modifiedKey.replace('CommandOrControl', 'Command');
-      } else {
-        return modifiedKey.replace('CommandOrControl', 'Control');
-      }
+function controlDisplayText(key: string): string {
+  let modifiedKey = key;
+  if (modifiedKey.includes('Or')) {
+    if (osTye.value === 'Darwin') {
+      return modifiedKey.replace('CommandOrControl', 'Command');
+    } else {
+      return modifiedKey.replace('CommandOrControl', 'ctrl');
     }
+  }
   return key;
 }
 
+async function applySettings(type:string) {
+  if (type === 'ai_setting')
+    await clipboardService.setKeyValue('api_key',apikey.value)
+  else if (type === 'general')
+    await clipboardService.setKeyValue('max_save_count',maxLimit.value)
+}
 </script>
 
 <template>
@@ -59,14 +101,28 @@ function controlDisplayText(key:string):any{
       <div class="w-4/5">
         <div v-if="activeSetting">
           <ul class="list bg-base-100 rounded-box shadow-md">
-            <li class="p-4 pb-2 text-xs opacity-60 tracking-wide">{{ activeSetting.title + '\t暂时不支持修改快捷键' }}</li>
-            <li v-for="(item, itemIndex) in activeSetting.items" :key="itemIndex" class="list-row flex justify-between items-center p-4">
+            <li class="p-4 pb-2 text-xs opacity-60 tracking-wide">
+              {{ activeSetting.title }}
+            </li>
+            <li v-for="(item, itemIndex) in activeSetting.items" :key="itemIndex"
+                class="list-row flex justify-between items-center p-4">
               <div>
                 <div>{{ item.label }}</div>
               </div>
               <div>
-                <input type="text" :placeholder="item.value" class="input input-neutral w-fit" />
+                <input v-if="item.type === 'input'" type="text" v-model="item.value"
+                       class="input input-neutral w-fit"/>
+                <select v-if="item.type === 'select'" v-model="item.value[0]" class="select">
+                  <option v-for="(value, index) in colorScheme" :key="index" :value="value">
+                    {{ value }}
+                  </option>
+                </select>
               </div>
+            </li>
+            <li>
+              <button class="btn btn-ghost btn-block" @click="applySettings(activeSetting.type)">
+                {{ '应用' }}
+              </button>
             </li>
           </ul>
         </div>
@@ -77,6 +133,6 @@ function controlDisplayText(key:string):any{
 
 <style scoped>
 .btn-active {
-  background-color: #e0e0e0;
+  background-color: #41bd9a;
 }
 </style>

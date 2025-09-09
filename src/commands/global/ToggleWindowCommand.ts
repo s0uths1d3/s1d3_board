@@ -1,5 +1,4 @@
-import {getCurrentWindow, UserAttentionType} from '@tauri-apps/api/window';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
+import {getCurrentWindow} from '@tauri-apps/api/window';
 import type {Command} from '../Command';
 import {ref} from 'vue';
 

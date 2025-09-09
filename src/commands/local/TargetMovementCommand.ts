@@ -1,5 +1,5 @@
 import type { Command } from '../Command';
-import type {ClipboardData} from "~/src/ClipboardData";
+import type {ClipboardData} from "~/src/Entities";
 import clipboardService from "~/src/db/dbService";
 
 export const selectedRowIndex = ref(0);
@@ -31,7 +31,9 @@ export class ArrowDownTargetMovementCommand implements Command {
 export function selectRow(index: number) {
     if (index >= 0 && index < dataLength.value) {
         selectedRowIndex.value = index;
-        scrollToSelectedRow();
+        scrollToSelectedRow().then(
+
+        );
     }
 }
 
@@ -55,5 +57,5 @@ export function getSelectedRowId():number{
     clipboardService.fetchClipboardData(filter).then(res =>{
         data.value = res
     })
-    return data.value[getSelectedRowIndex()].id
+    return <number>data.value[getSelectedRowIndex()]?.id
 }

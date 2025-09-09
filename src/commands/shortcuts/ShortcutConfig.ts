@@ -1,5 +1,4 @@
 import type { Command } from '../Command';
-import {shortcuts} from "~/src/commands/shortcuts/InitShortcuts";
 
 export type ShortcutScope = 'global' | 'local';
 

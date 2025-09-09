@@ -13,19 +13,16 @@
  * - 不同年显示"年-月-日"
  * - 无效日期返回"无效日期"
  */
-const formatDate = (dateString: string): string => {
+const formatDate = (dateString: number): string => {
     const now = new Date();
 
     if (!dateString) {
-        console.log(dateString)
         return '无效日期';
     }
 
     const getTimeDifference = (currentDate: Date): number => {
         return now.getTime() - currentDate.getTime();
     };
-
-
 
     const formatTimeDifference = (milliseconds: number): string => {
         const seconds = Math.floor(milliseconds / 1000);
@@ -101,4 +98,4 @@ function formatTimestamp(timestamp: number): string {
     return `${year}-${month}-${day} ${hours}:${minutes}:${secs}`;
 }
 
-export { formatTimestamp };
+export { formatTimestamp,formatDate };
