@@ -48,9 +48,11 @@ const filter = ref({
   searchContent: ''
 })
 
+const isClipPage = ref(true)
+
 function showTooltip(index: number, text: string, event: MouseEvent) {
   const target = (event.currentTarget as HTMLElement).querySelector('span');
-  if (target && target.scrollHeight > target.clientHeight + 5) {
+  if (target && text.split('\n').length -1 >2) {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     tooltip.value = {
       visible: true,
@@ -147,7 +149,7 @@ function getFirstTwoLines(input: string): string {
   if (lines.length === 0) {
     return '';
   }
-  if (lines.length === 1) {
+  if ( lines.length === 1) {
     return lines[0];
   }
   return lines[0] + '\n' + lines[1];
@@ -165,7 +167,7 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
 </script>
 
 <template>
-  <div class="tabs tabs-lift">
+  <div class="tabs tabs-lift" @click="isClipPage=true">
     <label class="tab">
       <input type="radio" name="my_tabs_4" checked="checked"/>
       <span>history</span>
@@ -230,7 +232,7 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
       </ul>
     </div>
 
-    <label class="tab">
+    <label class="tab" @click="isClipPage=false">
       <input type="radio" name="my_tabs_4"/>
       Setting
     </label>
@@ -239,7 +241,7 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
       <SettingMain/>
     </div>
 
-    <div class="dropdown dropdown-end ml-auto">
+    <div class="dropdown dropdown-end ml-auto" v-show="isClipPage">
       <div tabindex="0" role="button" class="btn btn-ghost rounded-field">筛选</div>
       <ul tabindex="0" class="menu dropdown-content bg-base-200 rounded-box z-[1] mt-1 p-2 shadow-sm">
         <li>

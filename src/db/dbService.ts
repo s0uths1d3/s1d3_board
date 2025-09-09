@@ -62,7 +62,7 @@ class ClipboardService {
         const favorite: number = filter.value.favorite;
         const content: string = filter.value.searchContent;
 
-        let sql = `SELECT * FROM clipboard WHERE content like '%${content}%' ORDER BY last_use DESC LIMIT 100`;
+        let sql = `SELECT * FROM clipboard WHERE content like '%${content}%' ORDER BY last_use DESC LIMIT 500`;
         if (favorite === 1) {
             sql = `SELECT * FROM clipboard WHERE is_favorite = ${favorite} and content like '%${content}%' ORDER BY last_use DESC LIMIT 100`;
         }
