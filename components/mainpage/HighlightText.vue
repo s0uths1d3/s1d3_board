@@ -35,8 +35,6 @@ const processedText = computed(() => {
   let match;
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-
-      console.log(result)
       result.push(
           ...text.slice(lastIndex, match.index).split('')
               .map(char => ({ char, isHighlight: false }))

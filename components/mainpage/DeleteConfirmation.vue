@@ -14,7 +14,7 @@
         确定要删除吗？
       </div>
     </div>
-    <div class="w-full break-words whitespace-pre-wrap rounded-xl border border-accent bg-[rgba(255,255,255,0.4)] p-2 text-left text-sm text-ink-soft">
+    <div class="w-full break-words whitespace-pre-wrap rounded-xl border border-accent bg-surface-field p-2 text-left text-sm text-ink-soft">
       {{ deleteTarget?.content }}
     </div>
     <div class="mt-4 flex w-full justify-center gap-4">

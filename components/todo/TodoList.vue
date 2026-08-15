@@ -74,14 +74,14 @@
               v-model="newTodo.title"
               type="text"
               placeholder="任务标题 *"
-              class="w-full rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+              class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
               @keyup.enter="newTodo.title ? $refs.descriptionInput?.focus() : null"
           />
 
           <textarea
               ref="descriptionInput"
               v-model="newTodo.description"
-              class="w-full rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+              class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
               placeholder="任务描述（可选）"
               rows="2"
           ></textarea>
@@ -91,7 +91,7 @@
               <label class="mb-1 block text-ink-faint">优先级</label>
               <select
                   v-model="newTodo.priority"
-                  class="rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink focus:border-gold focus:outline-none"
+                  class="rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
               >
                 <option value="low">低优先级</option>
                 <option value="medium">中优先级</option>
@@ -104,7 +104,7 @@
               <input
                   v-model="newTodo.dueDate"
                   type="datetime-local"
-                  class="rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink focus:border-gold focus:outline-none"
+                  class="rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
               />
             </div>
 
@@ -112,7 +112,7 @@
               <label class="mb-1 block text-ink-faint">分类</label>
               <select
                   v-model="newTodo.category"
-                  class="rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink focus:border-gold focus:outline-none"
+                  class="rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
               >
                 <option v-for="category in categories" :key="category" :value="category">
                   {{ category }}
@@ -149,7 +149,7 @@
                 v-model="searchQuery"
                 type="text"
                 placeholder="搜索任务..."
-                class="w-64 rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                class="w-64 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             />
 
             <div class="dropdown dropdown-end">
@@ -209,13 +209,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import TodoItem from './Todoitem.vue'
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
 import type {Todo} from '~/src/Entities'
+import {isTauri} from "~/src/utils/env"
 
 const todos = ref<Todo[]>([])
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const showAddForm = ref(false)
 const newTodo = ref({
@@ -462,10 +464,19 @@ onMounted(async () => {
   requestNotificationPermission() // 请求通知权限
   fetchTodos()
 
-  // 每秒检查一次截止时间
-  setInterval(() => {
-    fetchTodos()
-    checkDueDateNotifications() // 使用默认配置
-  }, 1000)
+  // 仅在 Tauri 桌面容器内启用轮询（Web 端无数据，避免空转）
+  if (isTauri()) {
+    pollTimer = setInterval(() => {
+      fetchTodos()
+      checkDueDateNotifications() // 使用默认配置
+    }, 1000)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
 })
 </script>

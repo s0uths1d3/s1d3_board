@@ -35,11 +35,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import StickyNoteItem from "./StickyNoteItem.vue";
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
 import type { Note } from "~/src/Entities";
+import {isTauri} from "~/src/utils/env";
 
 interface StickyNote extends Note {
   position?: { x: number; y: number }
@@ -103,9 +104,19 @@ const fetchTodos = async () => {
   }
 };
 
-let intervalId;
+let intervalId: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
-  intervalId = setInterval(fetchTodos, 1000);
+  // 仅在 Tauri 桌面容器内启用轮询（Web 端无数据，避免空转）
+  if (isTauri()) {
+    intervalId = setInterval(fetchTodos, 1000);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (intervalId) {
+    clearInterval(intervalId);
+    intervalId = null;
+  }
 });
 </script>

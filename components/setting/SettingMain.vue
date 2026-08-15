@@ -4,20 +4,23 @@ import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { getOsTypeFromNavigator } from "~/src/utils/SystemOS";
 import clipboardService from '~/src/db/dbService';
 
-const osTye = ref('');
+const osType = ref('');
 
 interface SettingItem {
   label: string;
+  // input 用字符串值，select 用字符串数组（单选取 [0]）
   value: string | string[];
   type: 'input' | 'select' | 'checkbox';
 }
 
 interface SettingGroup {
   title: string;
-  type:string;
+  type: string;
   items: SettingItem[];
 }
-const apikey = ref('');
+
+// 各设置项的响应式状态（直接承载字符串值，避免把 ref 塞进静态配置数组导致 v-model 失效）
+const apiKey = ref('');
 const maxLimit = ref('');
 const colorScheme = ref(['深色', '浅色']);
 
@@ -33,7 +36,7 @@ const settings: SettingGroup[] = [
     items: [
       {
         label: 'API key',
-        value: apikey,
+        value: '',
         type: 'input'
       }
     ]
@@ -44,7 +47,7 @@ const settings: SettingGroup[] = [
     items: [
       {
         label: '最大查询数量',
-        value: maxLimit,
+        value: '',
         type: 'input'
       },
       {
@@ -58,16 +61,26 @@ const settings: SettingGroup[] = [
 
 const activeSetting = ref(settings[0]);
 
+// 将响应式状态同步进静态配置项的 value（模板通过 item.value 双向绑定）
+function syncSettingsToModel() {
+  const aiItem = settings.find(s => s.type === 'ai_setting')?.items[0]
+  if (aiItem) aiItem.value = apiKey.value
+  const generalItems = settings.find(s => s.type === 'general')?.items ?? []
+  const limitItem = generalItems.find(i => i.label === '最大查询数量')
+  if (limitItem) limitItem.value = maxLimit.value
+}
+
 onMounted(async () => {
-  osTye.value = getOsTypeFromNavigator();
+  osType.value = getOsTypeFromNavigator();
   maxLimit.value = await clipboardService.getKeyValue('max_save_count');
-  apikey.value = await clipboardService.getKeyValue('api_key');
+  apiKey.value = await clipboardService.getKeyValue('api_key');
+  syncSettingsToModel();
 });
 
 function controlDisplayText(key: string): string {
   let modifiedKey = key;
   if (modifiedKey.includes('Or')) {
-    if (osTye.value === 'Darwin') {
+    if (osType.value === 'Darwin') {
       return modifiedKey.replace('CommandOrControl', 'Command');
     } else {
       return modifiedKey.replace('CommandOrControl', 'ctrl');
@@ -76,11 +89,16 @@ function controlDisplayText(key: string): string {
   return key;
 }
 
-async function applySettings(type:string) {
-  if (type === 'ai_setting')
-    await clipboardService.setKeyValue('api_key',apikey.value)
-  else if (type === 'general')
-    await clipboardService.setKeyValue('max_save_count',maxLimit.value)
+async function applySettings(type: string) {
+  if (type === 'ai_setting') {
+    const aiItem = settings.find(s => s.type === 'ai_setting')?.items[0]
+    apiKey.value = (aiItem?.value as string) ?? ''
+    await clipboardService.setKeyValue('api_key', apiKey.value)
+  } else if (type === 'general') {
+    const limitItem = settings.find(s => s.type === 'general')?.items.find(i => i.label === '最大查询数量')
+    maxLimit.value = (limitItem?.value as string) ?? ''
+    await clipboardService.setKeyValue('max_save_count', maxLimit.value)
+  }
 }
 </script>
 
@@ -110,9 +128,10 @@ async function applySettings(type:string) {
                 <div class="text-ink">{{ item.label }}</div>
               </div>
               <div>
-                <input v-if="item.type === 'input'" type="text" v-model="item.value"
-                       class="w-fit rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
-                <select v-if="item.type === 'select'" v-model="item.value[0]" class="rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink focus:border-gold focus:outline-none">
+                <input v-if="item.type === 'input'" type="text"
+                       v-model="item.value"
+                       class="w-fit rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
+                <select v-if="item.type === 'select'" v-model="colorScheme[0]" class="rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none">
                   <option v-for="(value, index) in colorScheme" :key="index" :value="value">
                     {{ value }}
                   </option>

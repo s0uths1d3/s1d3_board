@@ -21,8 +21,8 @@ tauri-build = { version = "2.2.0", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.5.0", features = ["unstable", "tray-icon", "image-png"] }
-tauri-plugin-log = "2.0.0-rc"
+tauri = { version = "2.11.5", features = ["unstable", "tray-icon", "image-png"] }
+tauri-plugin-log = "2"
 tauri-plugin-clipboard = "2.1.11"
 
 arboard = "3.5.0"
@@ -41,4 +41,4 @@ tauri-plugin-single-instance = "2"
 
 [dependencies.tauri-plugin-sql]
 features = ["sqlite"] # or "postgres", or "mysql"
-version = "2.2.0"
+version = "2.4.0"

@@ -39,13 +39,21 @@ body::after {
 }
 
 @layer components {
-  /* 玻璃拟态 */
+  /* 玻璃拟态（导航/弹层）：保留半透明白玻璃 */
   .glass {
-    @apply bg-[rgba(255,255,255,0.45)] backdrop-blur-xl border border-[rgba(255,255,255,0.55)];
+    background-color: rgba(255, 255, 255, 0.45);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.55);
   }
 
+  /* 非选中卡片面：比米白背景深一档的暖褐实色 + 清晰描边，提升辨识度 */
   .glass-card {
-    @apply bg-[rgba(255,255,255,0.55)] backdrop-blur-xl border border-[rgba(255,255,255,0.6)] shadow-soft;
+    background-color: #ece1d0;
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    border: 1px solid #cbbfa9;
+    box-shadow: 0 4px 16px rgba(74, 64, 52, 0.14);
   }
 
   /* 金色激活指示线（导航 tab、按钮） */

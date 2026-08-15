@@ -52,7 +52,7 @@
       <textarea
           v-model="editContent"
           ref="textareaRef"
-          class="h-32 w-full resize-none bg-white/50 p-2 text-ink outline-none rounded-lg"
+          class="h-32 w-full resize-none bg-surface-field p-2 text-ink outline-none rounded-lg"
           placeholder="输入便签内容..."
           @blur="saveEdit"
           @keydown.ctrl.enter="saveEdit"

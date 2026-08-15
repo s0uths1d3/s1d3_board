@@ -161,7 +161,7 @@ fn close_app(window: tauri::Window) {
 
 #[cfg(target_os = "windows")]
 #[tauri::command]
-fn paste(window: tauri::Window) {
+fn paste(_window: tauri::Window) {
     use enigo::{
         Direction::{Click, Press, Release},
         Enigo, Key, Keyboard, Settings,

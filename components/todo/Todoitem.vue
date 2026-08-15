@@ -106,17 +106,17 @@
         </div>
       </div>
 
-      <div v-if="isEditing" class="mt-4 rounded-xl bg-[rgba(255,255,255,0.5)] p-4">
+      <div v-if="isEditing" class="mt-4 rounded-xl bg-surface-field p-4">
         <div class="space-y-3">
           <input
               v-model="editTitle"
               type="text"
-              class="w-full rounded-xl border border-accent bg-white/60 px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+              class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
               placeholder="任务标题"
           />
           <textarea
               v-model="editDescription"
-              class="w-full rounded-xl border border-accent bg-white/60 px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+              class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
               placeholder="任务描述（可选）"
               rows="2"
           ></textarea>
