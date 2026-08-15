@@ -90,8 +90,8 @@ async function applySettings(type:string) {
       <div class="w-1/5 pr-4">
         <div v-for="(setting, index) in settings" :key="index" class="mb-2">
           <button
-              class="btn btn-ghost btn-block"
-              :class="{ 'btn-active': activeSetting === setting }"
+              class="btn-soft btn-block w-full"
+              :class="{ 'border-gold bg-secondary text-gold': activeSetting === setting }"
               @click="activeSetting = setting"
           >
             {{ setting.title }}
@@ -100,19 +100,19 @@ async function applySettings(type:string) {
       </div>
       <div class="w-4/5">
         <div v-if="activeSetting">
-          <ul class="list bg-base-100 rounded-box shadow-md">
-            <li class="p-4 pb-2 text-xs opacity-60 tracking-wide">
+          <ul class="glass-card rounded-2xl shadow-soft">
+            <li class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
               {{ activeSetting.title }}
             </li>
             <li v-for="(item, itemIndex) in activeSetting.items" :key="itemIndex"
-                class="list-row flex justify-between items-center p-4">
+                class="list-row flex items-center justify-between p-4">
               <div>
-                <div>{{ item.label }}</div>
+                <div class="text-ink">{{ item.label }}</div>
               </div>
               <div>
                 <input v-if="item.type === 'input'" type="text" v-model="item.value"
-                       class="input input-neutral w-fit"/>
-                <select v-if="item.type === 'select'" v-model="item.value[0]" class="select">
+                       class="w-fit rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
+                <select v-if="item.type === 'select'" v-model="item.value[0]" class="rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink focus:border-gold focus:outline-none">
                   <option v-for="(value, index) in colorScheme" :key="index" :value="value">
                     {{ value }}
                   </option>
@@ -120,7 +120,7 @@ async function applySettings(type:string) {
               </div>
             </li>
             <li>
-              <button class="btn btn-ghost btn-block" @click="applySettings(activeSetting.type)">
+              <button class="btn-gold btn-block w-full" @click="applySettings(activeSetting.type)">
                 {{ '应用' }}
               </button>
             </li>
@@ -130,9 +130,3 @@ async function applySettings(type:string) {
     </div>
   </div>
 </template>
-
-<style scoped>
-.btn-active {
-  background-color: #41bd9a;
-}
-</style>

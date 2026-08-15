@@ -13,7 +13,7 @@ const props = defineProps<TooltipProps>();
 <template>
   <div
       v-if="props.visible"
-      class="fixed max-w-[2/3] bg-black shadow-lg p-3 rounded-lg text-sm leading-relaxed z-50 whitespace-pre-wrap tabular-nums"
+      class="glass-card fixed z-50 max-w-[66%] whitespace-pre-wrap rounded-xl p-3 text-sm leading-relaxed tabular-nums text-ink"
       :style="{ top: props.y + 'px', left: props.x + 'px' }"
   >
     {{ props.text }}

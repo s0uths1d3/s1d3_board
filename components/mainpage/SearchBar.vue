@@ -48,10 +48,10 @@ const setHighlightState = () => {
         @click.stop
     >
       <div
-          class="bg-base-200 text-base-content shadow-lg rounded-xl p-3 flex items-center gap-2"
+          class="glass-card flex items-center gap-2 rounded-2xl p-3 text-ink"
       >
         <svg
-            class="h-5 w-5 opacity-60"
+            class="h-5 w-5 text-ink-faint transition-transform duration-300 ease-soft hover:rotate-12 hover:scale-110"
             fill="none"
             stroke="currentColor"
             stroke-width="2"
@@ -68,11 +68,11 @@ const setHighlightState = () => {
             v-model="searchContent"
             type="text"
             placeholder="搜索内容..."
-            class="input input-ghost w-full focus:outline-none bg-transparent"
+            class="w-full bg-transparent text-ink placeholder:text-ink-faint focus:outline-none"
         />
         <button
             type="button"
-            class="btn btn-ghost btn-sm p-0 ml-2"
+            class="btn-soft btn-circle p-0 ml-2"
             @click="setHighlightState"
         >
           <svg v-if="props.highlight" class="h-6 w-6" viewBox="0 0 1024 1024"
@@ -91,7 +91,7 @@ const setHighlightState = () => {
 
         <button
             type="button"
-            class="btn btn-ghost btn-sm p-0 ml-2"
+            class="btn-soft btn-circle p-0 ml-2"
             @click="clearSearchBox"
         >
           <svg

@@ -1,19 +1,19 @@
 <template>
   <div class="min-h-screen p-4">
     <div class="relative max-w-7xl mx-auto">
-      <div class="mb-6 flex items-center justify-between">
+      <div class="mb-6 flex items-center">
         <button
             @click="createNote"
-            class="btn btn-primary btn-lg shadow-lg hover:shadow-xl transition-all duration-200"
+            class="btn-gold flex items-center shadow-soft transition-all duration-300 ease-soft hover:shadow-float"
         >
           新建便签
-          <svg class="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="ml-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
           </svg>
         </button>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         <StickyNoteItem
             v-for="note in notes"
             :key="note.id"
@@ -24,11 +24,11 @@
         />
       </div>
 
-      <div v-if="notes.length === 0" class="text-center py-20">
-        <svg class="w-24 h-24 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div v-if="notes.length === 0" class="py-20 text-center">
+        <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
         </svg>
-        <p class="text-gray-500 text-lg">还没有便签，点击上方按钮创建第一个便签吧！</p>
+        <p class="text-lg text-ink-faint">还没有便签，点击上方按钮创建第一个便签吧！</p>
       </div>
     </div>
   </div>
@@ -48,12 +48,12 @@ interface StickyNote extends Note {
 const notes = ref<StickyNote[]>([])
 
 const colors = [
-  { name: 'yellow', class: 'bg-yellow-200 border-yellow-300' },
-  { name: 'pink', class: 'bg-pink-200 border-pink-300' },
-  { name: 'blue', class: 'bg-blue-200 border-blue-300' },
-  { name: 'green', class: 'bg-green-200 border-green-300' },
-  { name: 'purple', class: 'bg-purple-200 border-purple-300' },
-  { name: 'orange', class: 'bg-orange-200 border-orange-300' }
+  { name: 'yellow', class: 'bg-[rgba(224,212,170,0.55)] border border-[rgba(200,180,120,0.5)]' },
+  { name: 'pink', class: 'bg-[rgba(224,196,200,0.55)] border border-[rgba(200,150,160,0.5)]' },
+  { name: 'blue', class: 'bg-[rgba(186,206,224,0.55)] border border-[rgba(140,170,200,0.5)]' },
+  { name: 'green', class: 'bg-[rgba(196,214,186,0.55)] border border-[rgba(150,180,140,0.5)]' },
+  { name: 'purple', class: 'bg-[rgba(206,196,224,0.55)] border border-[rgba(170,150,200,0.5)]' },
+  { name: 'orange', class: 'bg-[rgba(224,200,176,0.55)] border border-[rgba(200,160,120,0.5)]' }
 ]
 
 const createNote = async () => {

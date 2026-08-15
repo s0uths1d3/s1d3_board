@@ -1,6 +1,6 @@
 <template>
     <span v-for="(charInfo, index) in processedText" :key="index"
-          :class="{ 'bg-yellow-300 text-black': charInfo.isHighlight }">
+          :class="{ 'rounded bg-gold/30 text-ink': charInfo.isHighlight }">
       {{ charInfo.char }}
     </span>
 </template>

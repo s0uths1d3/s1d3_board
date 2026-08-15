@@ -1,15 +1,12 @@
-import tailwindcss from "@tailwindcss/vite";
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   compatibilityDate: '2025-05-15',
   devtools: { enabled: true },
   ssr: false,
   devServer: { host: process.env.TAURI_DEV_HOST || 'localhost' },
+  modules: ['@nuxtjs/tailwindcss'],
   css: ['~/assets/css/main.css'],
   vite: {
-    plugins: [
-      tailwindcss(),
-    ],
     // Better support for Tauri CLI output
     clearScreen: false,
     // Enable environment variables

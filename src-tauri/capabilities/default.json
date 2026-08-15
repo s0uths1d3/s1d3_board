@@ -29,6 +29,8 @@
     "sql:allow-execute",
     "sql:allow-load",
     "sql:allow-select",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
     "global-shortcut:allow-unregister-all",
     "core:window:allow-request-user-attention",
     "core:webview:allow-set-webview-focus",

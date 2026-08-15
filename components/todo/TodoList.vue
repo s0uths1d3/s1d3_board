@@ -2,61 +2,63 @@
   <div class="min-h-screen p-4">
     <div class="max-w-6xl mx-auto">
       <div class="mb-8">
-        <h1 class="text-4xl font-bold text-base-content mb-4">任务清单</h1>
+        <div class="gold-bar mb-4 inline-block">
+          <h1 class="text-4xl font-bold text-ink">任务清单</h1>
+        </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <div class="stat bg-base-200 rounded-lg shadow-md border border-base-300">
-            <div class="stat-figure text-primary">
-              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+          <div class="glass-card rounded-2xl p-4 shadow-soft">
+            <div class="mb-1 text-gold">
+              <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
               </svg>
             </div>
-            <div class="stat-title text-base-content/70">总任务</div>
-            <div class="stat-value text-primary">{{ todos.length }}</div>
+            <div class="text-xs uppercase tracking-wide text-ink-faint">总任务</div>
+            <div class="text-2xl font-semibold text-ink">{{ todos.length }}</div>
           </div>
 
-          <div class="stat bg-base-200 rounded-lg shadow-md border border-base-300">
-            <div class="stat-figure text-warning">
-              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="glass-card rounded-2xl p-4 shadow-soft">
+            <div class="mb-1 text-gold">
+              <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
             </div>
-            <div class="stat-title text-base-content/70">进行中</div>
-            <div class="stat-value text-warning">{{ pendingCount }}</div>
+            <div class="text-xs uppercase tracking-wide text-ink-faint">进行中</div>
+            <div class="text-2xl font-semibold text-ink">{{ pendingCount }}</div>
           </div>
 
-          <div class="stat bg-base-200 rounded-lg shadow-md border border-base-300">
-            <div class="stat-figure text-success">
-              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="glass-card rounded-2xl p-4 shadow-soft">
+            <div class="mb-1 text-gold">
+              <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
             </div>
-            <div class="stat-title text-base-content/70">已完成</div>
-            <div class="stat-value text-success">{{ completedCount }}</div>
+            <div class="text-xs uppercase tracking-wide text-ink-faint">已完成</div>
+            <div class="text-2xl font-semibold text-ink">{{ completedCount }}</div>
           </div>
 
-          <div class="stat bg-base-200 rounded-lg shadow-md border border-base-300">
-            <div class="stat-figure text-info">
-              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="glass-card rounded-2xl p-4 shadow-soft">
+            <div class="mb-1 text-gold">
+              <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
               </svg>
             </div>
-            <div class="stat-title text-base-content/70">完成率</div>
-            <div class="stat-value text-info">{{ completionRate }}%</div>
+            <div class="text-xs uppercase tracking-wide text-ink-faint">完成率</div>
+            <div class="text-2xl font-semibold text-ink">{{ completionRate }}%</div>
           </div>
         </div>
       </div>
 
-      <div class="bg-base-200 rounded-lg shadow-md p-4 mb-6 border border-base-300">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold text-base-content">添加新任务</h2>
+      <div class="glass-card mb-6 rounded-2xl p-4 shadow-soft">
+        <div class="mb-3 flex items-center justify-between">
+          <h2 class="text-lg font-semibold text-ink">添加新任务</h2>
           <button
               @click="toggleAddForm"
-              class="btn btn-ghost btn-sm"
+              class="btn-soft flex items-center"
           >
             {{ showAddForm ? '收起' : '展开' }}
             <svg
-                class="w-4 h-4 ml-1 transform transition-transform"
+                class="ml-1 h-4 w-4 transform transition-transform duration-300 ease-soft"
                 :class="{ 'rotate-180': showAddForm }"
                 fill="none"
                 stroke="currentColor"
@@ -68,34 +70,28 @@
         </div>
 
         <div v-show="showAddForm" class="space-y-3">
-          <div class="form-control">
-            <input
-                v-model="newTodo.title"
-                type="text"
-                placeholder="任务标题 *"
-                class="input input-bordered w-full bg-base-300 text-base-content placeholder-base-content/50 border-base-400"
-                @keyup.enter="newTodo.title ? $refs.descriptionInput?.focus() : null"
-            />
-          </div>
+          <input
+              v-model="newTodo.title"
+              type="text"
+              placeholder="任务标题 *"
+              class="w-full rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+              @keyup.enter="newTodo.title ? $refs.descriptionInput?.focus() : null"
+          />
 
-          <div class="form-control">
-            <textarea
-                ref="descriptionInput"
-                v-model="newTodo.description"
-                class="textarea textarea-bordered w-full bg-base-300 text-base-content placeholder-base-content/50 border-base-400"
-                placeholder="任务描述（可选）"
-                rows="2"
-            ></textarea>
-          </div>
+          <textarea
+              ref="descriptionInput"
+              v-model="newTodo.description"
+              class="w-full rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+              placeholder="任务描述（可选）"
+              rows="2"
+          ></textarea>
 
           <div style="display: flex;justify-content: space-between">
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text text-base-content/70">优先级</span>
-              </label>
+            <div>
+              <label class="mb-1 block text-ink-faint">优先级</label>
               <select
                   v-model="newTodo.priority"
-                  class="select select-bordered bg-base-300 text-base-content border-base-400"
+                  class="rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink focus:border-gold focus:outline-none"
               >
                 <option value="low">低优先级</option>
                 <option value="medium">中优先级</option>
@@ -103,24 +99,20 @@
               </select>
             </div>
 
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text text-base-content/70">截止日期</span>
-              </label>
+            <div>
+              <label class="mb-1 block text-ink-faint">截止日期</label>
               <input
                   v-model="newTodo.dueDate"
                   type="datetime-local"
-                  class="input input-bordered w-full bg-base-300 text-base-content border-base-400"
+                  class="rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink focus:border-gold focus:outline-none"
               />
             </div>
 
-            <div class="form-control">
-              <label class="label">
-                <span class="label-text text-base-content/70">分类</span>
-              </label>
+            <div>
+              <label class="mb-1 block text-ink-faint">分类</label>
               <select
                   v-model="newTodo.category"
-                  class="select select-bordered bg-base-300 text-base-content border-base-400"
+                  class="rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-ink focus:border-gold focus:outline-none"
               >
                 <option v-for="category in categories" :key="category" :value="category">
                   {{ category }}
@@ -132,17 +124,17 @@
           <div class="flex gap-2">
             <button
                 @click="addTodo"
-                class="btn btn-primary"
+                class="btn-gold flex items-center"
                 :disabled="!newTodo.title.trim()"
             >
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
               </svg>
               添加任务
             </button>
             <button
                 @click="resetForm"
-                class="btn btn-ghost hover:bg-base-300"
+                class="btn-soft"
             >
               重置
             </button>
@@ -150,42 +142,40 @@
         </div>
       </div>
 
-      <div class="bg-base-200 rounded-lg shadow-md p-4 mb-6 border border-base-300">
-        <div class="flex flex-col lg:flex-row gap-4">
-          <div class="flex gap-2 flex-1">
-            <div class="form-control">
-              <input
-                  v-model="searchQuery"
-                  type="text"
-                  placeholder="搜索任务..."
-                  class="input input-bordered input-sm w-64 bg-base-300 text-base-content placeholder-base-content/50 border-base-400"
-              />
-            </div>
+      <div class="glass-card mb-6 rounded-2xl p-4 shadow-soft">
+        <div class="flex flex-col gap-4 lg:flex-row">
+          <div class="flex flex-1 gap-2">
+            <input
+                v-model="searchQuery"
+                type="text"
+                placeholder="搜索任务..."
+                class="w-64 rounded-xl border border-accent bg-[rgba(255,255,255,0.5)] px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+            />
 
             <div class="dropdown dropdown-end">
-              <label tabindex="0" class="btn btn-sm btn-outline border-base-400 hover:bg-base-300">
+              <label tabindex="0" class="btn-soft flex items-center">
                 {{ currentFilter }}
-                <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="ml-1 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                 </svg>
               </label>
-              <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-200 rounded-box w-32 border border-base-300">
+              <ul tabindex="0" class="dropdown-content glass-card menu w-32 rounded-2xl p-2">
                 <li v-for="filter in filters" :key="filter.value">
-                  <a @click="setFilter(filter.value)" class="hover:bg-base-300">{{ filter.label }}</a>
+                  <a @click="setFilter(filter.value)" class="rounded-lg hover:bg-secondary">{{ filter.label }}</a>
                 </li>
               </ul>
             </div>
 
             <div class="dropdown dropdown-end">
-              <label tabindex="0" class="btn btn-sm btn-outline border-base-400 hover:bg-base-300">
+              <label tabindex="0" class="btn-soft flex items-center">
                 排序
-                <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="ml-1 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"></path>
                 </svg>
               </label>
-              <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-200 rounded-box w-40 border border-base-300">
+              <ul tabindex="0" class="dropdown-content glass-card menu w-40 rounded-2xl p-2">
                 <li v-for="sort in sortOptions" :key="sort.value">
-                  <a @click="setSort(sort.value)" class="hover:bg-base-300">{{ sort.label }}</a>
+                  <a @click="setSort(sort.value)" class="rounded-lg hover:bg-secondary">{{ sort.label }}</a>
                 </li>
               </ul>
             </div>
@@ -206,11 +196,11 @@
         />
       </div>
 
-      <div v-if="filteredAndSortedTodos.length === 0" class="text-center py-20">
-        <svg class="w-24 h-24 mx-auto text-base-content/30 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div v-if="filteredAndSortedTodos.length === 0" class="py-20 text-center">
+        <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
         </svg>
-        <p class="text-base-content/50 text-lg">
+        <p class="text-lg text-ink-faint">
           {{ todos.length === 0 ? '还没有任务，添加第一个任务吧！' : '没有符合条件的任务' }}
         </p>
       </div>

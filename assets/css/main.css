@@ -1,2 +1,193 @@
-@import "tailwindcss";
-@plugin "daisyui";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 全局背景：暖色斜向渐变 + 两处大尺寸暖光晕 */
+body {
+  position: relative;
+  min-height: 100vh;
+  color: #4a4438;
+  background: linear-gradient(135deg, #faf6f2 0%, #f5ede4 50%, #ebe0d4 100%);
+  background-attachment: fixed;
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  border-radius: 9999px;
+  filter: blur(140px);
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+body::before {
+  width: 520px;
+  height: 520px;
+  top: -160px;
+  right: -120px;
+  background: radial-gradient(circle, rgba(196, 167, 125, 0.55), transparent 70%);
+}
+
+body::after {
+  width: 480px;
+  height: 480px;
+  bottom: -180px;
+  left: -140px;
+  background: radial-gradient(circle, rgba(212, 201, 184, 0.6), transparent 70%);
+}
+
+@layer components {
+  /* 玻璃拟态 */
+  .glass {
+    @apply bg-[rgba(255,255,255,0.45)] backdrop-blur-xl border border-[rgba(255,255,255,0.55)];
+  }
+
+  .glass-card {
+    @apply bg-[rgba(255,255,255,0.55)] backdrop-blur-xl border border-[rgba(255,255,255,0.6)] shadow-soft;
+  }
+
+  /* 金色激活指示线（导航 tab、按钮） */
+  .gold-underline {
+    @apply relative;
+  }
+  .gold-underline::after {
+    content: "";
+    @apply absolute -bottom-1 left-0 h-[2px] w-0 bg-gold transition-all duration-300 ease-soft;
+  }
+  .gold-underline.is-active::after {
+    @apply w-full;
+  }
+
+  /* 标题竖条（金色） */
+  .gold-bar {
+    @apply relative pl-3;
+  }
+  .gold-bar::before {
+    content: "";
+    @apply absolute left-0 top-1/2 h-[70%] w-[3px] -translate-y-1/2 rounded-full bg-gold;
+  }
+
+  /* 浅色按钮（替代 daisyui btn-ghost） */
+  .btn-soft {
+    @apply rounded-xl border border-accent px-4 py-2 text-sm font-medium text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm;
+  }
+  .btn-gold {
+    @apply rounded-xl bg-gold px-4 py-2 text-sm font-medium text-white transition-all duration-300 ease-soft hover:bg-gold-soft hover:shadow-float;
+  }
+}
+
+/* 深色代码块（GitHub Dark 高亮风格） */
+.code-block {
+  background: #2d2d2d;
+  color: #e6e6e6;
+  border-radius: 0.75rem;
+}
+.code-block code .tok-key { color: #ff7b72; }
+.code-block code .tok-str { color: #a5d6ff; }
+.code-block code .tok-com { color: #8b949e; }
+.code-block code .tok-num { color: #79c0ff; }
+
+/* 页面"卷帘式"过渡（clip-path，不破坏 sticky 布局） */
+.page-curtain-enter-active {
+  animation: curtainIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.page-curtain-leave-active {
+  animation: curtainOut 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(196, 167, 125, 0.5);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 无障碍：尊重 prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .page-curtain-enter-active,
+  .page-curtain-leave-active {
+    animation: none !important;
+  }
+}
+
+/* ===== 替代 daisyui 组件类（纯 CSS 实现） ===== */
+
+/* 下拉菜单：点击 label（tabindex）聚焦后展开，点击外部失焦收起 */
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+.dropdown-content {
+  position: absolute;
+  z-index: 50;
+  top: 100%;
+  margin-top: 0.25rem;
+  min-width: 8rem;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    visibility 0.2s;
+}
+.dropdown-end .dropdown-content {
+  right: 0;
+}
+.dropdown:focus-within .dropdown-content {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+/* 竖向菜单 */
+.menu {
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem;
+}
+.menu li > a,
+.menu li > button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  color: #4a4438;
+  cursor: pointer;
+  transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.menu li > a:hover,
+.menu li > button:hover {
+  background: #e8e0d5;
+}
+
+/* 列表行（剪贴板） */
+.list {
+  display: flex;
+  flex-direction: column;
+}
+.list-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content 1fr max-content;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+}
+
