@@ -18,6 +18,9 @@ logs
 .fleet
 .idea
 
+# CodeBuddy workspace data
+.codebuddy
+
 # Local env files
 .env
 .env.*

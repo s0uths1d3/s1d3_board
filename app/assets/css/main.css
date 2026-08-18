@@ -107,12 +107,33 @@ body::after {
 .code-block code .tok-com { color: #8b949e; }
 .code-block code .tok-num { color: #79c0ff; }
 
-/* 页面"卷帘式"过渡（clip-path，不破坏 sticky 布局） */
+/* 页面切换过渡：柔和的淡入 + 上浮（丝滑体验，代替生硬的卷帘 clip-path） */
+@keyframes pageFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes pageFadeOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.995);
+  }
+}
+
 .page-curtain-enter-active {
-  animation: curtainIn 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: pageFadeIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .page-curtain-leave-active {
-  animation: curtainOut 0.5s cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: pageFadeOut 0.18s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 /* 滚动条美化 */

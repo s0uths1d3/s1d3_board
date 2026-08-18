@@ -102,6 +102,36 @@ class ClipboardService {
         return  await this.db!.select("SELECT * FROM settings WHERE type = $1", ['shortcut']);
     }
 
+    /** 保存单个快捷键到 settings 表（key = shortcut_<id>，不存在则插入，存在则更新） */
+    public async saveShortcutSetting(id: string, value: string, scope: string, title: string): Promise<void> {
+        await this.ensureDbInitialized();
+        const now = Math.floor(Date.now());
+        const key = `shortcut_${id}`;
+        const existing: any[] = await this.db!.select("SELECT id FROM settings WHERE key = $1", [key]);
+        if (existing.length > 0) {
+            await this.db!.execute(
+                "UPDATE settings SET value = $1, description = $2, scope = $3, updated_at = $4 WHERE key = $5",
+                [value, title, scope, now, key]
+            );
+        } else {
+            await this.db!.execute(
+                "INSERT INTO settings (key, value, type, description, scope, updated_at) VALUES ($1, $2, 'shortcut', $3, $4, $5)",
+                [key, value, title, scope, now]
+            );
+        }
+    }
+
+    /** 加载已保存的快捷键配置（返回 { id, value }[]） */
+    public async loadShortcutSettings(): Promise<{ id: string; value: string }[]> {
+        await this.ensureDbInitialized();
+        const rows: any[] = await this.db!.select(
+            "SELECT key, value FROM settings WHERE type = 'shortcut' AND value IS NOT NULL AND value != ''"
+        );
+        return rows
+            .filter(r => typeof r.key === 'string' && r.key.startsWith('shortcut_'))
+            .map(r => ({ id: r.key.slice('shortcut_'.length), value: r.value }));
+    }
+
     public async setKeyValue(key : string,value: string): Promise<void> {
         console.log(value);
         await this.ensureDbInitialized();
