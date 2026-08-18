@@ -24,8 +24,7 @@
     "tauri-plugin-clipboard-api": "^2.1.11",
     "uuid": "^14.0.1",
     "vue": "^3.5.41",
-    "vue-router": "^5.2.0",
-    "clipboardy": "^4.0.0"
+    "vue-router": "^5.2.0"
   },
   "devDependencies": {
     "@nuxtjs/tailwindcss": "^6.12.0",

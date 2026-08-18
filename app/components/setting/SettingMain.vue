@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { getOsTypeFromNavigator } from "~/src/utils/SystemOS";
 import clipboardService from '~/src/db/dbService';
@@ -19,10 +19,21 @@ interface SettingGroup {
   items: SettingItem[];
 }
 
-// 各设置项的响应式状态（直接承载字符串值，避免把 ref 塞进静态配置数组导致 v-model 失效）
+// 各设置项的响应式状态（直接承载值，并通过 watch 实时持久化，无需“应用”按钮）
 const apiKey = ref('');
 const maxLimit = ref('');
 const colorScheme = ref(['深色', '浅色']);
+
+// 实时保存：任意设置项变化即写入数据库
+watch(apiKey, async (val) => {
+  await clipboardService.setKeyValue('api_key', val ?? '');
+});
+watch(maxLimit, async (val) => {
+  await clipboardService.setKeyValue('max_save_count', val ?? '');
+});
+watch(colorScheme, async (val) => {
+  await clipboardService.setKeyValue('color_scheme', val?.[0] ?? '');
+}, { deep: true });
 
 const settings: SettingGroup[] = [
   {
@@ -61,20 +72,16 @@ const settings: SettingGroup[] = [
 
 const activeSetting = ref(settings[0]);
 
-// 将响应式状态同步进静态配置项的 value（模板通过 item.value 双向绑定）
-function syncSettingsToModel() {
-  const aiItem = settings.find(s => s.type === 'ai_setting')?.items[0]
-  if (aiItem) aiItem.value = apiKey.value
-  const generalItems = settings.find(s => s.type === 'general')?.items ?? []
-  const limitItem = generalItems.find(i => i.label === '最大查询数量')
-  if (limitItem) limitItem.value = maxLimit.value
-}
-
 onMounted(async () => {
   osType.value = getOsTypeFromNavigator();
   maxLimit.value = await clipboardService.getKeyValue('max_save_count');
   apiKey.value = await clipboardService.getKeyValue('api_key');
-  syncSettingsToModel();
+  try {
+    const scheme = await clipboardService.getKeyValue('color_scheme');
+    if (scheme) colorScheme.value = [scheme, scheme === '深色' ? '浅色' : '深色'];
+  } catch (e) {
+    // 尚未设置过配色，使用默认值
+  }
 });
 
 function controlDisplayText(key: string): string {
@@ -87,18 +94,6 @@ function controlDisplayText(key: string): string {
     }
   }
   return key;
-}
-
-async function applySettings(type: string) {
-  if (type === 'ai_setting') {
-    const aiItem = settings.find(s => s.type === 'ai_setting')?.items[0]
-    apiKey.value = (aiItem?.value as string) ?? ''
-    await clipboardService.setKeyValue('api_key', apiKey.value)
-  } else if (type === 'general') {
-    const limitItem = settings.find(s => s.type === 'general')?.items.find(i => i.label === '最大查询数量')
-    maxLimit.value = (limitItem?.value as string) ?? ''
-    await clipboardService.setKeyValue('max_save_count', maxLimit.value)
-  }
 }
 </script>
 
@@ -128,8 +123,17 @@ async function applySettings(type: string) {
                 <div class="text-ink">{{ item.label }}</div>
               </div>
               <div>
-                <input v-if="item.type === 'input'" type="text"
+                <input v-if="item.type === 'input' && item.label === 'API key'" type="text"
+                       v-model="apiKey"
+                       placeholder="输入 API key"
+                       class="w-fit rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
+                <input v-else-if="item.type === 'input' && item.label === '最大查询数量'" type="text"
+                       v-model="maxLimit"
+                       placeholder="如 500"
+                       class="w-fit rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
+                <input v-else-if="item.type === 'input'" type="text"
                        v-model="item.value"
+                       :disabled="true"
                        class="w-fit rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
                 <select v-if="item.type === 'select'" v-model="colorScheme[0]" class="rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none">
                   <option v-for="(value, index) in colorScheme" :key="index" :value="value">
@@ -137,11 +141,6 @@ async function applySettings(type: string) {
                   </option>
                 </select>
               </div>
-            </li>
-            <li>
-              <button class="btn-gold btn-block w-full" @click="applySettings(activeSetting.type)">
-                {{ '应用' }}
-              </button>
             </li>
           </ul>
         </div>

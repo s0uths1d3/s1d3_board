@@ -159,7 +159,6 @@ fn close_app(window: tauri::Window) {
     window.close().unwrap();
 }
 
-#[cfg(target_os = "windows")]
 #[tauri::command]
 fn paste(_window: tauri::Window) {
     use enigo::{
@@ -170,7 +169,13 @@ fn paste(_window: tauri::Window) {
     sleep(Duration::from_millis(300));
     let mut enigo = Enigo::new(&Settings::default()).unwrap();
 
-    enigo.key(Key::Control, Press).unwrap();
+    // 跨平台粘贴：macOS 使用 Command(meta)+V，其余使用 Ctrl+V
+    #[cfg(target_os = "macos")]
+    let modifier = Key::Meta;
+    #[cfg(not(target_os = "macos"))]
+    let modifier = Key::Control;
+
+    enigo.key(modifier, Press).unwrap();
     enigo.key(Key::Unicode('v'), Click).unwrap();
-    enigo.key(Key::Control, Release).unwrap();
+    enigo.key(modifier, Release).unwrap();
 }

@@ -15,7 +15,7 @@ import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {deleteTarget, showConfirm} from "~/src/commands/local/DelCommand";
 import {isTauri} from "~/src/utils/env";
 import clipboardService from "~/src/db/dbService";
-import clipboard from "clipboardy";
+import { writeText } from "tauri-plugin-clipboard-api";
 import {invoke} from "@tauri-apps/api/core";
 import StickyNote from "~/components/note/StickyNote.vue";
 import TodoList from "~/components/todo/TodoList.vue";
@@ -127,13 +127,24 @@ async function favorite(id: number, value: number) {
 
 async function handleKeyDown(event: KeyboardEvent) {
   if (event.key === 'Enter') {
-    await clipboardService.increaseUseCount(getSelectedRowIndex()).then(() => {
-      clipboard.write(data.value[getSelectedRowIndex()].content).then(() => {
-        invoke('paste')
-      })
-    })
+    const content = data.value[getSelectedRowIndex()].content;
+    await clipboardService.increaseUseCount(getSelectedRowIndex());
+    // 跨平台写入系统剪贴板：Tauri 桌面端走原生插件，Web 端回退到浏览器 API
+    try {
+      if (isTauri()) {
+        await writeText(content);
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(content);
+      }
+    } catch (err) {
+      console.error('写入剪贴板失败:', err);
+    }
+    // 仅在桌面端模拟粘贴（Ctrl/Cmd+V）
+    if (isTauri()) {
+      await invoke('paste');
+    }
     await getCurrentWindow().hide();
-    setWindowVisible()
+    setWindowVisible();
   }
 }
 
