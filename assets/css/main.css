@@ -86,6 +86,16 @@ body::after {
   }
 }
 
+/* 自定义标题栏拖拽区域（Tauri 无边框窗口） */
+.drag-region {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 /* 深色代码块（GitHub Dark 高亮风格） */
 .code-block {
   background: #2d2d2d;

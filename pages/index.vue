@@ -182,7 +182,7 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
 </script>
 
 <template>
-  <div class="min-h-screen flex flex-col">
+  <div class="min-h-full flex flex-col">
     <!-- 玻璃导航栏 -->
     <div class="sticky top-0 z-50 px-4 pt-4">
       <nav class="glass mx-auto flex max-w-6xl items-center justify-between rounded-2xl px-6 py-3 shadow-sm">

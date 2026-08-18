@@ -1,11 +1,15 @@
 <template>
-  <main>
-    <NuxtPage />
-  </main>
+  <div class="flex h-screen flex-col overflow-hidden rounded-2xl">
+    <TitleBar />
+    <main class="flex-1 overflow-y-auto">
+      <NuxtPage />
+    </main>
+  </div>
 </template>
 
 <script setup lang="ts">
 
+import TitleBar from "~/components/mainpage/TitleBar.vue";
 import {initShortcuts, unregisterAllShortcuts} from "~/src/commands/shortcuts/InitShortcuts";
 import clipboardService from "~/src/db/dbService";
 import {isTauri} from "~/src/utils/env";
