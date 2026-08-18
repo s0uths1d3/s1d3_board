@@ -7,7 +7,6 @@ import {
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
 import { data, filter, fetchData } from '~/src/commands/local/clipboardStore';
-import SearchBar from "~/components/mainpage/SearchBar.vue";
 import DeleteConfirmation from "~/components/mainpage/DeleteConfirmation.vue";
 import Tooltip from "~/components/mainpage/Tooltip.vue";
 import HighlightText from "~/components/mainpage/HighlightText.vue";
@@ -17,8 +16,10 @@ import clipboardService from "~/src/db/dbService";
 import StickyNote from "~/components/note/StickyNote.vue";
 import TodoList from "~/components/todo/TodoList.vue";
 import SettingMain from "~/components/setting/SettingMain.vue";
+import { activeTab } from "~/composables/useTabs";
 
 const listElement = ref<HTMLElement | null>(null);
+const searchInput = ref<HTMLElement | null>(null);
 
 let updateInterval: NodeJS.Timeout;
 
@@ -39,9 +40,6 @@ const tooltip = ref({
   x: 0,
   y: 0,
 });
-
-const isClipPage = ref(true)
-const activeTab = ref<'clip' | 'todo' | 'note' | 'setting'>('clip')
 
 function showTooltip(index: number, text: string, event: MouseEvent) {
   const target = (event.currentTarget as HTMLElement).querySelector('span');
@@ -64,18 +62,6 @@ function hideTooltip() {
   tooltip.value.visible = false;
 }
 
-const tabs = [
-  { key: 'clip', name: '剪贴板' },
-  { key: 'todo', name: '待办' },
-  { key: 'note', name: '便签' },
-  { key: 'setting', name: '设置' },
-] as const;
-
-function setActiveTab(key: typeof activeTab.value) {
-  activeTab.value = key;
-  isClipPage.value = key === 'clip';
-}
-
 onMounted(async () => {
   console.log('mounting...')
 
@@ -84,15 +70,15 @@ onMounted(async () => {
   if (isTauri()) {
     updateInterval = setInterval(fetchData, 1000);
   }
-  if (listElement.value) {
-    listElement.value.focus();
+  if (searchInput.value) {
+    searchInput.value.focus();
   }
-  // 窗口被 Ctrl+I 唤出后，聚焦列表元素，确保方向键（上下选择 clip 项）生效
+  // 窗口被 Ctrl+I 唤出后，自动聚焦搜索框：直接输入字符即可搜索，无需点击
   window.addEventListener('window-shown', focusList);
 });
 
 function focusList() {
-  listElement.value?.focus();
+  searchInput.value?.focus();
 }
 
 onBeforeUnmount(async () => {
@@ -155,46 +141,70 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
 
 <template>
   <div class="min-h-full flex flex-col">
-    <!-- 玻璃导航栏 -->
-    <div class="sticky top-0 z-50 px-4 pt-4">
-      <nav class="glass mx-auto flex max-w-6xl items-center justify-between rounded-2xl px-6 py-3 shadow-sm">
-        <div class="gold-bar">
-          <h1 class="text-xl font-semibold text-ink">S1de Board</h1>
-        </div>
-
-        <div class="flex items-center gap-1">
-          <button
-            v-for="tab in tabs"
-            :key="tab.key"
-            class="gold-underline rounded-lg px-4 py-2 text-sm font-medium transition-colors duration-300 ease-soft"
-            :class="
-              activeTab === tab.key
-                ? 'is-active text-gold'
-                : 'text-ink-soft hover:text-ink'
-            "
-            @click="setActiveTab(tab.key)"
-          >
-            {{ tab.name }}
-          </button>
-        </div>
-      </nav>
-    </div>
-
-    <main class="flex-1 px-4 pb-12 pt-6">
+    <main class="flex-1 px-4 pb-12 pt-4">
       <div class="mx-auto max-w-6xl">
         <Transition name="page-curtain" mode="out-in">
           <div :key="activeTab">
             <!-- 剪贴板 -->
-            <div v-if="activeTab === 'clip'" class="space-y-4" @click="isClipPage=true">
-              <div class="flex items-center justify-end gap-2">
-                <label class="btn-soft flex cursor-pointer items-center gap-2">
+            <div v-if="activeTab === 'clip'" class="space-y-4">
+              <!-- 常驻搜索框：始终悬浮在列表最上方 -->
+              <div class="sticky top-0 z-30 -mx-4 bg-[linear-gradient(135deg,var(--bg-grad-1),var(--bg-grad-3))] px-4 pt-1 pb-2">
+                <div class="glass-card flex items-center gap-2 rounded-2xl px-3 py-2 text-ink">
+                  <svg
+                      class="h-5 w-5 shrink-0 text-ink-faint"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      viewBox="0 0 24 24"
+                  >
+                    <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 104.5 4.5a7.5 7.5 0 0012.15 12.15z"
+                    />
+                  </svg>
                   <input
-                    type="checkbox"
-                    class="h-4 w-4 accent-gold"
-                    @click="handelFilter"
+                      ref="searchInput"
+                      v-model="highlightContent"
+                      type="text"
+                      placeholder="输入以搜索 · ↑/↓ 选择 · Enter 粘贴"
+                      class="w-full bg-transparent text-ink placeholder:text-ink-faint focus:outline-none"
                   />
-                  <span class="whitespace-nowrap text-ink-soft">仅收藏</span>
-                </label>
+                  <button
+                      type="button"
+                      class="btn-soft btn-circle p-0 ml-1"
+                      title="高亮匹配"
+                      @click="highlightState = !highlightState"
+                  >
+                    <svg v-if="highlightState" class="h-4 w-4" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M160.6 512c0-19.1-15.5-34.6-34.6-34.6H34.6C15.5 477.4 0 492.9 0 512s15.5 34.6 34.6 34.6H126c19.1 0 34.6-15.5 34.6-34.6z m30.8 273l-65.6 63.8c-13.5 13.4-13.6 35.3-0.1 48.8l0.1 0.1 1.3 0.5c13.4 13.5 35.3 13.6 48.8 0.1l0.1-0.1 64.4-64.4c13.5-13.5 13.5-35.4 0-48.9-13.6-13.4-35.5-13.4-49 0.1z m641.2-546l65.6-63.8c13.5-13.4 13.6-35.3 0.1-48.8l-0.1-0.1-1.3-0.5c-13.4-13.5-35.3-13.6-48.8-0.1l-0.1 0.1-64.4 64.4c-13.5-13.5-13.5-35.4 0 48.9 13.6 13.4 35.5 13.4 49-0.1z m-320.7-78.8h0.3c19.1 0 34.5-15.4 34.5-34.5V34.6C546.6 15.5 531.1 0 512 0s-34.6 15.5-34.6 34.6v91.1c0 19.1 15.4 34.5 34.5 34.5z m-316.7 79c13.4 13.5 35.3 13.6 48.8 0.1l0.1-0.1 0.3 1c13.5-13.4 13.6-35.3 0.1-48.8l-0.1-0.1-62-65.9c-13.2-13.8-35.1-14.3-48.9-1-13.8 13.2-14.3 35.1-1 48.9l62.7 65.9z m633.6 545.6c-13.4-13.5-35.3-13.6-48.8-0.1l-0.1 0.1-0.3-1c-13.5 13.4-13.6 35.3-0.1 48.8l0.1 0.1 62 65.9c13.2 13.8 35.1 14.3 48.9 1 13.8-13.2 14.3-35.1 1-48.9l-62.7-65.9z m160.6-307.4h-91.1c-19.1 0-34.6 15.5-34.6 34.6s15.5 34.6 34.6 34.6h91.1c19.1 0 34.6-15.5 34.6-34.6s-15.5-34.6-34.6-34.6zM511.1 241.1c-149.4 0-270.9 121.5-270.9 270.9s121.5 270.9 270.9 270.9S781.9 661.4 781.9 512 660.4 241.1 511.1 241.1z m0 461.5c-105.3 0-190.6-85.4-190.6-190.6s85.4-190.6 190.6-190.6S701.7 406.7 701.7 512s-85.4 190.6-190.6 190.6z m1 161.2h-0.3c-19.1 0-34.5 15.4-34.5 34.5v91.1c0 19.1 15.5 34.6 34.6 34.6s34.6-15.5 34.6-34.6-34.6v-91.1c0.1-19.1-15.3-34.5-34.4-34.5z" fill="#040000"></path>
+                    </svg>
+                    <svg v-else class="h-4 w-4" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M512 824c-172.313 0-312-139.687-312-312s139.687-312 312-312 312 139.687 312 312-139.687 312-312 312z m0-64c136.967 0 248-111.033 248-248 0-136.967-111.033-248-248-248-248-136.967 0-248 111.033-248 248 0 136.967 111.033 248 248 248z m0-696c17.673 0 32 14.327 32 32v51c0 17.673-14.327 32-32 32-17.673 0-32-14.327-32-32V96c0-17.673 14.327-32 32-32z m0 785c17.673 0 32 14.327 32 32v51c0 17.673-14.327 32-32 32-17.673 0-32-14.327-32-32v-51c0-17.673 14.327-32 32-32z m325.945-11.055c-12.497 12.496-32.758 12.496-45.255 0l-36.063-36.063c-12.496-12.497-12.496-32.758 0-45.255 12.497-12.496 32.758-12.496 45.255 0l36.063 36.063c12.496 12.497 12.496 32.758 0 45.255z m-568-565c-12.497 12.496-32.758 12.496-45.255 0l-36.063-36.063c-12.496-12.497-12.496-32.758 0-45.255 12.497-12.496 32.758-12.496 45.255 0l36.063 36.063c12.496 12.497 12.496 32.758 0 45.255z m561-81.318c12.496 12.497 12.496 32.758 0 45.255l-36.063 36.063c-12.497 12.496-32.758 12.496-45.255 0-12.496-12.497-12.496-32.758 0-45.255l36.063-36.063c12.497-12.496 32.758-12.496 45.255 0z m-563.572 565c12.496 12.497 12.496 32.758 0 45.255l-36.063 36.063c-12.497 12.496-32.758 12.496-45.255 0-12.496-12.497-12.496-32.758 0-45.255l36.063-36.063c12.497-12.496 32.758-12.496 45.255 0zM960 512c0 17.673-14.327 32-32 32h-51c-17.673 0-32-14.327-32-32 0-17.673 14.327-32 32-32h51c17.673 0 32 14.327 32 32z m-781 0c0 17.673-14.327 32-32 32H96c-17.673 0-32-14.327-32-32 0-17.673 14.327-32 32-32h51c17.673 0 32 14.327 32 32z" fill="#D8D8D8"></path>
+                    </svg>
+                  </button>
+                  <button
+                      type="button"
+                      class="btn-soft btn-circle p-0 ml-1"
+                      :class="filter.favorite === 1 ? 'text-gold' : 'text-ink-faint'"
+                      :title="filter.favorite === 1 ? '仅显示收藏（点击取消）' : '仅显示收藏'"
+                      @click="handelFilter"
+                  >
+                    <svg class="h-4 w-4" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M253.488042 1024c-16.9 0-33.2875-5.1125-47.6125-15.3625-26.625-18.425-39.425-49.6625-34.3125-81.925l40.9625-251.9c1.5375-10.2375-1.5375-20.475-8.7-27.65L28.213042 466.4375c-22.0125-22.525-29.1875-55.3-19.45-84.9875 9.725-29.7 35.325-51.2 66.05-55.8125l237.575-36.35c10.75-1.5375 19.4625-8.1875 24.0625-17.925L441.388042 48.125c13.825-29.7 42.5-48.125 75.2625-48.125s61.4375 18.4375 75.2625 48.125l104.45 223.2375c4.6125 9.725 13.825 16.375 24.0625 17.925L958.000542 325.625a82.355 82.355 0 0 1 66.05 55.8125c10.2375 29.7 2.5625 62.4625-19.45 84.9875l-175.625 180.7375c-7.1625 7.175-10.2375 17.925-8.7 27.65l40.9625 251.9c5.125 31.75-8.1875 63.4875-34.3 81.925-26.1125 18.4375-59.9 20.4875-88.0625 4.6125l-206.85-114.6875c-9.725-5.1125-20.9875-5.1125-30.7125 0l-207.3625 115.2c-12.8125 6.65-26.6375 10.2375-40.4625 10.2375zM516.650542 51.2c-12.8 0-23.55 7.1625-29.1875 18.4375L383.525542 292.875c-11.775 25.0875-35.325 43.0125-62.975 47.1l-237.575 36.35c-12.2875 2.05-21.5 9.7375-25.6 21.5-4.1 11.775-1.025 24.0625 7.665 32.775L240.688042 611.325c18.4375 18.95 26.625 45.5625 22.525 71.675L222.250542 934.9125c-2.05 12.8 3.075 24.575 13.3125 31.7775 10.2375 7.175 23.0375 7.6875 33.7875 1.5375l207.3625-115.2c25.0875-13.825 55.3-13.825 80.3875 0l207.3625 115.2c10.75 6.1375 23.55 5.625 33.8-1.5375 10.2375-7.1625 15.3625-18.95 13.3125-31.7375L770.625542 683.0125c-4.1-26.1125 4.1-52.7375 22.525-71.675l175.625-180.7375c8.7-8.7 11.2625-20.9875 7.675-32.775-4.0875-11.775-13.3125-19.9625-25.6-21.5l-237.5625-36.35c-27.65-4.0875-51.2-22.0125-62.975-47.1L545.838042 69.6375c-5.625-11.2625-16.375-18.4375-29.1875-18.4375z m0 0" fill="currentColor"></path>
+                    </svg>
+                  </button>
+                  <button
+                      type="button"
+                      class="btn-soft btn-circle p-0 ml-1"
+                      title="清空搜索"
+                      @click="highlightContent = ''"
+                  >
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
               </div>
 
               <ul
@@ -272,7 +282,5 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
     />
 
     <DeleteConfirmation :show="showConfirm" :deleteTarget="deleteTarget" @confirm="confirmDelete" @cancel="cancelDelete"/>
-
-    <SearchBar v-model:search="highlightContent" v-model:highlight="highlightState"/>
   </div>
 </template>

@@ -4,7 +4,6 @@ import { HideWindowCommand } from '../local/HideWindowCommand';
 import type { ShortcutConfig } from './ShortcutConfig';
 import {ArrowDownTargetMovementCommand, ArrowUpTargetMovementCommand} from "~/src/commands/local/TargetMovementCommand";
 import {PasteCommand} from "~/src/commands/local/PasteCommand";
-import {SearchCommand} from "~/src/commands/local/SearchCommand";
 import {DelCommand} from  "~/src/commands/local/DelCommand"
 import {FavoriteCommand} from  "~/src/commands/local/FavoriteCommand"
 import dbService from "~/src/db/dbService";
@@ -14,7 +13,6 @@ const hideWindowCommand = new HideWindowCommand();
 const arrowUpTargetMovementCommand = new ArrowUpTargetMovementCommand()
 const arrowDownTargetMovementCommand = new ArrowDownTargetMovementCommand()
 const pasteCommand = new PasteCommand()
-const searchCommand = new SearchCommand()
 const delCommand = new DelCommand();
 const favoriteCommand = new FavoriteCommand()
 
@@ -48,12 +46,6 @@ export const shortcuts: ShortcutConfig[] = [
         scope: 'local',
         command: pasteCommand,
         title: '粘贴选中项'
-    },
-    {
-        key: 'CommandOrControl+F',
-        scope: 'local',
-        command: searchCommand,
-        title: '搜索'
     },
     {
         key:'delete',
