@@ -1,11 +1,12 @@
 import type {Command} from "~/src/commands/Command";
 import clipboardService from "~/src/db/dbService";
-import {getSelectedRowId} from "~/src/commands/local/TargetMovementCommand";
+import {getSelectedRowId} from "~/src/commands/local/clipboardStore";
 
 export class FavoriteCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {
         if (event?.state !== 'Pressed') return;
         const id = getSelectedRowId()
+        if (id === undefined) return;
         const res = await clipboardService.fetchClipboardSingleData(id);
         await this.favorite(id, res.is_favorite)
     }

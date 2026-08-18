@@ -3,6 +3,7 @@ import { ToggleWindowCommand } from '../global/ToggleWindowCommand';
 import { HideWindowCommand } from '../local/HideWindowCommand';
 import type { ShortcutConfig } from './ShortcutConfig';
 import {ArrowDownTargetMovementCommand, ArrowUpTargetMovementCommand} from "~/src/commands/local/TargetMovementCommand";
+import {PasteCommand} from "~/src/commands/local/PasteCommand";
 import {SearchCommand} from "~/src/commands/local/SearchCommand";
 import {DelCommand} from  "~/src/commands/local/DelCommand"
 import {FavoriteCommand} from  "~/src/commands/local/FavoriteCommand"
@@ -12,6 +13,7 @@ const toggleWindowCommand = new ToggleWindowCommand();
 const hideWindowCommand = new HideWindowCommand();
 const arrowUpTargetMovementCommand = new ArrowUpTargetMovementCommand()
 const arrowDownTargetMovementCommand = new ArrowDownTargetMovementCommand()
+const pasteCommand = new PasteCommand()
 const searchCommand = new SearchCommand()
 const delCommand = new DelCommand();
 const favoriteCommand = new FavoriteCommand()
@@ -35,11 +37,17 @@ export const shortcuts: ShortcutConfig[] = [
         scope: 'local',
         command: arrowUpTargetMovementCommand,
         title:'选择上一项'
-    },{
+    },    {
         key: 'ArrowDown',
         scope: 'local',
         command: arrowDownTargetMovementCommand,
         title:'选择下一项'
+    },
+    {
+        key: 'Enter',
+        scope: 'local',
+        command: pasteCommand,
+        title: '粘贴选中项'
     },
     {
         key: 'CommandOrControl+F',
@@ -61,10 +69,24 @@ export const shortcuts: ShortcutConfig[] = [
 ];
 
 const manager = new ShortcutManager();
+let initialized = false;
 
 export async function initShortcuts() {
+    // 防止 HMR 热重载时重复注册：window keydown 监听只绑一次
+    if (initialized) return;
+
+    // 先清理可能残留的本地监听与 Rust 侧全局快捷键
+    // （reload 时 onBeforeUnmount 可能未执行，避免重复绑定 / "HotKey already registered"）
+    manager.unregisterAllLocals();
+    try {
+        await manager.unregisterAllGlobals();
+    } catch (e) {
+        console.error('注销残留快捷键失败:', e);
+    }
+
     // console.log(await dbService.getShortcutSetting());
     await manager.registerAll(shortcuts);
+    initialized = true;
 }
 
 export function unregisterLocalShortcuts() {
@@ -74,4 +96,5 @@ export function unregisterLocalShortcuts() {
 export async function unregisterAllShortcuts() {
     console.log('unmounting...')
     await manager.unregisterAll();
+    initialized = false;
 }

@@ -1,19 +1,26 @@
 import type { Command } from '../Command';
-import type {ClipboardData} from "~/src/Entities";
-import clipboardService from "~/src/db/dbService";
+import {
+  dataLength,
+  selectedRowIndex,
+  selectRow,
+  getSelectedRowIndex,
+  getSelectedRowId,
+} from './clipboardStore';
 
-export const selectedRowIndex = ref(0);
-export const dataLength = ref(0);
-
-
-const data = ref<ClipboardData[]>([]);
+/**
+ * 上下方向键选择命令
+ *
+ * 状态统一来自 clipboardStore：
+ * - 上移：selectedRowIndex - 1（不能小于 0）
+ * - 下移：selectedRowIndex + 1（不能超过 dataLength）
+ */
 
 export class ArrowUpTargetMovementCommand implements Command {
     async execute(): Promise<void> {
         const newIndex = selectedRowIndex.value - 1;
         if (newIndex >= 0) {
             selectedRowIndex.value = newIndex;
-            await scrollToSelectedRow();
+            selectRow(newIndex);
         }
     }
 }
@@ -23,39 +30,16 @@ export class ArrowDownTargetMovementCommand implements Command {
         const newIndex = selectedRowIndex.value + 1;
         if (newIndex < dataLength.value) {
             selectedRowIndex.value = newIndex;
-            await scrollToSelectedRow();
+            selectRow(newIndex);
         }
     }
 }
 
-export function selectRow(index: number) {
-    if (index >= 0 && index < dataLength.value) {
-        selectedRowIndex.value = index;
-        scrollToSelectedRow().then(
-
-        );
-    }
-}
-
-async function scrollToSelectedRow() {
-    await nextTick();
-    const listElement = document.querySelector('.list');
-    const listItems = listElement?.querySelectorAll('.list-row');
-    const currentItem = listItems?.[selectedRowIndex.value];
-    currentItem?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-export function getSelectedRowIndex(){
-    return selectedRowIndex.value;
-}
-
-export function getSelectedRowId():number{
-    const filter = ref({
-        favorite: 0,
-        searchContent: ''
-    })
-    clipboardService.fetchClipboardData(filter).then(res =>{
-        data.value = res
-    })
-    return <number>data.value[getSelectedRowIndex()]?.id
-}
+// 兼容导出：index.vue / FavoriteCommand 仍可从本模块 import，状态则共享自 clipboardStore
+export {
+  dataLength,
+  selectedRowIndex,
+  selectRow,
+  getSelectedRowIndex,
+  getSelectedRowId,
+};

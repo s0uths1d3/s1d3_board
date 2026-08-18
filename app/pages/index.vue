@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import type {ClipboardData} from '~/src/Entities';
 import {formatDate} from "~/src/utils/formatDate";
-import {getCurrentWindow} from "@tauri-apps/api/window";
-import {setWindowVisible} from "~/src/commands/global/ToggleWindowCommand";
 import {
   dataLength, getSelectedRowId, getSelectedRowIndex,
   selectedRowIndex,
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
+import { data, filter, fetchData } from '~/src/commands/local/clipboardStore';
 import SearchBar from "~/components/mainpage/SearchBar.vue";
 import DeleteConfirmation from "~/components/mainpage/DeleteConfirmation.vue";
 import Tooltip from "~/components/mainpage/Tooltip.vue";
@@ -15,13 +14,10 @@ import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {deleteTarget, showConfirm} from "~/src/commands/local/DelCommand";
 import {isTauri} from "~/src/utils/env";
 import clipboardService from "~/src/db/dbService";
-import { writeText } from "tauri-plugin-clipboard-api";
-import {invoke} from "@tauri-apps/api/core";
 import StickyNote from "~/components/note/StickyNote.vue";
 import TodoList from "~/components/todo/TodoList.vue";
 import SettingMain from "~/components/setting/SettingMain.vue";
 
-const data = ref<ClipboardData[]>([]);
 const listElement = ref<HTMLElement | null>(null);
 
 let updateInterval: NodeJS.Timeout;
@@ -43,11 +39,6 @@ const tooltip = ref({
   x: 0,
   y: 0,
 });
-
-const filter = ref({
-  favorite: 0,
-  searchContent: ''
-})
 
 const isClipPage = ref(true)
 const activeTab = ref<'clip' | 'todo' | 'note' | 'setting'>('clip')
@@ -96,56 +87,26 @@ onMounted(async () => {
   if (listElement.value) {
     listElement.value.focus();
   }
+  // 窗口被 Ctrl+I 唤出后，聚焦列表元素，确保方向键（上下选择 clip 项）生效
+  window.addEventListener('window-shown', focusList);
 });
+
+function focusList() {
+  listElement.value?.focus();
+}
 
 onBeforeUnmount(async () => {
   console.log('unmounting outside...')
+  window.removeEventListener('window-shown', focusList);
   if (updateInterval) {
     clearInterval(updateInterval);
     updateInterval = null as unknown as NodeJS.Timeout;
   }
 });
 
-async function fetchData() {
-  try {
-    clipboardService.fetchClipboardData(filter).then(result => {
-      data.value = result
-    })
-    dataLength.value = data.value.length;
-    if (selectedRowIndex.value >= data.value.length) {
-      selectedRowIndex.value = data.value.length - 1;
-    }
-  } catch (err) {
-    console.error(err);
-  }
-}
-
 async function favorite(id: number, value: number) {
   value = value === 0 ? 1 : 0;
   await clipboardService.updateFavorite(id, value)
-}
-
-async function handleKeyDown(event: KeyboardEvent) {
-  if (event.key === 'Enter') {
-    const content = data.value[getSelectedRowIndex()].content;
-    await clipboardService.increaseUseCount(getSelectedRowIndex());
-    // 跨平台写入系统剪贴板：Tauri 桌面端走原生插件，Web 端回退到浏览器 API
-    try {
-      if (isTauri()) {
-        await writeText(content);
-      } else if (navigator.clipboard) {
-        await navigator.clipboard.writeText(content);
-      }
-    } catch (err) {
-      console.error('写入剪贴板失败:', err);
-    }
-    // 仅在桌面端模拟粘贴（Ctrl/Cmd+V）
-    if (isTauri()) {
-      await invoke('paste');
-    }
-    await getCurrentWindow().hide();
-    setWindowVisible();
-  }
 }
 
 async function handleDelete(target: ClipboardData) {
@@ -241,7 +202,6 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
                 id="listElement"
                 class="list space-y-2 rounded-2xl outline-none"
                 tabindex="0"
-                @keydown="handleKeyDown"
               >
                 <li
                   class="glass-card list-row cursor-pointer rounded-2xl p-4 transition-all duration-300 ease-soft hover:-translate-y-0.5 hover:shadow-float"

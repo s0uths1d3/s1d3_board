@@ -1,4 +1,4 @@
-import { register, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
+import { register, unregister, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
 import type { ShortcutConfig } from './ShortcutConfig';
 
 export class ShortcutManager {
@@ -6,12 +6,22 @@ export class ShortcutManager {
 
     async register(config: ShortcutConfig) {
         if (config.scope === 'global') {
+            // 先注销可能残留的同名全局快捷键（HMR/reload 后 Rust 侧可能仍占用），
+            // 避免 "HotKey already registered" 导致该快捷键失效
+            try {
+                await unregister(config.key);
+            } catch (e) {
+                // 未注册过则忽略
+            }
             await register(config.key, async (event) => {
                 await config.command.execute(event);
             });
             console.log(`[Global Shortcut Registered] ${config.key}`);
         } else if (config.scope === 'local') {
             const handler = async (e: KeyboardEvent) => {
+                // 长按产生的重复按键不重复执行（如持续按 ↓ 或 Enter）
+                if (e.repeat) return;
+
                 const key = config.key.toLowerCase();
                 const pressedKey = e.key.toLowerCase();
 
@@ -27,19 +37,13 @@ export class ShortcutManager {
                 const mainKey = key.split('+').pop()?.trim();
                 const isMatch = pressedKey === mainKey && modifierMatch;
 
-                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
-                    e.preventDefault();
-                }
-
-                if (e.key.toLowerCase() === 'f2' ||
-                    // e.key.toLowerCase() === 'f5' ||
-                    e.key.toLowerCase() === 'f7') {
-                    e.preventDefault();
-                }
                 if (isMatch) {
+                    // 命中本地快捷键：阻止默认行为（如 Enter 在输入框的换行/提交），避免与命令重复触发
+                    e.preventDefault();
+                    e.stopPropagation();
                     await config.command.execute({state: 'Pressed'});
-                }
-                if (pressedKey === 'arrowup' || pressedKey === 'arrowdown') {
+                } else if (pressedKey === 'arrowup' || pressedKey === 'arrowdown') {
+                    // 方向键即使未命中命令也阻止默认滚动，避免页面随方向键滚动
                     e.preventDefault();
                 }
             };
@@ -51,7 +55,13 @@ export class ShortcutManager {
 
     async registerAll(configs: ShortcutConfig[]) {
         for (const config of configs) {
-            await this.register(config);
+            // 逐个注册并容错：某个快捷键（如全局 Ctrl+I 与系统冲突）注册失败时，
+            // 不中断后续注册，确保方向键等本地快捷键始终生效。
+            try {
+                await this.register(config);
+            } catch (e) {
+                console.error(`[Shortcut Register Failed] ${config.key}:`, e);
+            }
         }
     }
 
