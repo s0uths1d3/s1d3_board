@@ -18,7 +18,9 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": false,
-        "transparent": true
+        "transparent": true,
+        "skipTaskbar": true,
+        "theme": "Light"
       }
     ],
     "security": {
@@ -31,6 +33,9 @@
     "icon": [
       "icons/icon_64x64.ico",
       "icons/icon.png"
+    ],
+    "resources": [
+      "icons/icon_256x256.ico"
     ]
   }
 }

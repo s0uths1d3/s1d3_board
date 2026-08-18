@@ -220,6 +220,7 @@ async function handleDelete(target: ClipboardData) {
     resizable: false,
     decorations: false,
     transparent: true,
+    skipTaskbar: true,
     center: true,
   });
   win.once('tauri://created', () => {
@@ -264,7 +265,7 @@ let refocusTimer: ReturnType<typeof setTimeout> | null = null;
 function refocusList() {
   if (!isTauri()) return;
 
-  // 防抖：删除窗口关闭时 yes/no/closed/onFocusChanged 会触发多次，
+  // 防抖：删除窗口关闭时 yes/no/closed 会触发多次，
   // 每次 refocusList 又产生 3 次延时聚焦，会形成 PostMessage 消息风暴
   // （WebView2 报 0x80070718 配额不足）。合并为一次执行。
   if (refocusTimer) clearTimeout(refocusTimer);
@@ -275,19 +276,25 @@ function refocusList() {
     // 窗口 setFocus + webview setFocus + JS window.focus + window-shown 事件。
     const restoreFocus = async () => {
       try {
-        await getCurrentWindow().show();
-        await getCurrentWindow().setFocus();
+        // 主窗口不可见（后台驻留隐藏中）时不 show，保持隐藏状态；
+        // 可见时才聚焦
+        const visible = await getCurrentWindow().isVisible();
+        if (visible) {
+          await getCurrentWindow().setFocus();
+          try {
+            await getCurrentWebview().setFocus();
+          } catch (e) {
+            console.warn('webview 聚焦失败:', e);
+          }
+        }
       } catch (e) {
         console.warn('主窗口聚焦失败:', e);
       }
-      try {
-        await getCurrentWebview().setFocus();
-      } catch (e) {
-        console.warn('webview 聚焦失败:', e);
-      }
       window.focus();
-      window.dispatchEvent(new CustomEvent('window-shown'));
-      searchInput.value?.focus();
+      if (await getCurrentWindow().isVisible().catch(() => false)) {
+        window.dispatchEvent(new CustomEvent('window-shown'));
+        searchInput.value?.focus();
+      }
     };
 
     // 多重延时补偿：删除窗口完全销毁、webview 状态稳定后再聚焦
@@ -364,6 +371,7 @@ async function openImageViewer(item: ClipboardData) {
     resizable: false,
     decorations: false,
     transparent: true,
+    skipTaskbar: true,
     center: true,
   });
   viewer.once('tauri://created', () => {

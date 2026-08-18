@@ -5,6 +5,8 @@ import { updateShortcutKey, resetShortcut, resetAllShortcuts } from "~/src/comma
 import { formatShortcutForDisplay, parseKeyEvent } from "~/src/utils/shortcutFormat";
 import { getOsTypeFromNavigator } from "~/src/utils/SystemOS";
 import clipboardService from '~/src/db/dbService';
+import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
+import { isTauri } from '~/src/utils/env';
 
 const osType = ref('');
 
@@ -24,6 +26,8 @@ interface SettingGroup {
 const apiKey = ref('');
 const maxLimit = ref('');
 const colorScheme = ref(['深色', '浅色']);
+/** 开机自启状态（系统级设置，使用 tauri autostart 插件，不存数据库） */
+const autoStartEnabled = ref(false);
 
 // 实时保存：任意设置项变化即写入数据库
 watch(apiKey, async (val) => {
@@ -35,6 +39,22 @@ watch(maxLimit, async (val) => {
 watch(colorScheme, async (val) => {
   await clipboardService.setKeyValue('color_scheme', val?.[0] ?? '');
 }, { deep: true });
+
+// 开机自启：切换时调用系统 autostart 插件（enable/disable）
+watch(autoStartEnabled, async (val) => {
+  if (!isTauri()) return;
+  try {
+    if (val) {
+      await enable();
+    } else {
+      await disable();
+    }
+  } catch (e) {
+    console.error('设置开机自启失败:', e);
+    // 失败回滚 UI 状态
+    autoStartEnabled.value = !val;
+  }
+});
 
 // 清空数据库：二次确认状态
 const showClearConfirm = ref(false);
@@ -86,6 +106,11 @@ const settings: SettingGroup[] = [
         label: '最大查询数量',
         value: '',
         type: 'input'
+      },
+      {
+        label: '开机自启',
+        value: '',
+        type: 'checkbox'
       },
       {
         label: '配色',
@@ -201,6 +226,14 @@ onMounted(async () => {
   } catch (e) {
     // 尚未设置过配色，使用默认值
   }
+  // 读取当前开机自启状态（仅桌面容器内可用）
+  if (isTauri()) {
+    try {
+      autoStartEnabled.value = await isEnabled();
+    } catch (e) {
+      console.error('读取开机自启状态失败:', e);
+    }
+  }
 });
 </script>
 
@@ -315,6 +348,14 @@ onMounted(async () => {
                          v-model="maxLimit"
                          placeholder="如 500"
                          class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
+                  <label v-else-if="item.type === 'checkbox'" class="flex cursor-pointer items-center gap-2 select-none">
+                    <input
+                        type="checkbox"
+                        v-model="autoStartEnabled"
+                        class="h-5 w-5 accent-[#c4a77d]"
+                    />
+                    <span class="text-sm text-ink-soft">{{ autoStartEnabled ? '已开启' : '已关闭' }}</span>
+                  </label>
                   <select v-else-if="item.type === 'select'" v-model="colorScheme[0]" class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none">
                     <option v-for="(value, index) in colorScheme" :key="index" :value="value">
                       {{ value }}
