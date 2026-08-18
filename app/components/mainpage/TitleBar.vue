@@ -26,7 +26,7 @@ async function close() {
   >
     <!-- 左侧：标题（可拖拽） -->
     <div class="gold-bar flex items-center gap-2 select-none">
-      <h1 class="text-sm font-semibold text-ink">S1de Board</h1>
+      <h1 class="text-sm font-semibold text-ink">S1d3 Board</h1>
     </div>
 
     <!-- 中部：顶层导航（窗口之上） -->

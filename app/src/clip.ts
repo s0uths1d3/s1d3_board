@@ -6,7 +6,7 @@
 //
 // let data = ref<ClipboardData[]>([]);
 // export async function addDate() {
-//     const dbPath = await appDataDir() + 's1de_board.db';
+//     const dbPath = await appDataDir() + 's1d3_board.db';
 //     let db = await Database.load(`sqlite:${dbPath}`);
 //     await onTextUpdate(async (newText) => {
 //         const now = Math.floor(Date.now())

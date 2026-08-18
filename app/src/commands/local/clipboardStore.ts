@@ -19,10 +19,11 @@ export const dataLength = ref(0);
 /** 当前选中的行索引 */
 export const selectedRowIndex = ref(0);
 
-/** 过滤条件：是否仅收藏 + 搜索关键字 */
+/** 过滤条件：是否仅收藏 + 搜索关键字 + 类型筛选（all 全部 / image 仅图片） */
 export const filter = ref({
   favorite: 0,
   searchContent: '',
+  type: 'all' as 'all' | 'image',
 });
 
 /**
@@ -57,9 +58,11 @@ export function getSelectedRowId(): number | undefined {
   return data.value[selectedRowIndex.value]?.id;
 }
 
-/** 当前选中条目的内容（PasteCommand 粘贴时使用） */
-export function getSelectedContent(): string | undefined {
-  return data.value[selectedRowIndex.value]?.content;
+/** 当前选中条目的内容（PasteCommand 粘贴时使用），含类型以便区分文本/图片 */
+export function getSelectedContent(): { content: string; type: 'text' | 'image' } | undefined {
+  const item = data.value[selectedRowIndex.value];
+  if (!item) return undefined;
+  return { content: item.content, type: item.type ?? 'text' };
 }
 
 /** 点击列表行时选中指定索引并滚动到可见位置 */

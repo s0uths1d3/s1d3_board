@@ -1,6 +1,7 @@
 <template>
   <div class="flex h-screen flex-col overflow-hidden rounded-2xl">
-    <TitleBar />
+    <!-- 图片查看器等子窗口自带系统标题栏，不再渲染自定义 TitleBar -->
+    <TitleBar v-if="route.path !== '/viewer'" />
     <main class="flex-1 overflow-y-auto">
       <NuxtPage />
     </main>
@@ -13,8 +14,19 @@ import TitleBar from "~/components/mainpage/TitleBar.vue";
 import {initShortcuts, unregisterAllShortcuts} from "~/src/commands/shortcuts/InitShortcuts";
 import clipboardService from "~/src/db/dbService";
 import {isTauri} from "~/src/utils/env";
+import { getCurrentWindow } from '@tauri-apps/api/window';
+
+/** 剪贴板监听与全局快捷键只需在主窗口注册一次；
+ * 子窗口（如图片查看器）跳过，避免重复监听，以及关闭子窗口时误注销主窗口的全局快捷键。 */
+function isMainWindow(): boolean {
+  return !isTauri() || getCurrentWindow().label === 'main';
+}
+
+const route = useRoute();
 
 onMounted(async () => {
+  if (!isMainWindow()) return;
+
   try {
     await clipboardService.startClipboardListener();
     console.log('✅ 数据库初始化完成，剪贴板监听已启动');
@@ -33,6 +45,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(async () => {
+  if (!isMainWindow()) return;
   await unregisterAllShortcuts();
 });
 </script>

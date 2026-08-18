@@ -19,7 +19,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
-                    "sqlite:s1de_board.db",
+                    "sqlite:s1d3_board.db",
                     vec![
                         Migration {
                             version: 1,
@@ -30,12 +30,12 @@ CREATE TABLE IF NOT EXISTS clipboard
 (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     content     TEXT NOT NULL UNIQUE,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
     source      TEXT,
     is_favorite INTEGER DEFAULT 0 CHECK (is_favorite IN (0, 1)),
     category    TEXT,
     count       INTEGER DEFAULT 1,
-    updated_at    DEFAULT CURRENT_TIMESTAMP
+    updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS clipboard_fts USING fts5
@@ -102,13 +102,6 @@ VALUES ('api_key', NULL, 'ai_setting', 'api设置', 'global', DATETIME('now'));
 -- INSERT INTO settings (key, value, type, description, scope, last_modified)
 -- VALUES ('shortcut_I', 'I', 'shortcut', '收藏选择选', 'local', DATETIME('now'));
 
-create table if not exists shortcut_setting
-(
-    id        integer primary key autoincrement,
-    key       text title,
-    shortcuts text
-);
-
 CREATE INDEX IF NOT EXISTS idx_timestamp ON clipboard (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_source ON clipboard (source);
 CREATE INDEX IF NOT EXISTS idx_favorite ON clipboard (is_favorite);
@@ -133,6 +126,71 @@ CREATE TRIGGER IF NOT EXISTS clipboard_after_delete
 BEGIN
     DELETE FROM clipboard_fts WHERE rowid = old.id;
 END;
+                            "#
+                        },
+                        Migration {
+                            version: 2,
+                            description: "Drop orphan shortcut_setting table, add normalized shortcut_binding table",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 删除 v1 中定义但从未使用的孤儿表（列定义非法且职责被 settings 表取代）
+DROP TABLE IF EXISTS shortcut_setting;
+
+-- 规范化快捷键绑定表，与通用 settings KV 解耦，便于未来扩展（多套方案/分组/用户维度）
+CREATE TABLE IF NOT EXISTS shortcut_binding
+(
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    shortcut_id   TEXT NOT NULL UNIQUE,
+    key           TEXT NOT NULL,
+    scope         TEXT NOT NULL CHECK (scope IN ('global', 'local')),
+    description   TEXT,
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_shortcut_scope ON shortcut_binding (scope);
+                            "#
+                        },
+                        Migration {
+                            version: 3,
+                            description: "Add type column to clipboard, restrict FTS to text only",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 新增 type 列，区分文本(text)与图片(image)
+ALTER TABLE clipboard ADD COLUMN type TEXT DEFAULT 'text'
+    CHECK (type IN ('text', 'image'));
+
+-- 图片不进全文索引：删除并重建触发器，仅当 type='text' 时同步 FTS
+DROP TRIGGER IF EXISTS clipboard_after_insert;
+DROP TRIGGER IF EXISTS clipboard_after_update;
+DROP TRIGGER IF EXISTS clipboard_after_delete;
+
+CREATE TRIGGER IF NOT EXISTS clipboard_after_insert
+    AFTER INSERT
+    ON clipboard
+BEGIN
+    INSERT INTO clipboard_fts (rowid, content)
+    SELECT new.id, new.content WHERE new.type = 'text';
+END;
+
+CREATE TRIGGER IF NOT EXISTS clipboard_after_update
+    AFTER UPDATE
+    ON clipboard
+BEGIN
+    DELETE FROM clipboard_fts WHERE rowid = old.id;
+    INSERT INTO clipboard_fts (rowid, content)
+    SELECT new.id, new.content WHERE new.type = 'text';
+END;
+
+CREATE TRIGGER IF NOT EXISTS clipboard_after_delete
+    AFTER DELETE
+    ON clipboard
+BEGIN
+    DELETE FROM clipboard_fts WHERE rowid = old.id;
+END;
+
+-- 重建 FTS：清除历史数据中的图片 base64（如有），仅保留文本
+INSERT INTO clipboard_fts (clipboard_fts) VALUES ('rebuild');
                             "#
                         }
                     ]

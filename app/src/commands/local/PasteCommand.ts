@@ -1,7 +1,7 @@
 import type { Command } from '../Command';
 import { getSelectedContent, getSelectedRowIndex } from './clipboardStore';
 import clipboardService from '~/src/db/dbService';
-import { writeText } from 'tauri-plugin-clipboard-api';
+import { writeText, writeImageBase64 } from 'tauri-plugin-clipboard-api';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isTauri } from '~/src/utils/env';
@@ -23,15 +23,21 @@ export class PasteCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {
         if (event?.state !== 'Pressed') return;
 
-        const content = getSelectedContent();
+        const selected = getSelectedContent();
+        if (!selected) return;
+        const { content, type } = selected;
         if (!content) return;
 
         await clipboardService.increaseUseCount(getSelectedRowIndex());
 
-        // 1. 写入系统剪贴板（跨平台）
+        // 1. 写入系统剪贴板（跨平台，按类型区分）
         try {
             if (isTauri()) {
-                await writeText(content);
+                if (type === 'image') {
+                    await writeImageBase64(content);
+                } else {
+                    await writeText(content);
+                }
             } else if (navigator.clipboard) {
                 await navigator.clipboard.writeText(content);
             }

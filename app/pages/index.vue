@@ -13,6 +13,8 @@ import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {deleteTarget, showConfirm} from "~/src/commands/local/DelCommand";
 import {isTauri} from "~/src/utils/env";
 import clipboardService from "~/src/db/dbService";
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { listen, emit } from '@tauri-apps/api/event';
 import StickyNote from "~/components/note/StickyNote.vue";
 import TodoList from "~/components/todo/TodoList.vue";
 import SettingMain from "~/components/setting/SettingMain.vue";
@@ -56,6 +58,10 @@ function showTooltip(index: number, text: string, event: MouseEvent) {
 
 function handelFilter() {
   filter.value.favorite = filter.value.favorite === 1 ? 0 : 1
+}
+
+function handelTypeFilter() {
+  filter.value.type = filter.value.type === 'image' ? 'all' : 'image'
 }
 
 function hideTooltip() {
@@ -137,6 +143,76 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
     clipboardService.increaseUseCount(item.id)
 }
 
+/** 唯一的图片查看器窗口 label（窗口关闭后置 null，复用单例） */
+let viewerLabel: string | null = null;
+/** 最近一次发送给查看器的图片数据（首次创建窗口 ready 后补发，避免创建期间双击丢失） */
+let latestImagePayload: { images: string[]; index: number } | null = null;
+
+/**
+ * 双击图片项：在唯一的图片查看器窗口中查看。
+ * - 查看器已存在 → 复用并切换图片；
+ * - 查看器不存在 → 新建窗口。
+ * 图片数据（base64 列表 + 当前序号）通过事件传递，避免超大 base64 触发 dev server 431 错误。
+ * 窗口尺寸固定（不可调整），图片的缩放/旋转只在窗口内容区内进行。
+ */
+async function openImageViewer(item: ClipboardData) {
+  if (item.type !== 'image' || !isTauri()) return;
+
+  const images = data.value.filter((i: ClipboardData) => i.type === 'image');
+  const index = Math.max(0, images.findIndex((i) => i.id === item.id));
+  latestImagePayload = { images: images.map((i) => i.content), index };
+
+  // 复用已存在的查看器窗口，直接切换图片
+  if (viewerLabel) {
+    const existing = await WebviewWindow.getByLabel(viewerLabel).catch(() => null);
+    if (existing) {
+      await emit('image-viewer:switch', { label: viewerLabel, ...latestImagePayload });
+      return;
+    }
+    viewerLabel = null; // 窗口已销毁，走新建流程
+  }
+
+  const label = `image-viewer-${Date.now()}`;
+  viewerLabel = label;
+  const viewer = new WebviewWindow(label, {
+    url: '/viewer',
+    title: '图片查看器',
+    width: 720,
+    height: 540,
+    resizable: false,
+    decorations: false,
+    transparent: true,
+    center: true,
+  });
+  viewer.once('tauri://created', () => {
+    console.log('查看器窗口创建成功:', label);
+  });
+  viewer.once('tauri://error', () => {
+    console.error('查看器窗口创建失败:', label);
+    if (viewerLabel === label) viewerLabel = null;
+  });
+
+  // 等待查看器窗口 ready 后补发最新图片数据，避免事件竞态与创建期间多次双击丢失
+  const unlistenReady = await listen('image-viewer:ready', async (ev) => {
+    const readyLabel = (ev.payload as string | undefined) ?? '';
+    if (readyLabel && readyLabel !== label) return;
+    if (latestImagePayload) {
+      await emit('image-viewer:payload', { label, ...latestImagePayload });
+    }
+    unlistenReady();
+  });
+  // 兜底：窗口创建失败时自动清理监听，避免泄漏
+  setTimeout(() => unlistenReady(), 5000);
+
+  // 监听查看器窗口关闭，重置单例引用
+  const unlistenClosed = await listen('image-viewer:closed', (ev) => {
+    if ((ev.payload as string | undefined) === label && viewerLabel === label) {
+      viewerLabel = null;
+    }
+    unlistenClosed();
+  });
+}
+
 </script>
 
 <template>
@@ -186,12 +262,25 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
                   <button
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
-                      :class="filter.favorite === 1 ? 'text-gold' : 'text-ink-faint'"
+                      :class="filter.favorite === 1 ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
                       :title="filter.favorite === 1 ? '仅显示收藏（点击取消）' : '仅显示收藏'"
                       @click="handelFilter"
                   >
                     <svg class="h-4 w-4" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
                       <path d="M253.488042 1024c-16.9 0-33.2875-5.1125-47.6125-15.3625-26.625-18.425-39.425-49.6625-34.3125-81.925l40.9625-251.9c1.5375-10.2375-1.5375-20.475-8.7-27.65L28.213042 466.4375c-22.0125-22.525-29.1875-55.3-19.45-84.9875 9.725-29.7 35.325-51.2 66.05-55.8125l237.575-36.35c10.75-1.5375 19.4625-8.1875 24.0625-17.925L441.388042 48.125c13.825-29.7 42.5-48.125 75.2625-48.125s61.4375 18.4375 75.2625 48.125l104.45 223.2375c4.6125 9.725 13.825 16.375 24.0625 17.925L958.000542 325.625a82.355 82.355 0 0 1 66.05 55.8125c10.2375 29.7 2.5625 62.4625-19.45 84.9875l-175.625 180.7375c-7.1625 7.175-10.2375 17.925-8.7 27.65l40.9625 251.9c5.125 31.75-8.1875 63.4875-34.3 81.925-26.1125 18.4375-59.9 20.4875-88.0625 4.6125l-206.85-114.6875c-9.725-5.1125-20.9875-5.1125-30.7125 0l-207.3625 115.2c-12.8125 6.65-26.6375 10.2375-40.4625 10.2375zM516.650542 51.2c-12.8 0-23.55 7.1625-29.1875 18.4375L383.525542 292.875c-11.775 25.0875-35.325 43.0125-62.975 47.1l-237.575 36.35c-12.2875 2.05-21.5 9.7375-25.6 21.5-4.1 11.775-1.025 24.0625 7.665 32.775L240.688042 611.325c18.4375 18.95 26.625 45.5625 22.525 71.675L222.250542 934.9125c-2.05 12.8 3.075 24.575 13.3125 31.7775 10.2375 7.175 23.0375 7.6875 33.7875 1.5375l207.3625-115.2c25.0875-13.825 55.3-13.825 80.3875 0l207.3625 115.2c10.75 6.1375 23.55 5.625 33.8-1.5375 10.2375-7.1625 15.3625-18.95 13.3125-31.7375L770.625542 683.0125c-4.1-26.1125 4.1-52.7375 22.525-71.675l175.625-180.7375c8.7-8.7 11.2625-20.9875 7.675-32.775-4.0875-11.775-13.3125-19.9625-25.6-21.5l-237.5625-36.35c-27.65-4.0875-51.2-22.0125-62.975-47.1L545.838042 69.6375c-5.625-11.2625-16.375-18.4375-29.1875-18.4375z m0 0" fill="currentColor"></path>
+                    </svg>
+                  </button>
+                  <button
+                      type="button"
+                      class="btn-soft btn-circle p-0 ml-1"
+                      :class="filter.type === 'image' ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+                      :title="filter.type === 'image' ? '仅显示图片（点击取消）' : '仅显示图片'"
+                      @click="handelTypeFilter"
+                  >
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
                     </svg>
                   </button>
                   <button
@@ -205,6 +294,26 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
                     </svg>
                   </button>
                 </div>
+              </div>
+
+              <!-- 筛选状态提示条：当前处于"仅图片/仅收藏"筛选时显示，点击 ✕ 取消筛选 -->
+              <div
+                  v-if="filter.favorite === 1 || filter.type === 'image'"
+                  class="flex items-center justify-between rounded-2xl border border-gold/50 bg-gold/10 px-3 py-1.5 text-xs text-gold"
+              >
+                <span>
+                  已筛选：{{ filter.type === 'image' ? '仅显示图片' : '' }}{{ filter.type === 'image' && filter.favorite === 1 ? ' + ' : '' }}{{ filter.favorite === 1 ? '仅显示收藏' : '' }}
+                </span>
+                <button
+                    type="button"
+                    class="flex h-5 w-5 items-center justify-center rounded-full text-gold transition-colors hover:bg-gold/20"
+                    title="取消全部筛选"
+                    @click="filter.favorite = 0; filter.type = 'all'"
+                >
+                  <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                    <path d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
 
               <ul
@@ -222,11 +331,21 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
                   @dragstart="handleDragStart(item, $event)"
                   @dragend="handleDragEnd(item,$event)"
                   @click="selectRow(index)"
+                  @dblclick="openImageViewer(item)"
                 >
                   <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 }}</div>
                   <div class="list-col-grow" style="height: 4em">
                     <div class="relative" @mouseenter="showTooltip(index, item.content, $event)" @mouseleave="hideTooltip">
+                      <!-- 图片条目 -->
+                      <img
+                        v-if="item.type === 'image'"
+                        :src="item.content"
+                        alt="clipboard image"
+                        class="max-h-[3.6em] max-w-[6em] rounded-md object-contain"
+                      />
+                      <!-- 文本条目 -->
                       <span
+                        v-else
                         class="tabular-nums overflow-hidden text-ellipsis break-words whitespace-pre-wrap p-[3px]"
                         style="display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2"
                       >
@@ -238,7 +357,7 @@ function handleDragEnd(item: ClipboardData, event: DragEvent) {
                       </span>
                     </div>
                     <div class="mt-1 text-xs uppercase font-semibold opacity-60 text-ink-soft">
-                      文本
+                      {{ item.type === 'image' ? '图片' : '文本' }}
                       创建时间{{ formatDate(parseInt(item.created_at)) }}
                       使用次数:{{ item.count }}
                       最后使用:{{ formatDate(parseInt(item.updated_at)) }}

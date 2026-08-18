@@ -5,12 +5,11 @@ import { getOsTypeFromNavigator } from './SystemOS';
  *
  * - 存储格式：Tauri 全局快捷键格式，如 `CommandOrControl+I`、`Control+Shift+ArrowUp`
  * - 显示格式：全大写友好文案，如 `CTRL+I`、`SHIFT+ALT+↑`
- * - 平台：macOS 显示 CMD，Windows/Linux 显示 CTRL
+ * - 平台自适应：macOS 的 CommandOrControl 显示 CMD，Windows/Linux 显示 CTRL
  */
 
-/** 修饰键名称映射（显示为大写缩写） */
+/** 修饰键名称映射（显示为大写缩写）；`commandorcontrol` 由 format 按当前系统动态解析 */
 const MOD_DISPLAY: Record<string, string> = {
-  'commandorcontrol': 'CTRL/CMD',
   'command': 'CMD',
   'cmd': 'CMD',
   'control': 'CTRL',
@@ -42,20 +41,25 @@ export function isMacOS(): boolean {
 }
 
 /**
- * 把 Tauri 格式快捷键转成大写友好显示文案
- * 例：`CommandOrControl+I` → `CTRL/CMD+I`；`Control+Shift+ArrowUp` → `CTRL+SHIFT+↑`
+ * 把 Tauri 格式快捷键转成大写友好显示文案（按当前操作系统自适应修饰键名）
+ * 例（Windows/Linux）：`CommandOrControl+I` → `CTRL + I`，`Control+Shift+ArrowUp` → `CTRL + SHIFT + ↑`
+ * 例（macOS）：`CommandOrControl+I` → `CMD + I`，`Control+Shift+ArrowUp` → `CTRL + SHIFT + ↑`
+ * 组合键之间以空格分隔，提升可读性
  */
 export function formatShortcutForDisplay(key: string): string {
   if (!key) return '';
+  const isMac = isMacOS();
   return key
     .split('+')
     .map(part => {
       const lower = part.toLowerCase();
+      // CommandOrControl：跨平台占位符，按当前系统解析为 CMD（macOS）或 CTRL（其他）
+      if (lower === 'commandorcontrol') return isMac ? 'CMD' : 'CTRL';
       if (MOD_DISPLAY[lower]) return MOD_DISPLAY[lower]!;
       if (KEY_DISPLAY[lower]) return KEY_DISPLAY[lower]!;
       return part.toUpperCase();
     })
-    .join('+');
+    .join(' + ');
 }
 
 /** 按键事件 → 忽略纯修饰键 */

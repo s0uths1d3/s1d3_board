@@ -11,7 +11,7 @@ const osType = ref('');
 interface SettingItem {
   label: string;
   value: string | string[];
-  type: 'input' | 'select' | 'checkbox';
+  type: 'input' | 'select' | 'checkbox' | 'action';
 }
 
 interface SettingGroup {
@@ -35,6 +35,31 @@ watch(maxLimit, async (val) => {
 watch(colorScheme, async (val) => {
   await clipboardService.setKeyValue('color_scheme', val?.[0] ?? '');
 }, { deep: true });
+
+// 清空数据库：二次确认状态
+const showClearConfirm = ref(false);
+const clearing = ref(false);
+const clearMsg = ref('');
+
+async function confirmClearDatabase() {
+  if (clearing.value) return;
+  clearing.value = true;
+  clearMsg.value = '';
+  try {
+    await clipboardService.clearDatabase();
+    clearMsg.value = '已清空剪贴板、便签与待办数据';
+    // 触发剪贴板列表刷新（若在其他页已挂载）
+    try {
+      const { fetchData } = await import('~/src/commands/local/clipboardStore');
+      await fetchData();
+    } catch (_) { /* 列表未挂载时忽略 */ }
+  } catch (e) {
+    clearMsg.value = '清空失败：' + (e as Error).message;
+  } finally {
+    clearing.value = false;
+    showClearConfirm.value = false;
+  }
+}
 
 const settings: SettingGroup[] = [
   {
@@ -66,6 +91,11 @@ const settings: SettingGroup[] = [
         label: '配色',
         value: colorScheme.value,
         type: 'select'
+      },
+      {
+        label: '清空数据库',
+        value: '',
+        type: 'action'
       }
     ]
   }
@@ -254,9 +284,30 @@ onMounted(async () => {
                   class="flex items-center justify-between gap-4 p-4">
                 <div>
                   <div class="text-ink">{{ item.label }}</div>
+                  <div v-if="item.type === 'action' && clearMsg" class="mt-1 text-xs text-ink-faint">
+                    {{ clearMsg }}
+                  </div>
                 </div>
                 <div class="w-56 shrink-0">
-                  <input v-if="item.type === 'input' && item.label === 'API key'" type="text"
+                  <!-- 操作型设置项（如清空数据库）：二次确认 -->
+                  <template v-if="item.type === 'action'">
+                    <button v-if="!showClearConfirm" type="button"
+                            class="btn-soft w-full text-[rgba(176,92,92,1)]"
+                            @click="showClearConfirm = true">
+                      清空数据库
+                    </button>
+                    <div v-else class="flex gap-2">
+                      <button type="button" class="btn-soft flex-1 text-[rgba(176,92,92,1)]"
+                              :disabled="clearing" @click="confirmClearDatabase">
+                        {{ clearing ? '清空中…' : '确认清空' }}
+                      </button>
+                      <button type="button" class="btn-soft flex-1"
+                              :disabled="clearing" @click="showClearConfirm = false">
+                        取消
+                      </button>
+                    </div>
+                  </template>
+                  <input v-else-if="item.type === 'input' && item.label === 'API key'" type="text"
                          v-model="apiKey"
                          placeholder="输入 API key"
                          class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
@@ -264,7 +315,7 @@ onMounted(async () => {
                          v-model="maxLimit"
                          placeholder="如 500"
                          class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
-                  <select v-if="item.type === 'select'" v-model="colorScheme[0]" class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none">
+                  <select v-else-if="item.type === 'select'" v-model="colorScheme[0]" class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none">
                     <option v-for="(value, index) in colorScheme" :key="index" :value="value">
                       {{ value }}
                     </option>

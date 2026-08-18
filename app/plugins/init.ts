@@ -26,7 +26,7 @@ export default defineNuxtPlugin(async (nuxtApp) => {
         const options = {
             menu,
             menuOnLeftClick: true,
-            title: 's1de board',
+            title: 's1d3 board',
             icon: '../assets/icon/icon_64x64.ico'
         };
         await TrayIcon.new(options);

@@ -5,6 +5,8 @@ export interface ClipboardData {
     source: string;
     is_favorite: number;
     category: string;
+    /** 条目类型：'text' 文本 / 'image' 图片（content 存 base64） */
+    type: 'text' | 'image';
     count: number;
     updated_at: string;
 }

@@ -1,5 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
-import { onTextUpdate, startListening } from 'tauri-plugin-clipboard-api';
+import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from 'tauri-plugin-clipboard-api';
 import type { ClipboardData,Note,Todo } from "../Entities";
 
 
@@ -17,7 +17,7 @@ class ClipboardService {
     }
 
     private async initDatabase() {
-        const dbName = 'sqlite:s1de_board.db';
+        const dbName = 'sqlite:s1d3_board.db';
         this.db = await Database.load(dbName);
     }
 
@@ -30,35 +30,65 @@ class ClipboardService {
     public async startClipboardListener() {
         await this.ensureDbInitialized();
 
+        // 文本更新
         await onTextUpdate(async (newText) => {
-            const now = Math.floor(Date.now());
-            const existingRecord: ClipboardData[] = await this.db!.select(
-                "SELECT id FROM clipboard WHERE content = $1",
-                [newText]
-            );
+            await this.saveClipboard(newText, 'text');
+        });
 
-            if (existingRecord.length === 0) {
-                const result = await this.db!.execute(
-                    "INSERT INTO clipboard (content, category, created_at, updated_at) VALUES ($1, $2, $3, $4) ",
-                    [newText, 'T', now, now]
-                );
-                console.log("New record inserted:", result);
-            } else {
-                const record = existingRecord[0];
-                if (record && record.id !== undefined) {
-                    const result = await this.db!.execute(
-                        "UPDATE clipboard SET count = count + 1, updated_at = $2 WHERE id = $1",
-                        [record.id, now]
-                    );
-                    console.log("Count incremented:", result);
-                } else {
-                    console.error("Existing record is missing an ID:", existingRecord);
-                    throw new Error("Existing record is missing an ID");
-                }
+        // 图片更新：onImageUpdate 在某些平台/格式下回传的是文件路径而非 base64，
+        // 改用 onSomethingUpdate 判定类型后主动 readImageBase64() 获取真实数据。
+        await onSomethingUpdate(async (updated) => {
+            if (!updated.image) return;
+            try {
+                const base64 = await readImageBase64();
+                if (!base64) return;
+                // 拼上 data URL 前缀（无前缀时浏览器会把它当相对路径向 dev server 发请求导致 431）
+                const dataUrl = base64.startsWith('data:')
+                    ? base64
+                    : `data:image/png;base64,${base64}`;
+                await this.saveClipboard(dataUrl, 'image');
+            } catch (err) {
+                console.error('读取剪贴板图片失败:', err);
             }
         });
-        await startListening();
+
+        // 注意：startListening 的 listenTypes 参数会整体覆盖默认值
+        // （默认 text/html/rtf/image/files 全开），必须显式传入 text + image，
+        // 只传 { image: true } 会关闭文本监听，导致 TEXT_CHANGED 永不触发。
+        await startListening({ text: true, image: true });
         console.log("Clipboard listener started");
+    }
+
+    /**
+     * 写入一条剪贴板记录（文本或图片）。
+     * - 同类型 + 同内容已存在则仅递增使用次数；否则插入新行。
+     */
+    private async saveClipboard(content: string, type: 'text' | 'image'): Promise<void> {
+        const now = Math.floor(Date.now());
+        const existingRecord: ClipboardData[] = await this.db!.select(
+            "SELECT id FROM clipboard WHERE content = $1 AND type = $2",
+            [content, type]
+        );
+
+        if (existingRecord.length === 0) {
+            const result = await this.db!.execute(
+                "INSERT INTO clipboard (content, category, type, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) ",
+                [content, 'T', type, now, now]
+            );
+            console.log(`New ${type} record inserted:`, result);
+        } else {
+            const record = existingRecord[0];
+            if (record && record.id !== undefined) {
+                const result = await this.db!.execute(
+                    "UPDATE clipboard SET count = count + 1, updated_at = $2 WHERE id = $1",
+                    [record.id, now]
+                );
+                console.log(`Count incremented (${type}):`, result);
+            } else {
+                console.error("Existing record is missing an ID:", existingRecord);
+                throw new Error("Existing record is missing an ID");
+            }
+        }
     }
 
 
@@ -67,17 +97,39 @@ class ClipboardService {
 
         const favorite: number = filter.value.favorite;
         const content: string = filter.value.searchContent;
+        const type: string = filter.value.type ?? 'all';
 
-        let sql = `SELECT * FROM clipboard WHERE content like '%${content}%' ORDER BY updated_at DESC LIMIT 500`;
+        // 统一收集 WHERE 条件，按 $1/$2… 顺序编号参数
+        const conds: string[] = [];
+        const params: any[] = [];
+        let paramIdx = 0;
+
         if (favorite === 1) {
-            sql = `SELECT * FROM clipboard WHERE is_favorite = ${favorite} and content like '%${content}%' ORDER BY updated_at DESC LIMIT 100`;
+            paramIdx += 1;
+            conds.push(`is_favorite = $${paramIdx}`);
+            params.push(favorite);
         }
-        return await this.db!.select(sql) as ClipboardData[];
+
+        if (type === 'image') {
+            // 仅图片：图片无文本内容，忽略搜索关键字
+            conds.push("type = 'image'");
+        } else if (type === 'text') {
+            conds.push("type = 'text'");
+        } else if (content) {
+            // 默认（全部）：图片不参与文本搜索，仅在文本中匹配
+            paramIdx += 1;
+            conds.push(`content LIKE $${paramIdx} AND type = 'text'`);
+            params.push(`%${content}%`);
+        }
+
+        const whereSql = conds.length ? `WHERE ${conds.join(' AND ')}` : 'WHERE 1=1';
+        const limit = favorite === 1 ? 100 : 500;
+        const sql = `SELECT * FROM clipboard ${whereSql} ORDER BY updated_at DESC LIMIT ${limit}`;
+        return await this.db!.select(sql, params) as ClipboardData[];
     }
 
     public async fetchClipboardSingleData(id: number): Promise<ClipboardData> {
-        let sql = `SELECT * FROM clipboard WHERE id = ${id}`;
-        const data =  await this.db!.select(sql) as ClipboardData[]
+        const data =  await this.db!.select("SELECT * FROM clipboard WHERE id = $1", [id]) as ClipboardData[]
         return data[0] as ClipboardData
     }
 
@@ -97,26 +149,44 @@ class ClipboardService {
         await this.db!.execute("DELETE FROM clipboard WHERE id = $1", [id]);
     }
 
+    /**
+     * 清空所有业务数据（剪贴板 / 便签 / 待办），保留配置表（settings、shortcut_binding）。
+     * 同时重置各表的自增主键计数。
+     */
+    public async clearDatabase(): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute("DELETE FROM clipboard");
+        await this.db!.execute("DELETE FROM note");
+        await this.db!.execute("DELETE FROM todo");
+        await this.db!.execute(
+            "DELETE FROM sqlite_sequence WHERE name IN ('clipboard', 'note', 'todo')"
+        );
+    }
+
     public  async  getShortcutSetting():Promise<any> {
         await this.ensureDbInitialized();
         return  await this.db!.select("SELECT * FROM settings WHERE type = $1", ['shortcut']);
     }
 
-    /** 保存单个快捷键到 settings 表（key = shortcut_<id>，不存在则插入，存在则更新） */
+    /**
+     * 保存单个快捷键到 shortcut_binding 规范化表（按 shortcut_id upsert）
+     */
     public async saveShortcutSetting(id: string, value: string, scope: string, title: string): Promise<void> {
         await this.ensureDbInitialized();
         const now = Math.floor(Date.now());
-        const key = `shortcut_${id}`;
-        const existing: any[] = await this.db!.select("SELECT id FROM settings WHERE key = $1", [key]);
+        const existing: any[] = await this.db!.select(
+            "SELECT id FROM shortcut_binding WHERE shortcut_id = $1",
+            [id]
+        );
         if (existing.length > 0) {
             await this.db!.execute(
-                "UPDATE settings SET value = $1, description = $2, scope = $3, updated_at = $4 WHERE key = $5",
-                [value, title, scope, now, key]
+                "UPDATE shortcut_binding SET key = $1, scope = $2, description = $3, updated_at = $4 WHERE shortcut_id = $5",
+                [value, scope, title, now, id]
             );
         } else {
             await this.db!.execute(
-                "INSERT INTO settings (key, value, type, description, scope, updated_at) VALUES ($1, $2, 'shortcut', $3, $4, $5)",
-                [key, value, title, scope, now]
+                "INSERT INTO shortcut_binding (shortcut_id, key, scope, description, updated_at) VALUES ($1, $2, $3, $4, $5)",
+                [id, value, scope, title, now]
             );
         }
     }
@@ -125,18 +195,17 @@ class ClipboardService {
     public async loadShortcutSettings(): Promise<{ id: string; value: string }[]> {
         await this.ensureDbInitialized();
         const rows: any[] = await this.db!.select(
-            "SELECT key, value FROM settings WHERE type = 'shortcut' AND value IS NOT NULL AND value != ''"
+            "SELECT shortcut_id, key FROM shortcut_binding WHERE key IS NOT NULL AND key != ''"
         );
         return rows
-            .filter(r => typeof r.key === 'string' && r.key.startsWith('shortcut_'))
-            .map(r => ({ id: r.key.slice('shortcut_'.length), value: r.value }));
+            .filter(r => typeof r.shortcut_id === 'string')
+            .map(r => ({ id: r.shortcut_id, value: r.key }));
     }
 
     public async setKeyValue(key : string,value: string): Promise<void> {
-        console.log(value);
         await this.ensureDbInitialized();
         const now = Math.floor(Date.now());
-        await this.db!.execute("UPDATE settings SET value = $1, last_modified = $2 WHERE key = $3", [value, now,key]);
+        await this.db!.execute("UPDATE settings SET value = $1, updated_at = $2 WHERE key = $3", [value, now,key]);
     }
 
     public async getKeyValue(key:string): Promise<string> {
@@ -175,13 +244,14 @@ class ClipboardService {
 
         const content: string = filter.value.searchContent;
 
-        let sql = `SELECT * FROM note WHERE content like '%${content}%' ORDER BY updated_at DESC LIMIT 500`;
-        return await this.db!.select(sql) as Note[];
+        return await this.db!.select(
+            "SELECT * FROM note WHERE content LIKE $1 ORDER BY updated_at DESC LIMIT 500",
+            [`%${content}%`]
+        ) as Note[];
     }
 
     public async fetchSingleNote(noteId: string): Promise<Note> {
-        let sql = `SELECT * FROM note WHERE id = ${noteId}`;
-        const data = await this.db!.select(sql) as Note[];
+        const data = await this.db!.select("SELECT * FROM note WHERE id = $1", [noteId]) as Note[];
         return data[0] as Note;
     }
 
@@ -214,13 +284,14 @@ class ClipboardService {
 
         const content: string = filter.value.searchContent;
 
-        let sql = `SELECT * FROM todo WHERE title like '%${content}%' ORDER BY updated_at DESC LIMIT 500`;
-        return await this.db!.select(sql) as Todo[];
+        return await this.db!.select(
+            "SELECT * FROM todo WHERE title LIKE $1 ORDER BY updated_at DESC LIMIT 500",
+            [`%${content}%`]
+        ) as Todo[];
     }
 
     public async fetchSingleTodo(todoId: string): Promise<Todo> {
-        let sql = `SELECT * FROM todo WHERE id = ${todoId}`;
-        const data = await this.db!.select(sql) as Todo[];
+        const data = await this.db!.select("SELECT * FROM todo WHERE id = $1", [todoId]) as Todo[];
         return data[0] as Todo;
     }
 
