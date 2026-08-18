@@ -1,7 +1,7 @@
 <template>
   <div class="flex h-screen flex-col overflow-hidden rounded-2xl">
-    <!-- 图片查看器等子窗口自带系统标题栏，不再渲染自定义 TitleBar -->
-    <TitleBar v-if="route.path !== '/viewer'" />
+    <!-- 图片查看器/删除确认等子窗口自带系统标题栏，不再渲染自定义 TitleBar -->
+    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/delete-confirm'" />
     <main class="flex-1 overflow-y-auto">
       <NuxtPage />
     </main>

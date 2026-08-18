@@ -88,8 +88,8 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
     },
     {
         id: 'favorite_item',
-        key: 'l',
-        defaultKey: 'l',
+        key: 'Control+L',
+        defaultKey: 'Control+L',
         scope: 'local',
         command: favoriteCommand,
         title: '收藏选中项'

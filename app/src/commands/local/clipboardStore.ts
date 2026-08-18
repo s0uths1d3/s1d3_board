@@ -58,6 +58,11 @@ export function getSelectedRowId(): number | undefined {
   return data.value[selectedRowIndex.value]?.id;
 }
 
+/** 当前选中的完整条目（删除/收藏等操作使用，避免依赖易过期的外部引用） */
+export function getSelectedItem(): ClipboardData | undefined {
+  return data.value[selectedRowIndex.value];
+}
+
 /** 当前选中条目的内容（PasteCommand 粘贴时使用），含类型以便区分文本/图片 */
 export function getSelectedContent(): { content: string; type: 'text' | 'image' } | undefined {
   const item = data.value[selectedRowIndex.value];

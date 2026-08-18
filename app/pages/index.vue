@@ -6,14 +6,14 @@ import {
   selectedRowIndex,
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
-import { data, filter, fetchData } from '~/src/commands/local/clipboardStore';
-import DeleteConfirmation from "~/components/mainpage/DeleteConfirmation.vue";
+import { data, filter, fetchData, getSelectedItem } from '~/src/commands/local/clipboardStore';
 import Tooltip from "~/components/mainpage/Tooltip.vue";
 import HighlightText from "~/components/mainpage/HighlightText.vue";
-import {deleteTarget, showConfirm} from "~/src/commands/local/DelCommand";
 import {isTauri} from "~/src/utils/env";
 import clipboardService from "~/src/db/dbService";
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 import StickyNote from "~/components/note/StickyNote.vue";
 import TodoList from "~/components/todo/TodoList.vue";
@@ -32,8 +32,13 @@ watch(highlightContent, (newValue, oldValue) => {
   filter.value.searchContent = newValue;
 });
 
-watch(selectedRowIndex, (newValue) => {
-  deleteTarget.value = data.value[newValue] as ClipboardData;
+// 切换 tab 时隐藏 tooltip（clip 列表随 tab 卸载，tooltip 需同步关闭）
+watch(activeTab, () => {
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+  tooltip.value.visible = false;
 })
 
 const tooltip = ref({
@@ -43,9 +48,19 @@ const tooltip = ref({
   y: 0,
 });
 
+/** 鼠标是否悬停在 tooltip 弹层上（悬停期间保持显示） */
+let hoveringTooltip = false;
+/** 延迟隐藏计时器：给鼠标从触发元素移到 tooltip 留出过渡时间 */
+let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
 function showTooltip(index: number, text: string, event: MouseEvent) {
   const target = (event.currentTarget as HTMLElement).querySelector('span');
-  if (target && text.split('\n').length -1 >2) {
+  if (target && text.split('\n').length - 1 > 2) {
+    // 取消挂起的隐藏计时器，避免移动到其他项时旧 tooltip 误关闭新 tooltip
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     tooltip.value = {
       visible: true,
@@ -56,16 +71,22 @@ function showTooltip(index: number, text: string, event: MouseEvent) {
   }
 }
 
+function hideTooltip() {
+  // 延迟执行：若在延迟内鼠标已进入 tooltip，则不隐藏
+  if (hideTimer) clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    if (!hoveringTooltip) {
+      tooltip.value.visible = false;
+    }
+  }, 200);
+}
+
 function handelFilter() {
   filter.value.favorite = filter.value.favorite === 1 ? 0 : 1
 }
 
 function handelTypeFilter() {
   filter.value.type = filter.value.type === 'image' ? 'all' : 'image'
-}
-
-function hideTooltip() {
-  tooltip.value.visible = false;
 }
 
 onMounted(async () => {
@@ -81,7 +102,70 @@ onMounted(async () => {
   }
   // 窗口被 Ctrl+I 唤出后，自动聚焦搜索框：直接输入字符即可搜索，无需点击
   window.addEventListener('window-shown', focusList);
+  // tooltip 弹层悬停：进入保持显示，离开后允许隐藏
+  window.addEventListener('tooltip-hover-enter', onTooltipHoverEnter);
+  window.addEventListener('tooltip-hover-leave', onTooltipHoverLeave);
+  // Delete 键请求删除：打开独立删除确认窗口
+  window.addEventListener('delete-request', onDeleteRequest);
+
+  // 删除确认窗口的回执：yes=删除，no=取消。
+  // 收到回执后设标志并延迟兜底聚焦；真正聚焦在 delete-confirm:closed（窗口销毁后）。
+  // 兜底定时器：若 closed 事件因窗口销毁丢失，300ms 后仍恢复焦点（避免 Del 键失效）
+  const scheduleRefocus = () => {
+    deleteConfirmClosedByUser = true;
+    setTimeout(() => {
+      if (deleteConfirmClosedByUser) {
+        deleteConfirmClosedByUser = false;
+        refocusList();
+      }
+    }, 300);
+  };
+  listen('delete-confirm:yes', (ev) => {
+    const l = (ev.payload as string | undefined) ?? '';
+    if (l && l !== deleteConfirmLabel) return;
+    if (deleteConfirmLabel) deleteConfirmLabel = null;
+    confirmDelete();
+    scheduleRefocus();
+  });
+  listen('delete-confirm:no', (ev) => {
+    const l = (ev.payload as string | undefined) ?? '';
+    if (l && l !== deleteConfirmLabel) return;
+    if (deleteConfirmLabel) deleteConfirmLabel = null;
+    scheduleRefocus();
+  });
+  // 删除确认窗口已销毁（此时聚焦不再被抢占）：
+  // - 用户主动操作关闭（Enter/Esc，yes/no 回执置位标志）→ 恢复焦点，局部快捷键可用
+  // - 失焦自动关闭（用户主动切到其他应用）→ 不抢焦点，尊重用户切换意图
+  listen('delete-confirm:closed', (ev) => {
+    const l = (ev.payload as string | undefined) ?? '';
+    if (l && l !== deleteConfirmLabel) return;
+    if (deleteConfirmLabel) deleteConfirmLabel = null;
+    if (deleteConfirmClosedByUser) {
+      deleteConfirmClosedByUser = false;
+      refocusList();
+    }
+  });
+  // 图片查看器已关闭：焦点回归列表（用户主动关闭查看器）
+  listen('image-viewer:closed', () => {
+    refocusList();
+  });
 });
+
+// 注意：不要在主窗口 onFocusChanged 中调用 refocusList！
+// refocusList 内部的 setFocus() 会再次触发 onFocusChanged(focused=true)，
+// 形成"获得焦点 → 强制聚焦 → 再获得焦点"的无限循环，导致主窗口持续抢焦点，
+// 用户无法切到其他窗口/最小化主窗口。
+// 焦点恢复已由 delete-confirm:yes/no/closed 与 image-viewer:closed 事件可靠触发。
+
+function onTooltipHoverEnter() {
+  hoveringTooltip = true;
+}
+
+function onTooltipHoverLeave() {
+  hoveringTooltip = false;
+  // 离开 tooltip 后若鼠标已不在触发元素上，隐藏 tooltip
+  tooltip.value.visible = false;
+}
 
 function focusList() {
   searchInput.value?.focus();
@@ -90,6 +174,9 @@ function focusList() {
 onBeforeUnmount(async () => {
   console.log('unmounting outside...')
   window.removeEventListener('window-shown', focusList);
+  window.removeEventListener('tooltip-hover-enter', onTooltipHoverEnter);
+  window.removeEventListener('tooltip-hover-leave', onTooltipHoverLeave);
+  window.removeEventListener('delete-request', onDeleteRequest);
   if (updateInterval) {
     clearInterval(updateInterval);
     updateInterval = null as unknown as NodeJS.Timeout;
@@ -101,26 +188,121 @@ async function favorite(id: number, value: number) {
   await clipboardService.updateFavorite(id, value)
 }
 
+/** 删除确认窗口 label（单例） */
+let deleteConfirmLabel: string | null = null;
+/** 删除确认窗口正在创建中（防止快速多次按 Delete 重复创建窗口） */
+let deleteConfirmOpening = false;
+/** 删除确认窗口是否由用户主动操作关闭（Enter/Esc），用于区分"失焦自动关闭"不抢焦点 */
+let deleteConfirmClosedByUser = false;
+
+/** 点击删除按钮：在独立确认窗口弹窗，不再内嵌展示内容 */
 async function handleDelete(target: ClipboardData) {
-  if (target) {
-    deleteTarget.value = target;
-    showConfirm.value = true;
+  if (!target || !isTauri() || deleteConfirmOpening) return;
+
+  // 复用已存在的删除确认窗口，直接更新待删除项
+  if (deleteConfirmLabel) {
+    const existing = await WebviewWindow.getByLabel(deleteConfirmLabel).catch(() => null);
+    if (existing) {
+      await emit('delete-confirm:payload', { label: deleteConfirmLabel, type: target.type });
+      return;
+    }
+    deleteConfirmLabel = null;
+  }
+
+  deleteConfirmOpening = true;
+  const label = `delete-confirm-${Date.now()}`;
+  deleteConfirmLabel = label;
+  const win = new WebviewWindow(label, {
+    url: '/delete-confirm',
+    title: '删除确认',
+    width: 360,
+    height: 200,
+    resizable: false,
+    decorations: false,
+    transparent: true,
+    center: true,
+  });
+  win.once('tauri://created', () => {
+    deleteConfirmOpening = false;
+  });
+  win.once('tauri://error', () => {
+    console.error('删除确认窗口创建失败:', label);
+    deleteConfirmOpening = false;
+    if (deleteConfirmLabel === label) deleteConfirmLabel = null;
+  });
+
+  // 等待确认窗口 ready 后发送待删除项类型
+  const unlistenReady = await listen('delete-confirm:ready', async (ev) => {
+    const readyLabel = (ev.payload as string | undefined) ?? '';
+    if (readyLabel && readyLabel !== label) return;
+    await emit('delete-confirm:payload', { label, type: target.type });
+    unlistenReady();
+  });
+  setTimeout(() => unlistenReady(), 5000);
+}
+
+/** 收到删除确认：执行删除并刷新列表 */
+async function confirmDelete() {
+  const item = getSelectedItem();
+  if (item) {
+    await clipboardService.deleteClipboardData(item.id);
+    await fetchData();
   }
 }
 
-function confirmDelete() {
-  if (deleteTarget.value) {
-    clipboardService.deleteClipboardData(deleteTarget.value.id).then(() => {
-      fetchData().then(() => {
-        showConfirm.value = false;
-        deleteTarget.value = data.value[getSelectedRowId()] as ClipboardData
-      })
-    })
-  }
+/** Delete 键请求：对当前选中项打开独立删除确认窗口 */
+function onDeleteRequest() {
+  // 直接从 store 取当前选中项，避免依赖易过期的 deleteTarget（fetchData 每秒刷新 data 数组）
+  const item = getSelectedItem();
+  if (item) handleDelete(item);
 }
 
-function cancelDelete() {
-  showConfirm.value = false;
+/** 防抖计时器：多个关闭路径（yes/no/closed/onFocusChanged）同时触发时只聚焦一次 */
+let refocusTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 子窗口关闭后：主窗口重新聚焦并滚动到当前选中项（删除窗口与图片查看器一致） */
+function refocusList() {
+  if (!isTauri()) return;
+
+  // 防抖：删除窗口关闭时 yes/no/closed/onFocusChanged 会触发多次，
+  // 每次 refocusList 又产生 3 次延时聚焦，会形成 PostMessage 消息风暴
+  // （WebView2 报 0x80070718 配额不足）。合并为一次执行。
+  if (refocusTimer) clearTimeout(refocusTimer);
+  refocusTimer = setTimeout(() => {
+    refocusTimer = null;
+
+    // 与 ToggleWindowCommand（Ctrl+I 唤出窗口）相同的三层聚焦方案：
+    // 窗口 setFocus + webview setFocus + JS window.focus + window-shown 事件。
+    const restoreFocus = async () => {
+      try {
+        await getCurrentWindow().show();
+        await getCurrentWindow().setFocus();
+      } catch (e) {
+        console.warn('主窗口聚焦失败:', e);
+      }
+      try {
+        await getCurrentWebview().setFocus();
+      } catch (e) {
+        console.warn('webview 聚焦失败:', e);
+      }
+      window.focus();
+      window.dispatchEvent(new CustomEvent('window-shown'));
+      searchInput.value?.focus();
+    };
+
+    // 多重延时补偿：删除窗口完全销毁、webview 状态稳定后再聚焦
+    setTimeout(() => restoreFocus(), 120);
+    setTimeout(() => restoreFocus(), 320);
+    setTimeout(() => restoreFocus(), 600);
+
+    // 列表滚动到选中项
+    setTimeout(() => {
+      const listElement = document.querySelector('#listElement') as HTMLElement | null;
+      const items = listElement?.querySelectorAll('.list-row');
+      const current = items?.[selectedRowIndex.value] as HTMLElement | undefined;
+      current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 120);
+  }, 80);
 }
 
 function getFirstTwoLines(input: string): string {
@@ -334,8 +516,8 @@ async function openImageViewer(item: ClipboardData) {
                   @dblclick="openImageViewer(item)"
                 >
                   <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 }}</div>
-                  <div class="list-col-grow" style="height: 4em">
-                    <div class="relative" @mouseenter="showTooltip(index, item.content, $event)" @mouseleave="hideTooltip">
+                  <div class="list-col-grow flex flex-col" style="height: 4em">
+                    <div class="relative min-h-0 flex-1 overflow-hidden" @mouseenter="showTooltip(index, item.content, $event)" @mouseleave="hideTooltip">
                       <!-- 图片条目 -->
                       <img
                         v-if="item.type === 'image'"
@@ -356,7 +538,8 @@ async function openImageViewer(item: ClipboardData) {
                         />
                       </span>
                     </div>
-                    <div class="mt-1 text-xs uppercase font-semibold opacity-60 text-ink-soft">
+                    <!-- 基础信息固定显示在容器最后一行 -->
+                    <div class="mt-1 shrink-0 text-xs uppercase font-semibold opacity-60 text-ink-soft">
                       {{ item.type === 'image' ? '图片' : '文本' }}
                       创建时间{{ formatDate(parseInt(item.created_at)) }}
                       使用次数:{{ item.count }}
@@ -399,7 +582,5 @@ async function openImageViewer(item: ClipboardData) {
         :x="tooltip.x"
         :y="tooltip.y"
     />
-
-    <DeleteConfirmation :show="showConfirm" :deleteTarget="deleteTarget" @confirm="confirmDelete" @cancel="cancelDelete"/>
   </div>
 </template>
