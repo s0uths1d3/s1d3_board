@@ -25,3 +25,6 @@ logs
 .env
 .env.*
 !.env.example
+
+# Temporary commit message files
+.commit_msg*
