@@ -1,7 +1,7 @@
 <template>
   <div class="flex h-screen flex-col overflow-hidden rounded-2xl">
-    <!-- 图片查看器/删除确认等子窗口自带系统标题栏，不再渲染自定义 TitleBar -->
-    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/delete-confirm'" />
+    <!-- 图片查看器/删除确认/tooltip 等子窗口不渲染主窗口的自定义 TitleBar -->
+    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/delete-confirm' && route.path !== '/tooltip'" />
     <main class="flex-1 overflow-y-auto">
       <NuxtPage />
     </main>
@@ -43,21 +43,33 @@ async function setupAutoHideOnBlur() {
     hideOnBlurTimer = setTimeout(async () => {
       hideOnBlurTimer = null;
       try {
+        // 子窗口正在创建/就绪期间豁免自动隐藏，避免双击打开查看器时主窗口被连带隐藏
+        if (typeof window !== 'undefined' && (window as any).__childOpeningUntil
+          && Date.now() < (window as any).__childOpeningUntil) {
+          return;
+        }
         const windows = await getAllWindows();
         let childFocused = false;
         for (const w of windows) {
           try {
+            // tooltip 窗口聚焦时（用户正在其上操作/hover）应阻止主窗口隐藏；
+            // 仅被动显示（未聚焦）时，切走应用不会阻止主窗口自动隐藏。
             if (w.label !== 'main' && await w.isFocused()) {
-              childFocused = true; // 子窗口聚焦中，不隐藏
+              childFocused = true; // 任意子窗口（查看器/删除确认/tooltip）聚焦中，不隐藏
             }
           } catch { /* 忽略单窗查询失败 */ }
         }
         if (childFocused) return;
 
-        // 主窗口隐藏前，关闭所有子窗口（删除确认/图片查看器随主窗口一起关闭）
+        // 主窗口隐藏前，关闭/隐藏所有子窗口：
+        // - 删除确认/图片查看器：close（随主窗口一起关闭）
+        // - tooltip 悬停窗口：hide（保留单例标签，下次 hover 复用，避免主窗口消失后 tooltip 残留）
         for (const w of windows) {
           try {
-            if (w.label !== 'main' && await w.isVisible()) {
+            if (w.label === 'main') continue;
+            if (w.label.startsWith('tooltip-')) {
+              if (await w.isVisible()) await w.hide();
+            } else if (await w.isVisible()) {
               await w.close();
             }
           } catch { /* 忽略单窗关闭失败 */ }
@@ -83,8 +95,8 @@ onMounted(async () => {
     console.error('❌ 初始化失败:', error);
   }
 
-  // 全局快捷键依赖 Tauri 全局快捷键插件，仅在桌面容器内注册
-  if (isTauri()) {
+  // 全局快捷键依赖 Tauri 全局快捷键插件，仅在主窗口注册（子窗口如 tooltip 跳过，避免重复注册冲突）
+  if (isTauri() && isMainWindow()) {
     try {
       await initShortcuts();
     } catch (error) {

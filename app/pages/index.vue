@@ -7,7 +7,6 @@ import {
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
 import { data, filter, fetchData, getSelectedItem } from '~/src/commands/local/clipboardStore';
-import Tooltip from "~/components/mainpage/Tooltip.vue";
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {isTauri} from "~/src/utils/env";
 import clipboardService from "~/src/db/dbService";
@@ -38,7 +37,11 @@ watch(activeTab, () => {
     clearTimeout(hideTimer);
     hideTimer = null;
   }
+  hoveringClip = false;
+  hoveringTooltip = false;
   tooltip.value.visible = false;
+  // 同步关闭独立 tooltip 窗口
+  emit('tooltip:hide').catch(() => {});
 })
 
 const tooltip = ref({
@@ -48,37 +51,142 @@ const tooltip = ref({
   y: 0,
 });
 
+/** tooltip 独立窗口单例 label */
+let tooltipLabel: string | null = null;
+/** 最新一次待显示的 tooltip 数据（窗口就绪前缓存，避免事件丢失） */
+let latestTooltipPayload: { text: string; x: number; y: number } | null = null;
+/** tooltip 悬停跨窗口事件监听的取消函数 */
+let unlistenTooltipHover: Array<() => void> = [];
 /** 鼠标是否悬停在 tooltip 弹层上（悬停期间保持显示） */
 let hoveringTooltip = false;
+/** 鼠标是否悬停在触发 clip 项上 */
+let hoveringClip = false;
 /** 延迟隐藏计时器：给鼠标从触发元素移到 tooltip 留出过渡时间 */
 let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * 将相对主窗口视口的 CSS 像素坐标转换为物理屏幕像素坐标（供独立 tooltip 窗口定位）。
+ * 物理像素 = (视口坐标 + 主窗口位置) * 设备像素比
+ */
+async function toPhysicalCoords(viewX: number, viewY: number): Promise<{ x: number; y: number }> {
+  if (!isTauri()) return { x: viewX, y: viewY };
+  try {
+    const win = getCurrentWindow();
+    const pos = await win.outerPosition();
+    const scale = await win.scaleFactor();
+    return {
+      x: Math.round((pos.x + viewX) * scale),
+      y: Math.round((pos.y + viewY) * scale),
+    };
+  } catch {
+    return { x: viewX, y: viewY };
+  }
+}
+
+/** 打开（或定位到）独立 tooltip 窗口并推送内容 */
+async function openTooltipWindow() {
+  if (!isTauri()) return;
+  if (tooltipLabel) {
+    const existing = await WebviewWindow.getByLabel(tooltipLabel).catch(() => null);
+    if (existing) {
+      // 窗口已存在：直接补发最新内容（此时窗口已在监听 tooltip:show）
+      if (latestTooltipPayload) {
+        const coords = await toPhysicalCoords(latestTooltipPayload.x, latestTooltipPayload.y);
+        await emit('tooltip:show', { ...latestTooltipPayload, x: coords.x, y: coords.y });
+      }
+      return;
+    }
+    tooltipLabel = null; // 已销毁，走新建
+  }
+  // 标记子窗口豁免期，避免创建瞬间触发主窗口失焦隐藏
+  (window as any).__childOpeningUntil = Date.now() + 600;
+  const label = `tooltip-${Date.now()}`;
+  tooltipLabel = label;
+  // 关键：必须在 new WebviewWindow 之前注册 ready 监听，
+  // 否则独立窗口 onMounted 的 emit('tooltip:ready') 可能早于本监听注册而丢失，
+  // 导致后续补发永不触发、tooltip 间歇不显示。
+  const unReady = await listen('tooltip:ready', async (ev) => {
+    const readyLabel = (ev.payload as string | undefined) ?? '';
+    if (readyLabel && readyLabel !== label) return;
+    // 窗口已就绪：用最新 payload 实时计算物理坐标后补发（不依赖之前的竞态 emit）
+    if (latestTooltipPayload) {
+      const coords = await toPhysicalCoords(latestTooltipPayload.x, latestTooltipPayload.y);
+      await emit('tooltip:show', { ...latestTooltipPayload, x: coords.x, y: coords.y });
+    }
+    unReady();
+  });
+  // 兜底清理：5s 内未收到 ready 也释放监听
+  setTimeout(() => unReady(), 5000);
+
+  const win = new WebviewWindow(label, {
+    url: '/tooltip',
+    title: '详情',
+    width: 480,
+    height: 360,
+    resizable: false,
+    decorations: false,
+    transparent: false,  // 不透明：tooltip 窗口自带背景，避免透出主窗口导航与控件
+    skipTaskbar: true,
+    focus: false,        // 不抢焦点：避免打断主窗口键盘交互与触发主窗口自动隐藏
+    visible: false,      // 定位与尺寸就绪后再 show，避免闪烁/错位的空窗口
+  });
+  win.once('tauri://created', () => {
+    (window as any).__childOpeningUntil = Date.now() + 400;
+  });
+  win.once('tauri://error', () => {
+    if (tooltipLabel === label) tooltipLabel = null;
+  });
+}
+
 function showTooltip(index: number, text: string, event: MouseEvent) {
-  const target = (event.currentTarget as HTMLElement).querySelector('span');
+  const el = event.currentTarget as HTMLElement;
+  // 图片条目（base64）不应作为文本 tooltip 显示，仅文本条目展示内容
+  if (el.querySelector('img')) return;
+  const target = el.querySelector('span');
   if (target && text.split('\n').length - 1 > 2) {
     // 取消挂起的隐藏计时器，避免移动到其他项时旧 tooltip 误关闭新 tooltip
     if (hideTimer) {
       clearTimeout(hideTimer);
       hideTimer = null;
     }
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    hoveringClip = true;
+    const rect = el.getBoundingClientRect();
     tooltip.value = {
       visible: true,
       text,
       x: rect.left,
       y: rect.bottom + 4,
     };
+    if (isTauri()) {
+      // 缓存 viewport 坐标（供窗口 ready 后实时换算物理坐标），由 openTooltipWindow 的
+      // ready 握手统一补发 tooltip:show，避免竞态导致的间歇不显示
+      latestTooltipPayload = {
+        text,
+        x: rect.left,
+        y: rect.bottom + 4,
+      };
+      openTooltipWindow();
+    }
   }
 }
 
-function hideTooltip() {
-  // 延迟执行：若在延迟内鼠标已进入 tooltip，则不隐藏
+/**
+ * 延迟隐藏：仅当鼠标既不在 clip 项上、也不在 tooltip 窗口上时，
+ * 才真正隐藏。给鼠标在 clip 项与 tooltip 窗口之间移动留出过渡时间。
+ */
+function scheduleHideTooltip() {
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
-    if (!hoveringTooltip) {
+    if (!hoveringClip && !hoveringTooltip) {
       tooltip.value.visible = false;
+      emit('tooltip:hide').catch(() => {});
     }
   }, 200);
+}
+
+function hideTooltip() {
+  hoveringClip = false;
+  scheduleHideTooltip();
 }
 
 function handelFilter() {
@@ -102,9 +210,12 @@ onMounted(async () => {
   }
   // 窗口被 Ctrl+I 唤出后，自动聚焦搜索框：直接输入字符即可搜索，无需点击
   window.addEventListener('window-shown', focusList);
-  // tooltip 弹层悬停：进入保持显示，离开后允许隐藏
-  window.addEventListener('tooltip-hover-enter', onTooltipHoverEnter);
-  window.addEventListener('tooltip-hover-leave', onTooltipHoverLeave);
+  // tooltip 弹层悬停：进入保持显示，离开后允许隐藏（独立窗口通过 Tauri 事件通信）
+  if (isTauri()) {
+    const u1 = await listen('tooltip:hover-enter', onTooltipHoverEnter);
+    const u2 = await listen('tooltip:hover-leave', onTooltipHoverLeave);
+    unlistenTooltipHover = [u1, u2];
+  }
   // Delete 键请求删除：打开独立删除确认窗口
   window.addEventListener('delete-request', onDeleteRequest);
 
@@ -159,12 +270,17 @@ onMounted(async () => {
 
 function onTooltipHoverEnter() {
   hoveringTooltip = true;
+  // 进入 tooltip：取消挂起的隐藏计时器，保持显示
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
 }
 
 function onTooltipHoverLeave() {
   hoveringTooltip = false;
-  // 离开 tooltip 后若鼠标已不在触发元素上，隐藏 tooltip
-  tooltip.value.visible = false;
+  // 离开 tooltip：延迟隐藏，给鼠标移回 clip 项留出过渡时间
+  scheduleHideTooltip();
 }
 
 function focusList() {
@@ -174,8 +290,8 @@ function focusList() {
 onBeforeUnmount(async () => {
   console.log('unmounting outside...')
   window.removeEventListener('window-shown', focusList);
-  window.removeEventListener('tooltip-hover-enter', onTooltipHoverEnter);
-  window.removeEventListener('tooltip-hover-leave', onTooltipHoverLeave);
+  unlistenTooltipHover.forEach((u) => u());
+  unlistenTooltipHover = [];
   window.removeEventListener('delete-request', onDeleteRequest);
   if (updateInterval) {
     clearInterval(updateInterval);
@@ -212,6 +328,8 @@ async function handleDelete(target: ClipboardData) {
   deleteConfirmOpening = true;
   const label = `delete-confirm-${Date.now()}`;
   deleteConfirmLabel = label;
+  // 标记子窗口正在打开，临时豁免主窗口的失焦自动隐藏（避免创建瞬间误隐藏）
+  (window as any).__childOpeningUntil = Date.now() + 600;
   const win = new WebviewWindow(label, {
     url: '/delete-confirm',
     title: '删除确认',
@@ -225,6 +343,8 @@ async function handleDelete(target: ClipboardData) {
   });
   win.once('tauri://created', () => {
     deleteConfirmOpening = false;
+    // 窗口已创建，延长豁免期至其稳定聚焦
+    (window as any).__childOpeningUntil = Date.now() + 400;
   });
   win.once('tauri://error', () => {
     console.error('删除确认窗口创建失败:', label);
@@ -363,6 +483,8 @@ async function openImageViewer(item: ClipboardData) {
 
   const label = `image-viewer-${Date.now()}`;
   viewerLabel = label;
+  // 标记子窗口正在打开，临时豁免主窗口的失焦自动隐藏（避免双击时主窗口被连带隐藏）
+  (window as any).__childOpeningUntil = Date.now() + 600;
   const viewer = new WebviewWindow(label, {
     url: '/viewer',
     title: '图片查看器',
@@ -376,6 +498,8 @@ async function openImageViewer(item: ClipboardData) {
   });
   viewer.once('tauri://created', () => {
     console.log('查看器窗口创建成功:', label);
+    // 窗口已创建，延长豁免期至其稳定聚焦，避免创建期间的失焦误触发隐藏
+    (window as any).__childOpeningUntil = Date.now() + 400;
   });
   viewer.once('tauri://error', () => {
     console.error('查看器窗口创建失败:', label);
@@ -524,8 +648,8 @@ async function openImageViewer(item: ClipboardData) {
                   @dblclick="openImageViewer(item)"
                 >
                   <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 }}</div>
-                  <div class="list-col-grow flex flex-col" style="height: 4em">
-                    <div class="relative min-h-0 flex-1 overflow-hidden" @mouseenter="showTooltip(index, item.content, $event)" @mouseleave="hideTooltip">
+                  <div class="list-col-grow flex min-w-0 flex-col">
+                    <div class="relative min-h-0 overflow-hidden" @mouseenter="showTooltip(index, item.content, $event)" @mouseleave="hideTooltip">
                       <!-- 图片条目 -->
                       <img
                         v-if="item.type === 'image'"
@@ -583,12 +707,5 @@ async function openImageViewer(item: ClipboardData) {
         </Transition>
       </div>
     </main>
-
-    <Tooltip
-        :visible="tooltip.visible"
-        :text="tooltip.text"
-        :x="tooltip.x"
-        :y="tooltip.y"
-    />
   </div>
 </template>

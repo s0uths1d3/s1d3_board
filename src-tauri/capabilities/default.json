@@ -5,7 +5,8 @@
   "windows": [
     "main",
     "image-viewer-*",
-    "delete-confirm-*"
+    "delete-confirm-*",
+    "tooltip-*"
   ],
   "permissions": [
     "core:path:default",
@@ -41,6 +42,12 @@
     "autostart:default",
     "core:window:allow-request-user-attention",
     "core:window:allow-set-skip-taskbar",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-outer-size",
+    "core:window:allow-outer-position",
+    "core:window:allow-scale-factor",
+    "core:window:allow-current-monitor",
     "core:webview:allow-set-webview-focus",
     "core:webview:allow-internal-toggle-devtools",
     "fs:write-all",
