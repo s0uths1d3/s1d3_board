@@ -24,6 +24,7 @@ export default defineNuxtConfig({
     }
   },
   plugins:[
-      '~/plugins/init.ts'
+      '~/plugins/init.ts',
+      '~/plugins/disableWebviewDefaults.client.ts'
   ]
 })
