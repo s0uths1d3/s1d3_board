@@ -24,14 +24,14 @@ const lineCount = computed(() => {
   return t.replace(/\r\n/g, '\n').split('\n').length;
 });
 
-/** 全部真实行：按换行拆分，行内多余空白压缩为单个空格（不合并换行） */
+/** 全部真实行：按换行拆分，保留行内原始空白（含 tab 等，不过滤特殊字符） */
 const lines = computed(() => {
   const t = text.value || '';
   if (!t) return [' '];
   return t
     .replace(/\r\n/g, '\n')
     .split('\n')
-    .map((l) => l.replace(/\s+/g, ' ').trim() || ' ');
+    .map((l) => l.length ? l : ' ');
 });
 
 /** 尺寸基准（px）：以美观、紧凑、明显小于主窗口(854x480) 为基础 */
@@ -107,6 +107,8 @@ async function fitWindowToContent() {
 async function showTooltip(payload: TooltipPayload) {
   text.value = payload.text ?? '';
   visible.value = true;
+  // 通知主窗口：tooltip 已激活（正在显示/使用），失焦自动隐藏逻辑应跳过
+  emit('tooltip:active', getCurrentWindow().label).catch(() => {});
 
   if (!isTauri()) return;
 
@@ -123,16 +125,44 @@ async function hideTooltip() {
   visible.value = false;
   // 真正隐藏整个窗口：否则仅隐藏内容卡片时，.tooltip-view 的渐变背景仍残留为"空白"窗口
   await getCurrentWindow().hide().catch(() => {});
+  // 通知主窗口：tooltip 已停用，若主窗口当前失焦则可恢复正常后台隐藏
+  emit('tooltip:active', null).catch(() => {});
   emit('tooltip:hidden', getCurrentWindow().label).catch(() => {});
 }
 
 /** 鼠标进入 tooltip：通知主窗口保持显示，不要因为主窗口 hover 离开而隐藏 */
 function onEnter() {
+  // 滚动条拖动期间忽略 enter/leave，避免拖拽时鼠标移出窗口误触发隐藏
+  if (draggingScroll.value) return;
   emit('tooltip:hover-enter', getCurrentWindow().label).catch(() => {});
 }
 /** 鼠标离开 tooltip：通知主窗口恢复延迟隐藏逻辑（由主窗口统一决定是否隐藏窗口） */
 function onLeave() {
+  // 滚动条拖动期间忽略 enter/leave，避免拖拽时鼠标移出窗口误触发隐藏
+  if (draggingScroll.value) return;
   emit('tooltip:hover-leave', getCurrentWindow().label).catch(() => {});
+}
+
+/**
+ * 内部拖拽标志：在 tooltip 窗口内按下鼠标（含滚动条）时置 true。
+ * 拖动滚动条时鼠标会移出 <main> 边界甚至窗口外，触发 mouseleave，
+ * 此标志期间屏蔽 onEnter/onLeave 的 hover 隐藏通知，避免拖拽时误发 hover-leave。
+ * 拖拽结束（全局 mouseup）才复位。窗口整体的显示/隐藏仍由 tooltip:active 生命周期控制。
+ */
+const draggingScroll = ref(false);
+let docMouseUpHandler: ((_e: MouseEvent) => void) | null = null;
+function markInteracting() {
+  draggingScroll.value = true;
+  if (!docMouseUpHandler) {
+    docMouseUpHandler = () => {
+      draggingScroll.value = false;
+      if (docMouseUpHandler) {
+        document.removeEventListener('mouseup', docMouseUpHandler);
+        docMouseUpHandler = null;
+      }
+    };
+    document.addEventListener('mouseup', docMouseUpHandler);
+  }
 }
 
 onMounted(async () => {
@@ -152,11 +182,20 @@ onMounted(async () => {
   // 通知主窗口：本 tooltip 窗口已就绪（监听已注册），可安全接收 show 事件
   // 解决首次创建时主窗口 emit 早于本窗口监听注册导致的事件丢失
   await emit('tooltip:ready', getCurrentWindow().label).catch(() => {});
+
+  // 在 document 级监听 mousedown（原生滚动条交互也能捕获），标记 tooltip 正在交互，
+  // 避免拖动滚动条期间因鼠标移出窗口或 WebView 未获焦导致主窗口误隐藏
+  document.addEventListener('mousedown', markInteracting);
 });
 
 onBeforeUnmount(() => {
   if (unlistenShow) unlistenShow();
   if (unlistenHide) unlistenHide();
+  document.removeEventListener('mousedown', markInteracting);
+  if (docMouseUpHandler) {
+    document.removeEventListener('mouseup', docMouseUpHandler);
+    docMouseUpHandler = null;
+  }
 });
 </script>
 
@@ -235,11 +274,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .tooltip-line {
-  /* 单行显示：不换行，过长以省略号截断 */
+  /* 单行显示：不换行、保留原始空白（tab/连续空格），过长以省略号截断 */
   flex: 1;
   min-width: 0;
   display: block;
-  white-space: nowrap;
+  white-space: pre;
   overflow: hidden;
   text-overflow: ellipsis;
 }

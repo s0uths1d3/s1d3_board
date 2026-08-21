@@ -66,17 +66,18 @@ let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * 将相对主窗口视口的 CSS 像素坐标转换为物理屏幕像素坐标（供独立 tooltip 窗口定位）。
- * 物理像素 = (视口坐标 + 主窗口位置) * 设备像素比
+ * Tauri v2 的 outerPosition() 返回的是物理像素（已含 DPR），故换算为：
+ *   物理像素 = 主窗口物理位置 + 视口 CSS 坐标 * 设备像素比
  */
 async function toPhysicalCoords(viewX: number, viewY: number): Promise<{ x: number; y: number }> {
   if (!isTauri()) return { x: viewX, y: viewY };
   try {
     const win = getCurrentWindow();
-    const pos = await win.outerPosition();
+    const pos = await win.outerPosition(); // 物理像素
     const scale = await win.scaleFactor();
     return {
-      x: Math.round((pos.x + viewX) * scale),
-      y: Math.round((pos.y + viewY) * scale),
+      x: Math.round(pos.x + viewX * scale),
+      y: Math.round(pos.y + viewY * scale),
     };
   } catch {
     return { x: viewX, y: viewY };
@@ -214,7 +215,16 @@ onMounted(async () => {
   if (isTauri()) {
     const u1 = await listen('tooltip:hover-enter', onTooltipHoverEnter);
     const u2 = await listen('tooltip:hover-leave', onTooltipHoverLeave);
-    unlistenTooltipHover = [u1, u2];
+    // tooltip 激活状态（显示/使用中）：设全局标志，主窗口失焦自动隐藏据此跳过；
+    // 停用时若主窗口已失焦，则补执行一次隐藏（避免 tooltip 关闭后主窗口卡在显示态）
+    const u3 = await listen('tooltip:active', (ev) => {
+      const active = !!ev.payload;
+      (window as any).__tooltipActive = active;
+      if (!active && (window as any).__mainFocused === false) {
+        (window as any).__tryHideMainWindow?.();
+      }
+    });
+    unlistenTooltipHover = [u1, u2, u3];
   }
   // Delete 键请求删除：打开独立删除确认窗口
   window.addEventListener('delete-request', onDeleteRequest);
@@ -277,8 +287,18 @@ function onTooltipHoverEnter() {
   }
 }
 
-function onTooltipHoverLeave() {
+async function onTooltipHoverLeave() {
   hoveringTooltip = false;
+  // 鼠标离开 tooltip 回到主窗口侧：主动把焦点交还主窗口。
+  // 否则主窗口仍记录为失焦（之前操作 tooltip 时 tooltip 获焦），
+  // 后续 tooltip 关闭的补隐藏逻辑会误判主窗口失焦而一起隐藏。
+  // 鼠标在主窗口内时，主窗口应保持显示。
+  if (isTauri()) {
+    const win = getCurrentWindow();
+    if (await win.isVisible().catch(() => false)) {
+      await win.setFocus().catch(() => {});
+    }
+  }
   // 离开 tooltip：延迟隐藏，给鼠标移回 clip 项留出过渡时间
   scheduleHideTooltip();
 }
