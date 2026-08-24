@@ -6,7 +6,7 @@ import {
   selectedRowIndex,
   selectRow
 } from '~/src/commands/local/TargetMovementCommand';
-import { data, filter, fetchData, getSelectedItem } from '~/src/commands/local/clipboardStore';
+import { data, filter, fetchData, getSelectedItem, moveSelection } from '~/src/commands/local/clipboardStore';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {isTauri} from "~/src/utils/env";
 import clipboardService from "~/src/db/dbService";
@@ -18,8 +18,11 @@ import StickyNote from "~/components/note/StickyNote.vue";
 import TodoList from "~/components/todo/TodoList.vue";
 import SettingMain from "~/components/setting/SettingMain.vue";
 import { activeTab } from "~/composables/useTabs";
+import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
 
 const listElement = ref<HTMLElement | null>(null);
+/** 是否开启悬停提示窗口（tooltip），受设置页「提示窗口」开关控制 */
+const { tooltipEnabled } = useTooltipEnabled();
 const searchInput = ref<HTMLElement | null>(null);
 
 let updateInterval: NodeJS.Timeout;
@@ -103,6 +106,8 @@ async function syncChildOnTop(win: WebviewWindow) {
 /** 打开（或定位到）独立 tooltip 窗口并推送内容 */
 async function openTooltipWindow() {
   if (!isTauri()) return;
+  // 设置项「提示窗口」关闭时不弹出 tooltip
+  if (!tooltipEnabled.value) return;
   // 图片查看器（image-viewer）打开期间禁止 tooltip 窗口出现：
   // 查看器为独立前台窗口，悬停主列表项不应再弹出 tooltip，关闭查看器后 viewerLabel 置空即恢复。
   if (viewerLabel) return;
@@ -160,7 +165,22 @@ async function openTooltipWindow() {
   });
 }
 
+/** 列表本地方向键导航：上下移动选中项，并阻止冒泡避免与 ShortcutManager 的 window 监听重复触发 */
+function onListKeydown(e: KeyboardEvent) {
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    e.stopPropagation();
+    moveSelection(-1);
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    e.stopPropagation();
+    moveSelection(1);
+  }
+}
+
 function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
+  // 设置项「提示窗口」关闭时不弹出 tooltip
+  if (!tooltipEnabled.value) return;
   // 图片查看器（image-viewer）打开期间禁止 tooltip 出现：
   // 查看器为独立前台窗口，悬停主列表项不再弹出 tooltip；关闭查看器（viewerLabel 置空）后自动恢复。
   if (viewerLabel) return;
@@ -725,6 +745,7 @@ async function openImageViewer(item: ClipboardData) {
                 id="listElement"
                 class="list space-y-2 rounded-2xl outline-none"
                 tabindex="0"
+                @keydown="onListKeydown"
               >
                 <li
                   class="glass-card list-row cursor-pointer rounded-2xl p-4 transition-all duration-300 ease-soft hover:-translate-y-0.5 hover:shadow-float"

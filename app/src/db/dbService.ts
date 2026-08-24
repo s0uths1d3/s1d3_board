@@ -205,13 +205,18 @@ class ClipboardService {
     public async setKeyValue(key : string,value: string): Promise<void> {
         await this.ensureDbInitialized();
         const now = Math.floor(Date.now());
-        await this.db!.execute("UPDATE settings SET value = $1, updated_at = $2 WHERE key = $3", [value, now,key]);
+        // UPSERT：首次设置的 key（表中尚无对应行）也能持久化，避免仅 UPDATE 导致新 key 无法写入
+        await this.db!.execute(
+            "INSERT INTO settings (key, value, type, updated_at) VALUES ($1, $2, 'other', $3) " +
+            "ON CONFLICT(key) DO UPDATE SET value = $2, updated_at = $3",
+            [key, value, now]
+        );
     }
 
     public async getKeyValue(key:string): Promise<string> {
         await this.ensureDbInitialized();
         const result: any[] = await this.db!.select("SELECT value FROM settings WHERE key = $1", [key]);
-        return result[0].value;
+        return result.length > 0 ? result[0].value : '';
     }
 
     public async insertNote(note: Note): Promise<void> {

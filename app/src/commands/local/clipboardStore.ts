@@ -92,6 +92,15 @@ export function selectRow(index: number) {
   }
 }
 
+/** 方向键上下移动选中项（-1 上移，+1 下移），统一在列表本地处理，避免丢失焦点导致只能移动一格 */
+export function moveSelection(direction: -1 | 1) {
+  const newIndex = selectedRowIndex.value + direction;
+  if (newIndex >= 0 && newIndex < dataLength.value) {
+    selectedRowIndex.value = newIndex;
+    scrollToSelectedRow();
+  }
+}
+
 /** 将当前选中行滚动到视口内（配合方向键移动） */
 async function scrollToSelectedRow() {
   await nextTick();

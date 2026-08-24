@@ -19,11 +19,12 @@ export class ShortcutManager {
             console.log(`[Global Shortcut Registered] ${config.key}`);
         } else if (config.scope === 'local') {
             const handler = async (e: KeyboardEvent) => {
-                // 长按产生的重复按键不重复执行（如持续按 ↓ 或 Enter）
-                if (e.repeat) return;
-
                 const key = config.key.toLowerCase();
                 const pressedKey = e.key.toLowerCase();
+
+                // 长按产生的重复按键：方向键导航允许长按连续移动（e.repeat 也响应）；
+                // 命令类快捷键（如 Enter 粘贴、Delete 等）长按仍只触发一次，避免误操作。
+                if (e.repeat && !(pressedKey === 'arrowup' || pressedKey === 'arrowdown')) return;
 
                 const ctrl = key.includes('ctrl') || key.includes('command');
                 const alt = key.includes('alt');

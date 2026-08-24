@@ -7,6 +7,7 @@ import { getOsTypeFromNavigator } from "~/src/utils/SystemOS";
 import clipboardService from '~/src/db/dbService';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/src/utils/env';
+import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
 
 const osType = ref('');
 
@@ -25,9 +26,15 @@ interface SettingGroup {
 // 各设置项的响应式状态（直接承载值，并通过 watch 实时持久化，无需“应用”按钮）
 const apiKey = ref('');
 const maxLimit = ref('');
-const colorScheme = ref(['深色', '浅色']);
+const schemeOptions = ['深色', '浅色'];
+const selectedScheme = ref('深色');
 /** 开机自启状态（系统级设置，使用 tauri autostart 插件，不存数据库） */
 const autoStartEnabled = ref(false);
+/** 是否开启悬停提示窗口（tooltip），与主窗口共享同一状态 */
+const { tooltipEnabled } = useTooltipEnabled();
+watch(tooltipEnabled, async (val) => {
+  await clipboardService.setKeyValue('tooltip_enabled', val ? '1' : '0');
+});
 
 // 实时保存：任意设置项变化即写入数据库
 watch(apiKey, async (val) => {
@@ -36,9 +43,9 @@ watch(apiKey, async (val) => {
 watch(maxLimit, async (val) => {
   await clipboardService.setKeyValue('max_save_count', val ?? '');
 });
-watch(colorScheme, async (val) => {
-  await clipboardService.setKeyValue('color_scheme', val?.[0] ?? '');
-}, { deep: true });
+watch(selectedScheme, async (val) => {
+  await clipboardService.setKeyValue('color_scheme', val ?? '');
+});
 
 // 开机自启：切换时调用系统 autostart 插件（enable/disable）
 watch(autoStartEnabled, async (val) => {
@@ -113,8 +120,13 @@ const settings: SettingGroup[] = [
         type: 'checkbox'
       },
       {
+        label: '提示窗口',
+        value: '',
+        type: 'checkbox'
+      },
+      {
         label: '配色',
-        value: colorScheme.value,
+        value: selectedScheme.value,
         type: 'select'
       },
       {
@@ -127,6 +139,10 @@ const settings: SettingGroup[] = [
 ];
 
 const activeSetting = ref(settings[0]);
+// 持久化当前选中的设置分类，下次进入设置默认停在该分类
+watch(activeSetting, async (val) => {
+  await clipboardService.setKeyValue('setting_active_tab', val?.title ?? '');
+});
 
 // ===== 快捷键录制 =====
 /** 当前正在录制的快捷键 id（null 表示未在录制） */
@@ -222,9 +238,19 @@ onMounted(async () => {
   apiKey.value = await clipboardService.getKeyValue('api_key');
   try {
     const scheme = await clipboardService.getKeyValue('color_scheme');
-    if (scheme) colorScheme.value = [scheme, scheme === '深色' ? '浅色' : '深色'];
+    if (scheme) selectedScheme.value = scheme;
   } catch (e) {
     // 尚未设置过配色，使用默认值
+  }
+  // 恢复上次选中的设置分类（快捷键 / Api设置 / 通用）
+  try {
+    const savedTab = await clipboardService.getKeyValue('setting_active_tab');
+    if (savedTab) {
+      const found = settings.find(s => s.title === savedTab);
+      if (found) activeSetting.value = found;
+    }
+  } catch (e) {
+    // 忽略，使用默认第一项
   }
   // 读取当前开机自启状态（仅桌面容器内可用）
   if (isTauri()) {
@@ -240,7 +266,7 @@ onMounted(async () => {
 <template>
   <div class="container mx-auto p-4">
     <div class="flex">
-      <div class="w-1/5 pr-4">
+      <div class="w-1/5 pr-4 sticky top-4 self-start">
         <div v-for="(setting, index) in settings" :key="index" class="mb-2">
           <button
               class="btn-soft btn-block w-full"
@@ -348,19 +374,52 @@ onMounted(async () => {
                          v-model="maxLimit"
                          placeholder="如 500"
                          class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
-                  <label v-else-if="item.type === 'checkbox'" class="flex cursor-pointer items-center gap-2 select-none">
-                    <input
-                        type="checkbox"
-                        v-model="autoStartEnabled"
-                        class="h-5 w-5 accent-[#c4a77d]"
-                    />
-                    <span class="text-sm text-ink-soft">{{ autoStartEnabled ? '已开启' : '已关闭' }}</span>
-                  </label>
-                  <select v-else-if="item.type === 'select'" v-model="colorScheme[0]" class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none">
-                    <option v-for="(value, index) in colorScheme" :key="index" :value="value">
-                      {{ value }}
-                    </option>
-                  </select>
+                  <button
+                      v-else-if="item.type === 'checkbox' && item.label === '开机自启'"
+                      type="button" role="switch" :aria-checked="autoStartEnabled"
+                      class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
+                      :class="autoStartEnabled ? 'bg-gold' : 'bg-accent'"
+                      @click="autoStartEnabled = !autoStartEnabled"
+                  >
+                    <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
+                          :class="autoStartEnabled ? 'translate-x-5' : 'translate-x-0.5'"></span>
+                  </button>
+                  <button
+                      v-else-if="item.type === 'checkbox' && item.label === '提示窗口'"
+                      type="button" role="switch" :aria-checked="tooltipEnabled"
+                      class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
+                      :class="tooltipEnabled ? 'bg-gold' : 'bg-accent'"
+                      @click="tooltipEnabled = !tooltipEnabled"
+                  >
+                    <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
+                          :class="tooltipEnabled ? 'translate-x-5' : 'translate-x-0.5'"></span>
+                  </button>
+                  <div v-else-if="item.type === 'select'" class="dropdown dropdown-end w-full">
+                    <button
+                        type="button" tabindex="0"
+                        class="btn-soft flex w-full items-center justify-between rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink"
+                    >
+                      <span>{{ selectedScheme }}</span>
+                      <svg class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                    </button>
+                    <ul tabindex="0" class="dropdown-content glass-card menu w-full rounded-2xl p-2">
+                      <li v-for="opt in schemeOptions" :key="opt">
+                        <button
+                            type="button"
+                            class="flex w-full items-center justify-between rounded-xl"
+                            :class="selectedScheme === opt ? 'text-gold' : ''"
+                            @click="selectedScheme = opt"
+                        >
+                          <span>{{ opt }}</span>
+                          <svg v-if="selectedScheme === opt" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        </button>
+                      </li>
+                    </ul>
+                  </div>
                 </div>
               </li>
             </ul>
