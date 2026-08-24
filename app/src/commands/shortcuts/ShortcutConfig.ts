@@ -12,4 +12,6 @@ export interface ShortcutConfig {
     scope: ShortcutScope;
     command: Command;
     title: string;
+    /** 是否启用该快捷键（false 时不注册/不响应） */
+    enabled: boolean;
 }

@@ -4,8 +4,8 @@ import { activeTab, setActiveTab, tabItems } from '~/composables/useTabs';
 /**
  * Ctrl+← / Ctrl+→ 切换顶层 Tab 命令（循环）
  *
- * - 右移：clip → todo → note → setting → clip
- * - 左移：setting → note → todo → clip → setting
+ * - 右移：clip → todo → note → pinned → setting → clip
+ * - 左移：setting → pinned → note → todo → clip → setting
  */
 export class SwitchTabCommand implements Command {
     constructor(private direction: 1 | -1) {}

@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 
 /** 顶层页面 Tab */
-export type TabKey = 'clip' | 'todo' | 'note' | 'setting'
+export type TabKey = 'clip' | 'todo' | 'note' | 'pinned' | 'setting'
 
 /**
  * 顶层页面切换共享状态
@@ -20,5 +20,6 @@ export const tabItems: { key: TabKey; name: string }[] = [
   { key: 'clip', name: '剪贴板' },
   { key: 'todo', name: '待办' },
   { key: 'note', name: '便签' },
+  { key: 'pinned', name: '常用剪贴' },
   { key: 'setting', name: '设置' },
 ]

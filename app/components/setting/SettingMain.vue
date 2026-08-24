@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue';
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
-import { updateShortcutKey, resetShortcut, resetAllShortcuts } from "~/src/commands/shortcuts/InitShortcuts";
+import { updateShortcutKey, resetShortcut, resetAllShortcuts, toggleShortcutEnabled, setShortcutGroupEnabled, resetShortcutGroup } from "~/src/commands/shortcuts/InitShortcuts";
 import { formatShortcutForDisplay, parseKeyEvent } from "~/src/utils/shortcutFormat";
 import { getOsTypeFromNavigator } from "~/src/utils/SystemOS";
 import clipboardService from '~/src/db/dbService';
@@ -35,7 +35,6 @@ const { tooltipEnabled } = useTooltipEnabled();
 watch(tooltipEnabled, async (val) => {
   await clipboardService.setKeyValue('tooltip_enabled', val ? '1' : '0');
 });
-
 // 实时保存：任意设置项变化即写入数据库
 watch(apiKey, async (val) => {
   await clipboardService.setKeyValue('api_key', val ?? '');
@@ -153,20 +152,27 @@ let recorderHandler: ((e: KeyboardEvent) => void) | null = null;
 
 /** 快捷键设置组渲染数据 */
 const shortcutItems = computed(() =>
-  shortcuts.value.map(s => ({
-    id: s.id,
-    label: s.title,
-    key: s.key,
-    scope: s.scope,
-    display: formatShortcutForDisplay(s.key),
-    isModified: s.key !== s.defaultKey,
-  }))
+  shortcuts.value.map(s => {
+    // 数字快捷粘贴（Ctrl+1~0 / Ctrl+Shift+1~0）单独归类，默认折叠展示
+    const group = s.id.startsWith('pinned_paste') ? 'pinned'
+      : s.id.startsWith('slot_paste') ? 'slot' : 'normal';
+    return {
+      id: s.id,
+      label: s.title,
+      key: s.key,
+      scope: s.scope,
+      display: formatShortcutForDisplay(s.key),
+      isModified: s.key !== s.defaultKey,
+      enabled: s.enabled,
+      group,
+    };
+  })
 );
 
-/** 按全局/局部分组的快捷键渲染数据 */
+/** 按全局/局部分组的快捷键渲染数据（排除数字快捷粘贴，它们单独折叠展示） */
 const shortcutGroups = computed(() =>
   (['global', 'local'] as const).map(scope => {
-    const items = shortcutItems.value.filter(i => i.scope === scope);
+    const items = shortcutItems.value.filter(i => i.scope === scope && i.group === 'normal');
     return {
       title: scope === 'global' ? '全局快捷键' : '局部快捷键',
       scope,
@@ -175,6 +181,33 @@ const shortcutGroups = computed(() =>
     };
   })
 );
+
+/** 两组可折叠的数字快捷粘贴（默认折叠，支持一键开启/关闭/还原） */
+const collapsibleGroups = computed(() => [
+  { key: 'pinned', title: '常用剪贴快捷粘贴（Ctrl+1~0）', items: shortcutItems.value.filter(i => i.group === 'pinned') },
+  { key: 'slot', title: '剪贴板快捷粘贴（Ctrl+Shift+1~0）', items: shortcutItems.value.filter(i => i.group === 'slot') },
+]);
+/** 折叠状态（默认收起） */
+const collapsed = ref<Record<string, boolean>>({ pinned: true, slot: true });
+
+function toggleCollapse(key: string) {
+  collapsed.value[key] = !collapsed.value[key];
+}
+
+/** 组内是否全部启用（整组胶囊开关的状态判定） */
+function groupAllEnabled(group: { key: string; items: { enabled: boolean }[] }): boolean {
+  return group.items.length > 0 && group.items.every(i => i.enabled);
+}
+
+/** 整组胶囊开关：点击在「全部启用 / 全部禁用」间切换 */
+async function toggleGroup(group: { key: string; items: { id: string; enabled: boolean }[] }) {
+  await setShortcutGroupEnabled(group.items.map(i => i.id), !groupAllEnabled(group));
+}
+
+/** 一键还原组内全部快捷键为默认（图标按钮） */
+async function resetGroup(group: { key: string; items: { id: string }[] }) {
+  await resetShortcutGroup(group.items.map(i => i.id));
+}
 
 function startRecording(id: string) {
   if (recordingId.value) return;
@@ -289,7 +322,20 @@ onMounted(async () => {
                 <li v-for="item in group.items" :key="item.id"
                     class="flex flex-col gap-1 border-b border-accent/50 p-4 last:border-b-0">
                   <div class="flex items-center justify-between gap-4">
-                    <div class="text-ink">{{ item.label }}</div>
+                    <div class="flex items-center gap-3">
+                      <!-- 独立启用/禁用开关 -->
+                      <button
+                          type="button" role="switch" :aria-checked="item.enabled"
+                          class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
+                          :class="item.enabled ? 'bg-gold' : 'bg-accent'"
+                          :title="item.enabled ? '点击禁用' : '点击启用'"
+                          @click="toggleShortcutEnabled(item.id)"
+                      >
+                        <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
+                              :class="item.enabled ? 'translate-x-[1.125rem]' : 'translate-x-0.5'"></span>
+                      </button>
+                      <div class="text-ink" :class="{ 'opacity-50': !item.enabled }">{{ item.label }}</div>
+                    </div>
                     <div class="flex items-center gap-2">
                       <button
                           type="button"
@@ -328,6 +374,93 @@ onMounted(async () => {
                 </button>
               </div>
             </div>
+
+            <!-- 两组数字快捷粘贴：默认折叠 + 一键开启/关闭/还原 -->
+            <div v-for="cg in collapsibleGroups" :key="cg.key" class="glass-card rounded-2xl shadow-soft">
+              <div class="flex items-center justify-between gap-2 border-b border-accent p-4">
+                <button
+                    type="button"
+                    class="flex items-center gap-2 text-xs uppercase tracking-wide text-ink-faint transition-colors hover:text-ink"
+                    @click="toggleCollapse(cg.key)"
+                >
+                  <svg class="size-4 transition-transform duration-300 ease-soft" :class="collapsed[cg.key] ? '' : 'rotate-90'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                  {{ cg.title }}
+                </button>
+                <div class="flex items-center gap-3">
+                  <!-- 整组启用/禁用胶囊开关 -->
+                  <button
+                      type="button" role="switch" :aria-checked="groupAllEnabled(cg)"
+                      class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
+                      :class="groupAllEnabled(cg) ? 'bg-gold' : 'bg-accent'"
+                      :title="groupAllEnabled(cg) ? '点击关闭该组全部' : '点击开启该组全部'"
+                      @click="toggleGroup(cg)"
+                  >
+                    <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
+                          :class="groupAllEnabled(cg) ? 'translate-x-[1.125rem]' : 'translate-x-0.5'"></span>
+                  </button>
+                  <!-- 一键还原（图标按钮） -->
+                  <button
+                      type="button"
+                      class="btn-soft p-2"
+                      title="一键还原该组为默认"
+                      @click="resetGroup(cg)"
+                  >
+                    <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                      <path d="M3 3v5h5" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <ul v-show="!collapsed[cg.key]">
+                <li v-for="item in cg.items" :key="item.id"
+                    class="flex flex-col gap-1 border-b border-accent/50 p-4 last:border-b-0">
+                  <div class="flex items-center justify-between gap-4">
+                    <div class="flex items-center gap-3">
+                      <button
+                          type="button" role="switch" :aria-checked="item.enabled"
+                          class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
+                          :class="item.enabled ? 'bg-gold' : 'bg-accent'"
+                          :title="item.enabled ? '点击禁用' : '点击启用'"
+                          @click="toggleShortcutEnabled(item.id)"
+                      >
+                        <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
+                              :class="item.enabled ? 'translate-x-[1.125rem]' : 'translate-x-0.5'"></span>
+                      </button>
+                      <div class="text-ink" :class="{ 'opacity-50': !item.enabled }">{{ item.label }}</div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <button
+                          type="button"
+                          class="w-56 rounded-xl border border-accent bg-surface-field px-3 py-2 text-center font-mono text-sm font-semibold text-ink transition-all duration-300 ease-soft hover:border-gold focus:outline-none"
+                          :class="recordingId === item.id ? 'border-gold ring-1 ring-gold/60 animate-pulse' : ''"
+                          @click="startRecording(item.id)"
+                      >
+                        {{ recordingId === item.id ? '按下新快捷键… (Esc 取消)' : item.display }}
+                      </button>
+                      <button
+                          v-if="item.isModified"
+                          type="button"
+                          class="btn-soft p-2"
+                          title="重置为默认"
+                          @click="resetOne(item.id)"
+                      >
+                        <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                          <path d="M3 3v5h5" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div v-if="errorMap[item.id]" class="text-xs text-[rgba(176,92,92,1)]">
+                    {{ errorMap[item.id] }}
+                  </div>
+                </li>
+              </ul>
+            </div>
+
             <p class="text-xs text-ink-faint">
               点击快捷键输入框后按下新的组合键即可自定义；Esc 取消；重复的快捷键会提示冲突。全局快捷键在系统任意位置生效，局部快捷键仅在窗口内生效。
             </p>

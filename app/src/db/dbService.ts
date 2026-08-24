@@ -1,6 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from 'tauri-plugin-clipboard-api';
-import type { ClipboardData,Note,Todo } from "../Entities";
+import type { ClipboardData,Note,Todo,PinnedClip } from "../Entities";
 
 
 class ClipboardService {
@@ -147,6 +147,74 @@ class ClipboardService {
     public async deleteClipboardData(id: number): Promise<void> {
         await this.ensureDbInitialized();
         await this.db!.execute("DELETE FROM clipboard WHERE id = $1", [id]);
+    }
+
+    // ===== 常用剪贴（pinned_clip）=====
+
+    /**
+     * 获取常用剪贴列表（最多 10 条）。
+     * 排序：置顶项优先（按置顶时间倒序），其余按时间倒序（最新在前）。
+     */
+    public async fetchPinnedClips(): Promise<PinnedClip[]> {
+        await this.ensureDbInitialized();
+        return await this.db!.select(
+            "SELECT * FROM pinned_clip ORDER BY " +
+            "CASE WHEN pinned_at IS NOT NULL AND pinned_at != '' THEN 1 ELSE 0 END DESC, " +
+            "pinned_at DESC, created_at DESC, id DESC LIMIT 10"
+        ) as PinnedClip[];
+    }
+
+    /** 获取单个常用剪贴项 */
+    public async fetchPinnedClip(id: number): Promise<PinnedClip | undefined> {
+        await this.ensureDbInitialized();
+        const rows = await this.db!.select("SELECT * FROM pinned_clip WHERE id = $1", [id]) as PinnedClip[];
+        return rows[0];
+    }
+
+    /**
+     * 新增常用剪贴项（最新一条排最前）。
+     * 超过 10 条时自动删除最旧（未置顶的最旧优先）记录。
+     */
+    public async insertPinnedClip(content: string, type: 'text' | 'image', name?: string, source?: string): Promise<void> {
+        await this.ensureDbInitialized();
+        const now = Math.floor(Date.now());
+        await this.db!.execute(
+            "INSERT INTO pinned_clip (content, type, name, source, sort_order, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+            [content, type, name || '', source || '', 0, now, now]
+        );
+        // 超限裁剪：保留按展示顺序的前 10 条（置顶优先，再按时间倒序）
+        await this.db!.execute(
+            "DELETE FROM pinned_clip WHERE id NOT IN (" +
+            "SELECT id FROM pinned_clip ORDER BY " +
+            "CASE WHEN pinned_at IS NOT NULL AND pinned_at != '' THEN 1 ELSE 0 END DESC, " +
+            "pinned_at DESC, created_at DESC, id DESC LIMIT 10)"
+        );
+    }
+
+    /** 更新常用剪贴项（文本可改内容；图片替换传新 base64；name 可编辑） */
+    public async updatePinnedClip(id: number, content: string, name: string, type: 'text' | 'image'): Promise<void> {
+        await this.ensureDbInitialized();
+        const now = Math.floor(Date.now());
+        await this.db!.execute(
+            "UPDATE pinned_clip SET content = $2, name = $3, type = $4, updated_at = $5 WHERE id = $1",
+            [id, content, name, type, now]
+        );
+    }
+
+    /** 置顶/取消置顶常用剪贴项（置顶后排序优先；pinned=false 取消置顶） */
+    public async pinPinnedClip(id: number, pinned: boolean): Promise<void> {
+        await this.ensureDbInitialized();
+        const now = Math.floor(Date.now());
+        await this.db!.execute(
+            "UPDATE pinned_clip SET pinned_at = $2, updated_at = $3 WHERE id = $1",
+            [id, pinned ? `${now}` : '', now]
+        );
+    }
+
+    /** 删除常用剪贴项 */
+    public async deletePinnedClip(id: number): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute("DELETE FROM pinned_clip WHERE id = $1", [id]);
     }
 
     /**

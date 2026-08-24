@@ -5,6 +5,11 @@ export class ShortcutManager {
     private localHandlers: (() => void)[] = [];
 
     async register(config: ShortcutConfig) {
+        // 单独禁用的快捷键不注册/不响应
+        if (config.enabled === false) {
+            console.log(`[Shortcut Disabled] ${config.id}`);
+            return;
+        }
         if (config.scope === 'global') {
             // 先注销可能残留的同名全局快捷键（HMR/reload 后 Rust 侧可能仍占用），
             // 避免 "HotKey already registered" 导致该快捷键失效
@@ -36,7 +41,13 @@ export class ShortcutManager {
                     (!shift || e.shiftKey);
 
                 const mainKey = key.split('+').pop()?.trim();
-                const isMatch = pressedKey === mainKey && modifierMatch;
+                // 数字键（Ctrl+1~0 / Ctrl+Shift+1~0）：用 e.code 匹配（如 'Digit1'），
+                // 因为 Shift 组合下 e.key 会变成符号字符（美式键盘 Shift+1 为 '!'），精确比对会失效。
+                const isDigitKey = /^[0-9]$/.test(mainKey);
+                const mainKeyMatch = isDigitKey
+                    ? (e.code ?? '').toLowerCase() === `digit${mainKey}`
+                    : pressedKey === mainKey;
+                const isMatch = mainKeyMatch && modifierMatch;
 
                 if (isMatch) {
                     // 命中本地快捷键：阻止默认行为（如 Enter 在输入框的换行/提交），避免与命令重复触发

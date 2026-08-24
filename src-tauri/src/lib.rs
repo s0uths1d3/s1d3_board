@@ -199,6 +199,37 @@ END;
 -- 重建 FTS：清除历史数据中的图片 base64（如有），仅保留文本
 INSERT INTO clipboard_fts (clipboard_fts) VALUES ('rebuild');
                             "#
+                        },
+                        Migration {
+                            version: 4,
+                            description: "Create pinned_clip table for quick clipboard (frequently used) items",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 常用剪贴（快捷功能）表：可排序、可编辑；文本可改内容，图片仅支持替换
+CREATE TABLE IF NOT EXISTS pinned_clip
+(
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    content     TEXT NOT NULL,
+    type        TEXT NOT NULL DEFAULT 'text' CHECK (type IN ('text', 'image')),
+    name        TEXT,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pinned_sort ON pinned_clip (sort_order);
+                            "#
+                        },
+                        Migration {
+                            version: 5,
+                            description: "Add source and pinned_at columns to pinned_clip",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 来源应用（从剪贴板添加时带入；手动新增可为空）
+ALTER TABLE pinned_clip ADD COLUMN source TEXT;
+-- 置顶时间（置顶后按此排序置顶优先；为空表示未置顶）
+ALTER TABLE pinned_clip ADD COLUMN pinned_at TEXT;
+                            "#
                         }
                     ]
                 )

@@ -17,6 +17,8 @@ import { listen, emit } from '@tauri-apps/api/event';
 import StickyNote from "~/components/note/StickyNote.vue";
 import TodoList from "~/components/todo/TodoList.vue";
 import SettingMain from "~/components/setting/SettingMain.vue";
+import ContextMenu from "~/components/mainpage/ContextMenu.vue";
+import PinnedClipList from "~/components/pinned/PinnedClipList.vue";
 import { activeTab } from "~/composables/useTabs";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
 
@@ -412,6 +414,47 @@ async function favorite(id: number, value: number) {
   await clipboardService.updateFavorite(id, value)
 }
 
+// ===== 右键菜单：添加到常用剪贴 =====
+const ctxMenuVisible = ref(false);
+const ctxMenuX = ref(0);
+const ctxMenuY = ref(0);
+const ctxMenuItems = ref<{ label: string; danger?: boolean; action: () => void }[]>([]);
+/** 添加到常用剪贴的即时反馈提示 */
+const pinnedHint = ref('');
+let pinnedHintTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 右键列表项：显示「添加到常用剪贴」菜单 */
+function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
+  e.preventDefault();
+  selectRow(index);
+  ctxMenuX.value = e.clientX;
+  ctxMenuY.value = e.clientY;
+  ctxMenuItems.value = [
+    { label: '添加到常用剪贴', action: () => addToPinned(item) },
+  ];
+  ctxMenuVisible.value = true;
+}
+
+/** 把当前剪贴项（文本/图片）添加到常用剪贴列表末尾 */
+async function addToPinned(item: ClipboardData) {
+  if (!item?.content) return;
+  try {
+    await clipboardService.insertPinnedClip(item.content, item.type, '', item.source);
+    showPinnedHint('已添加到常用剪贴');
+  } catch (e) {
+    console.error('添加常用剪贴失败:', e);
+    showPinnedHint('添加常用剪贴失败');
+  }
+}
+
+function showPinnedHint(msg: string) {
+  pinnedHint.value = msg;
+  if (pinnedHintTimer) clearTimeout(pinnedHintTimer);
+  pinnedHintTimer = setTimeout(() => {
+    pinnedHint.value = '';
+  }, 2000);
+}
+
 /** 删除确认窗口 label（单例） */
 let deleteConfirmLabel: string | null = null;
 /** 删除确认窗口正在创建中（防止快速多次按 Delete 重复创建窗口） */
@@ -756,6 +799,7 @@ async function openImageViewer(item: ClipboardData) {
                   @dragstart="handleDragStart(item, $event)"
                   @dragend="handleDragEnd(item,$event)"
                   @click="selectRow(index)"
+                  @contextmenu="openContextMenu(item, index, $event)"
                   @dblclick="openImageViewer(item)"
                 >
                   <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 }}</div>
@@ -804,6 +848,21 @@ async function openImageViewer(item: ClipboardData) {
                   </button>
                 </li>
               </ul>
+
+              <!-- 添加到常用剪贴的即时反馈 -->
+              <div
+                  v-if="pinnedHint"
+                  class="pointer-events-none fixed left-1/2 top-20 z-[90] -translate-x-1/2 rounded-full border border-accent bg-surface-field/95 px-4 py-2 text-sm text-ink shadow-float backdrop-blur"
+              >
+                {{ pinnedHint }}
+              </div>
+              <ContextMenu
+                  :visible="ctxMenuVisible"
+                  :x="ctxMenuX"
+                  :y="ctxMenuY"
+                  :items="ctxMenuItems"
+                  @close="ctxMenuVisible = false"
+              />
             </div>
 
             <!-- 待办 -->
@@ -811,6 +870,9 @@ async function openImageViewer(item: ClipboardData) {
 
             <!-- 便签 -->
             <StickyNote v-else-if="activeTab === 'note'" />
+
+            <!-- 常用剪贴 -->
+            <PinnedClipList v-else-if="activeTab === 'pinned'" />
 
             <!-- 设置 -->
             <SettingMain v-else-if="activeTab === 'setting'" />
