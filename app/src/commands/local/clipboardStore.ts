@@ -27,12 +27,26 @@ export const filter = ref({
 });
 
 /**
+ * 上一次拉取结果的指纹（id:updated_at:count:is_favorite 拼接）。
+ * 用于判断数据库内容是否变化，未变化时跳过 data.value 重赋值，
+ * 避免每秒轮询触发全列表无谓重渲染（尤其图片 base64 大字段）导致明显卡顿。
+ */
+let lastSignature: string | null = null;
+
+/**
  * 拉取剪贴板数据并刷新列表。
  * 成功后自动修正 selectedRowIndex 越界，保证高亮始终落在有效行上。
  */
 export async function fetchData() {
   try {
     const result = await clipboardService.fetchClipboardData(filter);
+    // 计算签名：仅当任意条目的 updated_at/count/收藏态或集合本身变化时，才触发响应式更新
+    const signature = result
+      .map((r) => `${r.id}:${r.updated_at}:${r.count}:${r.is_favorite}`)
+      .join('|');
+    if (signature === lastSignature) return; // 数据未变：跳过，零重渲染
+    lastSignature = signature;
+
     data.value = result;
     dataLength.value = data.value.length;
 

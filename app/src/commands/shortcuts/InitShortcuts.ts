@@ -8,6 +8,7 @@ import {PasteCommand} from "~/src/commands/local/PasteCommand";
 import {SwitchTabCommand} from "~/src/commands/local/SwitchTabCommand";
 import {DelCommand} from  "~/src/commands/local/DelCommand"
 import {FavoriteCommand} from  "~/src/commands/local/FavoriteCommand"
+import {ToggleAlwaysOnTopCommand} from "~/src/commands/local/ToggleAlwaysOnTopCommand"
 import dbService from "~/src/db/dbService";
 
 const toggleWindowCommand = new ToggleWindowCommand();
@@ -19,6 +20,7 @@ const switchPrevTabCommand = new SwitchTabCommand(-1)
 const switchNextTabCommand = new SwitchTabCommand(1)
 const delCommand = new DelCommand();
 const favoriteCommand = new FavoriteCommand()
+const toggleAlwaysOnTopCommand = new ToggleAlwaysOnTopCommand()
 
 /** 默认快捷键定义（id 用于唯一标识，defaultKey 用于重置） */
 const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
@@ -93,6 +95,14 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         scope: 'local',
         command: favoriteCommand,
         title: '收藏选中项'
+    },
+    {
+        id: 'toggle_always_on_top',
+        key: 'Control+T',
+        defaultKey: 'Control+T',
+        scope: 'local',
+        command: toggleAlwaysOnTopCommand,
+        title: '切换窗口置顶'
     }
 ];
 

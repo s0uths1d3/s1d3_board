@@ -5,14 +5,25 @@ import { listen, emit } from '@tauri-apps/api/event';
 import { isTauri } from '~/src/utils/env';
 
 interface TooltipPayload {
-  text: string;
+  /** 文本模式内容（逐行带行号）；图片模式下为空 */
+  text?: string;
   /** 主窗口计算出的期望锚点（物理像素，相对整个屏幕坐标系） */
   x: number;
   y: number;
+  /** 图片模式：base64 内容（放大预览） */
+  image?: string;
+  /** 图片模式：元信息说明文本（类型/创建时间/使用次数/最后使用） */
+  meta?: string;
 }
 
 const visible = ref(false);
 const text = ref('');
+/** 图片模式：base64 内容；为空表示文本模式 */
+const image = ref('');
+/** 图片模式：元信息文本；为空表示文本模式 */
+const meta = ref('');
+/** 是否图片模式（image 有值即图片模式，决定渲染分支与尺寸测量） */
+const isImage = computed(() => !!image.value);
 
 let unlistenShow: (() => void) | null = null;
 let unlistenHide: (() => void) | null = null;
@@ -26,6 +37,7 @@ const lineCount = computed(() => {
 
 /** 全部真实行：按换行拆分，保留行内原始空白（含 tab 等，不过滤特殊字符） */
 const lines = computed(() => {
+  // 图片模式不走文本逐行渲染
   const t = text.value || '';
   if (!t) return [' '];
   return t
@@ -39,6 +51,10 @@ const MIN_WIDTH = 280;
 const MIN_HEIGHT = 48;
 const MAX_WIDTH = 460;
 const MAX_HEIGHT = 300;
+/** 图片模式尺寸基准：略高于文本，以容纳放大预览图；最小宽度更小以紧凑包裹小图（减少空白） */
+const IMG_MAX_WIDTH = 460;
+const IMG_MAX_HEIGHT = 360;
+const IMG_MIN_WIDTH = 200;
 
 /**
  * 屏幕边界检测：根据期望锚点计算 tooltip 显示位置，避免超出可视区域。
@@ -83,6 +99,15 @@ async function fitWindowToContent() {
   await nextTick();
   const card = document.querySelector('.tooltip-card') as HTMLElement | null;
   if (!card) return;
+  // 图片模式：必须等 <img> 解码完成，否则测得 0 尺寸导致窗口错位
+  if (isImage.value) {
+    const imgEl = card.querySelector('img');
+    if (imgEl && !imgEl.complete) {
+      try {
+        await imgEl.decode();
+      } catch { /* 解码失败（损坏图）时退化为当前尺寸，不影响显示 */ }
+    }
+  }
   try {
     const win = getCurrentWindow();
     const clone = card.cloneNode(true) as HTMLElement;
@@ -91,21 +116,31 @@ async function fitWindowToContent() {
     clone.style.top = '0';
     clone.style.visibility = 'hidden';
     clone.style.width = 'auto';
+    clone.style.height = 'auto';
     clone.style.maxWidth = 'none';
+    // 解除卡片 min-width 约束，使小图能测得真实紧凑宽度（否则被 min-width 撑开产生空白）
+    clone.style.minWidth = '0';
     document.body.appendChild(clone);
     await nextTick();
     const naturalW = clone.scrollWidth;
     const naturalH = clone.scrollHeight;
     document.body.removeChild(clone);
 
-    const cssW = Math.min(Math.max(naturalW, MIN_WIDTH), MAX_WIDTH);
-    const cssH = Math.min(Math.max(naturalH, MIN_HEIGHT), MAX_HEIGHT);
+    // 图片模式使用独立的尺寸上限（略高以容纳预览图），且最小宽度更小以紧凑包裹小图
+    const maxW = isImage.value ? IMG_MAX_WIDTH : MAX_WIDTH;
+    const maxH = isImage.value ? IMG_MAX_HEIGHT : MAX_HEIGHT;
+    const minW = isImage.value ? IMG_MIN_WIDTH : MIN_WIDTH;
+    const cssW = Math.min(Math.max(naturalW, minW), maxW);
+    const cssH = Math.min(Math.max(naturalH, MIN_HEIGHT), maxH);
     await win.setSize(new LogicalSize(Math.ceil(cssW), Math.ceil(cssH)));
   } catch { /* 尺寸调整失败不影响显示 */ }
 }
 
 async function showTooltip(payload: TooltipPayload) {
+  // 按模式重置内容：文本模式用 text，图片模式用 image+meta
   text.value = payload.text ?? '';
+  image.value = payload.image ?? '';
+  meta.value = payload.meta ?? '';
   visible.value = true;
   // 通知主窗口：tooltip 已激活（正在显示/使用），失焦自动隐藏逻辑应跳过
   emit('tooltip:active', getCurrentWindow().label).catch(() => {});
@@ -205,12 +240,23 @@ onBeforeUnmount(() => {
         v-if="visible"
         class="glass-card tooltip-card rounded-xl px-3 py-2 text-sm leading-relaxed tabular-nums text-ink shadow-float"
     >
-      <div class="tooltip-lines">
+      <!-- 图片模式：放大预览图 + 底部单行元信息 -->
+      <div v-if="isImage" class="tooltip-image-wrap">
+        <img
+            :src="image"
+            alt="clipboard image preview"
+            class="tooltip-image"
+        />
+      </div>
+      <!-- 文本模式：逐行带行号 -->
+      <div v-else class="tooltip-lines">
         <div v-for="(line, i) in lines" :key="i" class="tooltip-line-row">
           <span class="tooltip-line-num">{{ i + 1 }}</span>
           <span class="tooltip-line">{{ line }}</span>
         </div>
       </div>
+      <!-- 元信息：单行，固定在 tooltip 底部（图片/文本共用） -->
+      <div v-if="meta" class="tooltip-meta">{{ meta }}</div>
     </div>
   </main>
 </template>
@@ -225,23 +271,23 @@ onBeforeUnmount(() => {
   /* 注意：此处不能用 border-radius，否则圆角外会透出 Tauri 窗口默认的白色背景（白角） */
 }
 .tooltip-card {
-  /* 卡片填满窗口（width:100%），配合 fitWindowToContent 测得精确窗口宽度后无右侧空白 */
+  /* 卡片填满窗口（width:100%），配合 fitWindowToContent 测得精确窗口尺寸后无空白 */
   width: 100%;
   height: 100%;
   min-width: 280px;
   min-height: 48px;
   max-width: 460px;
   box-sizing: border-box;
-  /* 左侧行数标签 + 右侧多行文本 横向排列，标签居顶 */
+  /* 纵向排列：上方内容（图片预览 / 文本行），底部元信息；高度由内容决定，不撑满以免空白 */
   display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
 }
 .tooltip-lines {
-  /* 多行容器：占满剩余宽度，行数超出窗口高度时出现滚动条 */
-  flex: 1;
+  /* 多行容器：行数超出 MAX_HEIGHT 时出现滚动条，否则高度由内容决定（紧凑包裹） */
   min-width: 0;
-  max-height: 100%;
+  max-height: 300px;
   overflow-y: auto;
   /* 美观的细滚动条 */
   scrollbar-width: thin;
@@ -279,6 +325,40 @@ onBeforeUnmount(() => {
   min-width: 0;
   display: block;
   white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 图片模式：放大预览图，在主区域水平+垂直居中，元信息钉在窗口底部 */
+.tooltip-image-wrap {
+  /* flex:1 撑满上方区域（测量时克隆 height:auto 使其高度=图片实际高，故窗口仍紧凑无空白） */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+.tooltip-image {
+  /* 圆角、阴影，与图片查看器 .viewer-img 视觉一致 */
+  /* 仅限制最大尺寸，浏览器按宽高比自动缩放（不拉伸变形）；小图原样展示、窗口紧凑包裹 */
+  max-width: 420px;
+  max-height: 320px;
+  object-fit: contain;
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 16px rgba(74, 64, 52, 0.14);
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.tooltip-meta {
+  /* 元信息：单行、始终钉在窗口底部（flex 列布局下 margin-top:auto 推至底），小字低对比 */
+  margin-top: auto;
+  padding-top: 0.5rem;
+  text-align: center;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  opacity: 0.6;
+  color: #6b6354;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }

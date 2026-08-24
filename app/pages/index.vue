@@ -54,7 +54,7 @@ const tooltip = ref({
 /** tooltip 独立窗口单例 label */
 let tooltipLabel: string | null = null;
 /** 最新一次待显示的 tooltip 数据（窗口就绪前缓存，避免事件丢失） */
-let latestTooltipPayload: { text: string; x: number; y: number } | null = null;
+let latestTooltipPayload: { text?: string; image?: string; meta?: string; x: number; y: number } | null = null;
 /** tooltip 悬停跨窗口事件监听的取消函数 */
 let unlistenTooltipHover: Array<() => void> = [];
 /** 鼠标是否悬停在 tooltip 弹层上（悬停期间保持显示） */
@@ -84,9 +84,28 @@ async function toPhysicalCoords(viewX: number, viewY: number): Promise<{ x: numb
   }
 }
 
+/**
+ * 让子窗口（tooltip / image-viewer 等）在主窗口置顶时也"置顶"，
+ * 避免被置顶的主窗口压在后方导致看不到（表现为 tooltip 无法显示/被遮挡）。
+ * 必须在窗口 tauri://created 之后调用；后创建的置顶窗口在 Z 序上更靠前，
+ * 从而稳定显示在主窗口前方，且不抢主窗口键盘焦点（与子窗口 focus:false 兼容）。
+ */
+async function syncChildOnTop(win: WebviewWindow) {
+  if (!isTauri()) return;
+  try {
+    const mainOnTop = await getCurrentWindow().isAlwaysOnTop();
+    if (mainOnTop) await win.setAlwaysOnTop(true);
+  } catch {
+    // 忽略（如窗口尚未就绪或 API 不可用）
+  }
+}
+
 /** 打开（或定位到）独立 tooltip 窗口并推送内容 */
 async function openTooltipWindow() {
   if (!isTauri()) return;
+  // 图片查看器（image-viewer）打开期间禁止 tooltip 窗口出现：
+  // 查看器为独立前台窗口，悬停主列表项不应再弹出 tooltip，关闭查看器后 viewerLabel 置空即恢复。
+  if (viewerLabel) return;
   if (tooltipLabel) {
     const existing = await WebviewWindow.getByLabel(tooltipLabel).catch(() => null);
     if (existing) {
@@ -133,41 +152,65 @@ async function openTooltipWindow() {
   });
   win.once('tauri://created', () => {
     (window as any).__childOpeningUntil = Date.now() + 400;
+    // 主窗口置顶时同步让 tooltip 窗口置顶，避免被置顶主窗口遮挡（tooltip 不抢焦点、显示在前方）
+    syncChildOnTop(win);
   });
   win.once('tauri://error', () => {
     if (tooltipLabel === label) tooltipLabel = null;
   });
 }
 
-function showTooltip(index: number, text: string, event: MouseEvent) {
+function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
+  // 图片查看器（image-viewer）打开期间禁止 tooltip 出现：
+  // 查看器为独立前台窗口，悬停主列表项不再弹出 tooltip；关闭查看器（viewerLabel 置空）后自动恢复。
+  if (viewerLabel) return;
   const el = event.currentTarget as HTMLElement;
-  // 图片条目（base64）不应作为文本 tooltip 显示，仅文本条目展示内容
-  if (el.querySelector('img')) return;
-  const target = el.querySelector('span');
-  if (target && text.split('\n').length - 1 > 2) {
-    // 取消挂起的隐藏计时器，避免移动到其他项时旧 tooltip 误关闭新 tooltip
-    if (hideTimer) {
-      clearTimeout(hideTimer);
-      hideTimer = null;
-    }
-    hoveringClip = true;
-    const rect = el.getBoundingClientRect();
-    tooltip.value = {
-      visible: true,
-      text,
+  // 取消挂起的隐藏计时器，避免移动到其他项时旧 tooltip 误关闭新 tooltip
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+  hoveringClip = true;
+  const rect = el.getBoundingClientRect();
+
+  // 构建 tooltip 内容：图片项展示放大预览 + 元信息；文本项展示多行文本 + 元信息
+  // 元信息统一为单行，显示在 tooltip 底部
+  const isImageItem = !!el.querySelector('img');
+  const meta = `创建时间${formatDate(parseInt(item.created_at))} · 使用次数:${item.count} · 最后使用:${formatDate(parseInt(item.updated_at))}`;
+  let payload: { text?: string; image?: string; meta?: string; x: number; y: number };
+  if (isImageItem) {
+    payload = {
+      image: item.content,
+      meta,
       x: rect.left,
       y: rect.bottom + 4,
     };
-    if (isTauri()) {
-      // 缓存 viewport 坐标（供窗口 ready 后实时换算物理坐标），由 openTooltipWindow 的
-      // ready 握手统一补发 tooltip:show，避免竞态导致的间歇不显示
-      latestTooltipPayload = {
-        text,
-        x: rect.left,
-        y: rect.bottom + 4,
-      };
-      openTooltipWindow();
+  } else {
+    const text = item.content;
+    // 文本项仅在行数较多时展示，避免单行内容也弹出 tooltip
+    if (text.split('\n').length - 1 <= 2) {
+      tooltip.value.visible = false;
+      return;
     }
+    payload = {
+      text,
+      meta,
+      x: rect.left,
+      y: rect.bottom + 4,
+    };
+  }
+
+  tooltip.value = {
+    visible: true,
+    text: payload.text ?? '',
+    x: payload.x,
+    y: payload.y,
+  };
+  if (isTauri()) {
+    // 缓存 viewport 坐标（供窗口 ready 后实时换算物理坐标），由 openTooltipWindow 的
+    // ready 握手统一补发 tooltip:show，避免竞态导致的间歇不显示
+    latestTooltipPayload = payload;
+    openTooltipWindow();
   }
 }
 
@@ -210,7 +253,7 @@ onMounted(async () => {
     searchInput.value.focus();
   }
   // 窗口被 Ctrl+I 唤出后，自动聚焦搜索框：直接输入字符即可搜索，无需点击
-  window.addEventListener('window-shown', focusList);
+  window.addEventListener('window-shown', onMainWindowShown);
   // tooltip 弹层悬停：进入保持显示，离开后允许隐藏（独立窗口通过 Tauri 事件通信）
   if (isTauri()) {
     const u1 = await listen('tooltip:hover-enter', onTooltipHoverEnter);
@@ -307,9 +350,34 @@ function focusList() {
   searchInput.value?.focus();
 }
 
+/**
+ * 主窗口从隐藏/最小化重新显示时（window-shown）的兜底清理：
+ * 关闭并重置可能已在父窗口隐藏期间被系统挂起的 tooltip 单例，
+ * 确保下次 hover 走 openTooltipWindow 的 new WebviewWindow 重建鲜活窗口，
+ * 避免事件通道失效导致 tooltip 无法显示（此前需刷新应用才能恢复）。
+ */
+async function resetTooltipSingleton() {
+  if (tooltipLabel) {
+    const existing = await WebviewWindow.getByLabel(tooltipLabel).catch(() => null);
+    if (existing) {
+      try { await existing.close(); } catch { /* 忽略关闭失败 */ }
+    }
+    tooltipLabel = null;
+  }
+  latestTooltipPayload = null;
+  hoveringClip = false;
+  hoveringTooltip = false;
+  tooltip.value.visible = false;
+}
+
+function onMainWindowShown() {
+  resetTooltipSingleton();
+  focusList();
+}
+
 onBeforeUnmount(async () => {
   console.log('unmounting outside...')
-  window.removeEventListener('window-shown', focusList);
+  window.removeEventListener('window-shown', onMainWindowShown);
   unlistenTooltipHover.forEach((u) => u());
   unlistenTooltipHover = [];
   window.removeEventListener('delete-request', onDeleteRequest);
@@ -520,6 +588,8 @@ async function openImageViewer(item: ClipboardData) {
     console.log('查看器窗口创建成功:', label);
     // 窗口已创建，延长豁免期至其稳定聚焦，避免创建期间的失焦误触发隐藏
     (window as any).__childOpeningUntil = Date.now() + 400;
+    // 主窗口置顶时同步让查看器窗口置顶，避免被置顶主窗口遮挡
+    syncChildOnTop(viewer);
   });
   viewer.once('tauri://error', () => {
     console.error('查看器窗口创建失败:', label);
@@ -659,7 +729,7 @@ async function openImageViewer(item: ClipboardData) {
                 <li
                   class="glass-card list-row cursor-pointer rounded-2xl p-4 transition-all duration-300 ease-soft hover:-translate-y-0.5 hover:shadow-float"
                   v-for="(item, index) in data"
-                  :key="index"
+                  :key="item.id"
                   :class="{ 'border-gold ring-1 ring-gold/60': index === getSelectedRowIndex() }"
                   draggable="true"
                   @dragstart="handleDragStart(item, $event)"
@@ -669,7 +739,7 @@ async function openImageViewer(item: ClipboardData) {
                 >
                   <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 }}</div>
                   <div class="list-col-grow flex min-w-0 flex-col">
-                    <div class="relative min-h-0 overflow-hidden" @mouseenter="showTooltip(index, item.content, $event)" @mouseleave="hideTooltip">
+                    <div class="relative min-h-0 overflow-hidden" @mouseenter="showTooltip(index, item, $event)" @mouseleave="hideTooltip">
                       <!-- 图片条目 -->
                       <img
                         v-if="item.type === 'image'"

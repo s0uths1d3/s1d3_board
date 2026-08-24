@@ -34,6 +34,11 @@ let mainFocused = true;
  */
 async function tryHideMainWindow() {
   try {
+    // 主窗口置顶（始终在最前）时禁止失焦自动隐藏：置顶语义即"永不退到后台"。
+    // 否则置顶主窗口在切到其它窗口/应用后仍被隐藏，违背用户对"置顶"的预期。
+    if (await getCurrentWindow().isAlwaysOnTop().catch(() => false)) {
+      return;
+    }
     // 子窗口正在创建/就绪期间豁免自动隐藏，避免双击打开查看器时主窗口被连带隐藏
     if (typeof window !== 'undefined' && (window as any).__childOpeningUntil
       && Date.now() < (window as any).__childOpeningUntil) {
@@ -56,14 +61,33 @@ async function tryHideMainWindow() {
     }
     if (childFocused) return;
 
-    // 主窗口隐藏前，关闭/隐藏所有子窗口：
-    // - 删除确认/图片查看器：close（随主窗口一起关闭）
-    // - tooltip 悬停窗口：hide（保留单例标签，下次 hover 复用，避免主窗口消失后 tooltip 残留）
+    // 图片查看器（image-viewer）打开期间，即使主窗口短暂失焦也禁止隐藏主窗口、且不关闭查看器：
+    // 双击打开查看器时其 focus:false，Windows 下查看器可能成为 foreground 但 focused 仍为
+    // false，导致上面的 isFocused() 漏判、childFocused 失效，进而把主窗口与查看器一并隐藏。
+    // 仅以“存在可见的 image-viewer 窗口”跳过主窗口隐藏，并让下方关闭循环跳过 image-viewer，
+    // 但【不干扰 tooltip 窗口】：tooltip 的显示/隐藏由自身机制（__tooltipActive）独立控制，
+    // 确保 image-viewer 存在时 hover 主窗口列表项仍可正常弹出 tooltip。
+    let viewerVisible = false;
+    for (const w of windows) {
+      if (w.label.startsWith('image-viewer-') && (await w.isVisible().catch(() => false))) {
+        viewerVisible = true;
+        break;
+      }
+    }
+    if (viewerVisible) return; // 仅跳过主窗口隐藏，不影响其它子窗口与 tooltip 逻辑
+
+    // 主窗口隐藏前，关闭所有子窗口：
+    // - 图片查看器：close（随主窗口一起关闭）
+    // - 删除确认：close（随主窗口一起关闭）
+    // - tooltip 悬停窗口：同样 close（而非 hide）。原因：父窗口隐藏时独立 WebView 子窗口
+    //   会被系统挂起、事件通道失效；若仅 hide 保留单例，主窗口重新显示后 emit('tooltip:show')
+    //   会发往失效窗口、tooltip 无法再出现（需刷新才恢复）。close 后单例自然失效，
+    //   下次 hover 走 openTooltipWindow 的 new WebviewWindow 重建鲜活窗口即可正常工作。
     for (const w of windows) {
       try {
         if (w.label === 'main') continue;
         if (w.label.startsWith('tooltip-')) {
-          if (await w.isVisible()) await w.hide();
+          if (await w.isVisible()) await w.close();
         } else if (await w.isVisible()) {
           await w.close();
         }

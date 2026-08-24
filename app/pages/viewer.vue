@@ -166,11 +166,6 @@ function onPointerUp(e: PointerEvent) {
 
 /* ---------------- 窗口控制 ---------------- */
 
-async function minimize() {
-  if (!isTauri()) return;
-  await getCurrentWindow().minimize();
-}
-
 function closeViewer() {
   if (!isTauri()) return;
   // 通知主窗口本查看器已关闭，释放单例引用
@@ -237,15 +232,6 @@ onBeforeUnmount(() => {
         <h1 class="text-sm font-semibold text-ink">图片查看器</h1>
       </div>
       <div class="no-drag flex items-center gap-2">
-        <button
-            class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
-            title="最小化"
-            @click="minimize"
-        >
-          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <path d="M5 12h14" />
-          </svg>
-        </button>
         <button
             class="flex h-7 w-7 items-center justify-center rounded-full text-[rgba(176,92,92,1)] transition-all duration-300 ease-soft hover:bg-[rgba(196,122,122,0.14)] hover:shadow-sm"
             title="关闭 (Esc)"
