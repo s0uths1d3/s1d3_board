@@ -59,7 +59,7 @@ const tooltip = ref({
 /** tooltip 独立窗口单例 label */
 let tooltipLabel: string | null = null;
 /** 最新一次待显示的 tooltip 数据（窗口就绪前缓存，避免事件丢失） */
-let latestTooltipPayload: { text?: string; image?: string; meta?: string; x: number; y: number } | null = null;
+let latestTooltipPayload: { text?: string; image?: string; meta?: string; x: number; y: number; top: number; bottom: number } | null = null;
 /** tooltip 悬停跨窗口事件监听的取消函数 */
 let unlistenTooltipHover: Array<() => void> = [];
 /** 鼠标是否悬停在 tooltip 弹层上（悬停期间保持显示） */
@@ -119,7 +119,9 @@ async function openTooltipWindow() {
       // 窗口已存在：直接补发最新内容（此时窗口已在监听 tooltip:show）
       if (latestTooltipPayload) {
         const coords = await toPhysicalCoords(latestTooltipPayload.x, latestTooltipPayload.y);
-        await emit('tooltip:show', { ...latestTooltipPayload, x: coords.x, y: coords.y });
+        const topPt = await toPhysicalCoords(latestTooltipPayload.x, latestTooltipPayload.top);
+        const bottomPt = await toPhysicalCoords(latestTooltipPayload.x, latestTooltipPayload.bottom);
+        await emit('tooltip:show', { ...latestTooltipPayload, x: coords.x, y: coords.y, top: topPt.y, bottom: bottomPt.y });
       }
       return;
     }
@@ -199,18 +201,25 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
   // 元信息统一为单行，显示在 tooltip 底部
   const isImageItem = !!el.querySelector('img');
   const meta = `创建时间${formatDate(parseInt(item.created_at))} · 使用次数:${item.count} · 最后使用:${formatDate(parseInt(item.updated_at))}`;
-  let payload: { text?: string; image?: string; meta?: string; x: number; y: number };
+  let payload: { text?: string; image?: string; meta?: string; x: number; y: number; top: number; bottom: number };
   if (isImageItem) {
     payload = {
       image: item.content,
       meta,
       x: rect.left,
       y: rect.bottom + 4,
+      top: rect.top,
+      bottom: rect.bottom,
     };
   } else {
     const text = item.content;
-    // 文本项仅在行数较多时展示，避免单行内容也弹出 tooltip
-    if (text.split('\n').length - 1 <= 2) {
+    // 仅当文本在列表中被截断（CSS 省略号生效）或原文超过 2 行时，才用 tooltip 展示完整内容，
+    // 避免单行完整内容也弹出 tooltip。
+    const textEl = el.querySelector('span') as HTMLElement | null;
+    const isOverflow = !!textEl
+      && (textEl.scrollHeight > textEl.clientHeight || textEl.scrollWidth > textEl.clientWidth);
+    const isMultiLine = text.split('\n').length > 2;
+    if (!isOverflow && !isMultiLine) {
       tooltip.value.visible = false;
       return;
     }
@@ -219,6 +228,8 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
       meta,
       x: rect.left,
       y: rect.bottom + 4,
+      top: rect.top,
+      bottom: rect.bottom,
     };
   }
 

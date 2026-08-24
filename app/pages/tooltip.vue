@@ -10,6 +10,10 @@ interface TooltipPayload {
   /** 主窗口计算出的期望锚点（物理像素，相对整个屏幕坐标系） */
   x: number;
   y: number;
+  /** 触发 clip 项的顶部物理坐标（用于避让，避免 tooltip 遮挡悬停项） */
+  top?: number;
+  /** 触发 clip 项的底部物理坐标 */
+  bottom?: number;
   /** 图片模式：base64 内容（放大预览） */
   image?: string;
   /** 图片模式：元信息说明文本（类型/创建时间/使用次数/最后使用） */
@@ -50,7 +54,7 @@ const lines = computed(() => {
 const MIN_WIDTH = 280;
 const MIN_HEIGHT = 48;
 const MAX_WIDTH = 460;
-const MAX_HEIGHT = 300;
+const MAX_HEIGHT = 800;
 /** 图片模式尺寸基准：略高于文本，以容纳放大预览图；最小宽度更小以紧凑包裹小图（减少空白） */
 const IMG_MAX_WIDTH = 460;
 const IMG_MAX_HEIGHT = 360;
@@ -60,7 +64,12 @@ const IMG_MIN_WIDTH = 200;
  * 屏幕边界检测：根据期望锚点计算 tooltip 显示位置，避免超出可视区域。
  * 返回物理像素坐标。
  */
-async function clampToScreen(anchorX: number, anchorY: number): Promise<{ x: number; y: number }> {
+async function clampToScreen(
+  anchorX: number,
+  anchorY: number,
+  anchorTop?: number,
+  anchorBottom?: number,
+): Promise<{ x: number; y: number }> {
   if (!isTauri()) return { x: anchorX, y: anchorY };
   try {
     const win = getCurrentWindow();
@@ -76,16 +85,25 @@ async function clampToScreen(anchorX: number, anchorY: number): Promise<{ x: num
 
     const right = originX + screenW;
     const bottom = originY + screenH;
+    const gap = 4;
 
+    // 水平方向：优先右侧，右侧放不下则移到锚点左侧；仍越界则贴边界
     let x = anchorX;
-    let y = anchorY;
-
-    // 水平方向：右侧超出则左移到锚点左侧；仍越界则贴左边界
     if (x + w > right) x = anchorX - w;
     if (x < originX) x = originX;
-    // 垂直方向：底部超出则上移到锚点上方；仍越界则贴顶边界
-    if (y + h > bottom) y = anchorY - h;
-    if (y < originY) y = originY;
+
+    // 垂直方向：优先 clip 项下方；下方放不下则放其上方（不遮挡悬停的 clip 项）；极端情况贴边
+    const topEdge = anchorTop ?? anchorY;
+    const bottomEdge = anchorBottom ?? anchorY;
+    let y: number;
+    if (bottomEdge + gap + h <= bottom) {
+      y = bottomEdge + gap;            // 放在 clip 项下方
+    } else if (topEdge - gap - h >= originY) {
+      y = topEdge - gap - h;           // 放在 clip 项上方
+    } else {
+      y = Math.min(anchorY, bottom - h);
+      if (y < originY) y = originY;    // 极端：贴边（clip 项几乎占满屏幕时不可避免）
+    }
 
     return { x, y };
   } catch {
@@ -149,7 +167,7 @@ async function showTooltip(payload: TooltipPayload) {
 
   await fitWindowToContent();
 
-  const { x, y } = await clampToScreen(payload.x, payload.y);
+  const { x, y } = await clampToScreen(payload.x, payload.y, payload.top, payload.bottom);
   await getCurrentWindow()
     .setPosition(new PhysicalPosition(x, y))
     .catch(() => {});
@@ -285,9 +303,11 @@ onBeforeUnmount(() => {
   gap: 0;
 }
 .tooltip-lines {
-  /* 多行容器：行数超出 MAX_HEIGHT 时出现滚动条，否则高度由内容决定（紧凑包裹） */
+  flex: 1;
+  min-height: 10.875em;
+  /* 最多展示 20 行（每行 1.625em，text-sm+leading-relaxed），超出滚动 */
+  max-height: 32.5em;
   min-width: 0;
-  max-height: 300px;
   overflow-y: auto;
   /* 美观的细滚动条 */
   scrollbar-width: thin;
@@ -320,13 +340,14 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .tooltip-line {
-  /* 单行显示：不换行、保留原始空白（tab/连续空格），过长以省略号截断 */
+  /* 完整显示：保留原始空白（tab/连续空格），超长行自动换行展示全部内容（不再省略号截断）；
+     文本块整体位于行号右侧，换行行与行号后的文本起点自然对齐 */
   flex: 1;
   min-width: 0;
   display: block;
-  white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 /* 图片模式：放大预览图，在主区域水平+垂直居中，元信息钉在窗口底部 */
 .tooltip-image-wrap {
