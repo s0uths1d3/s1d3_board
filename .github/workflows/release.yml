@@ -16,6 +16,10 @@ on:
       - 'v*'
       - 's1d3_board_*'
 
+# 允许 GITHUB_TOKEN 创建/更新 Release 与上传 artifacts（默认只读，会 403）
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
