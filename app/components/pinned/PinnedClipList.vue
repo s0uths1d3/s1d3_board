@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import clipboardService from '~/src/db/dbService';
 import type { PinnedClip } from '~/src/Entities';
 import { formatDate } from '~/src/utils/formatDate';
@@ -15,6 +15,11 @@ let hintTimer: ReturnType<typeof setTimeout> | null = null;
 const editingId = ref<number | null>(null);
 const editingName = ref('');
 const editingContent = ref('');
+
+// 键盘选择态（瀑布流双列，逻辑网格：上下 ±1，左右 ±2）
+const selectedIndex = ref(0);
+/** 列数（与模板 columns-2 保持一致） */
+const COLUMNS = 2;
 
 /** 数字键标签：第 N 项对应 Ctrl+数字（第 10 项为 0） */
 function slotKey(idx: number) {
@@ -40,6 +45,10 @@ async function load() {
   loading.value = true;
   try {
     clips.value = await clipboardService.fetchPinnedClips();
+    // 修正选中索引，避免列表刷新后越界
+    if (selectedIndex.value >= clips.value.length) {
+      selectedIndex.value = Math.max(0, clips.value.length - 1);
+    }
   } catch (e) {
     console.error('加载常用剪贴失败:', e);
     errorMsg.value = '加载常用剪贴失败';
@@ -73,6 +82,10 @@ function cancelEdit() {
 /** 删除常用剪贴项 */
 async function removeClip(id: number) {
   await clipboardService.deletePinnedClip(id);
+  // 删除后修正选中索引
+  if (selectedIndex.value >= clips.value.length - 1) {
+    selectedIndex.value = Math.max(0, clips.value.length - 2);
+  }
   await load();
   showHint('已删除');
 }
@@ -83,31 +96,68 @@ async function togglePin(item: PinnedClip) {
   await load();
 }
 
-/** 替换图片：选择本地图片文件并转 base64 */
-function replaceImage(item: PinnedClip) {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'image/*';
-  input.onchange = async () => {
-    const file = input.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const dataUrl = reader.result as string;
-      await clipboardService.updatePinnedClip(item.id, dataUrl, item.name ?? '', 'image');
-      await load();
-    };
-    reader.readAsDataURL(file);
-  };
-  input.click();
+/** 把选中卡片滚动到可见区域 */
+async function scrollSelectedIntoView() {
+  await nextTick();
+  const root = document.querySelector('#pinned-clip-root');
+  const cards = root?.querySelectorAll('.pinned-card');
+  const el = cards?.[selectedIndex.value] as HTMLElement | undefined;
+  el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-onMounted(load);
+/** 键盘交互：方向键移动选择，Delete 删除选中项；Ctrl 组合键（切换标签）交还给全局快捷键 */
+async function onKeydown(e: KeyboardEvent) {
+  // 处于编辑态时，方向键/删除交给输入框处理，不拦截
+  if (editingId.value != null) return;
+  // Ctrl/Meta 组合（如 Ctrl+←/→ 切换标签）不在此处理
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  const total = clips.value.length;
+  if (total === 0) return;
+
+  let handled = true;
+  switch (e.key) {
+    case 'ArrowUp':
+      if (selectedIndex.value > 0) selectedIndex.value -= 1;
+      break;
+    case 'ArrowDown':
+      if (selectedIndex.value < total - 1) selectedIndex.value += 1;
+      break;
+    case 'ArrowLeft':
+      if (selectedIndex.value >= COLUMNS) selectedIndex.value -= COLUMNS;
+      break;
+    case 'ArrowRight':
+      if (selectedIndex.value + COLUMNS < total) selectedIndex.value += COLUMNS;
+      break;
+    case 'Delete':
+    case 'Backspace': {
+      const item = clips.value[selectedIndex.value];
+      if (item) await removeClip(item.id);
+      break;
+    }
+    default:
+      handled = false;
+  }
+
+  if (handled) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key !== 'Delete' && e.key !== 'Backspace') await scrollSelectedIntoView();
+  }
+}
+
+onMounted(() => {
+  load();
+  window.addEventListener('keydown', onKeydown, true);
+});
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown, true);
+});
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl p-4">
-    <div class="glass-card rounded-2xl p-4">
+  <div id="pinned-clip-root" class="mx-auto max-w-6xl p-4">
+    <div class="rounded-2xl p-4">
       <p v-if="errorMsg" class="mb-2 text-sm text-[rgba(176,92,92,1)]">{{ errorMsg }}</p>
       <p v-if="loading" class="mb-2 text-sm text-ink-faint">加载中…</p>
       <p v-if="!loading && clips.length === 0" class="mb-2 text-sm text-ink-faint">
@@ -120,9 +170,14 @@ onMounted(load);
         <div
             v-for="(item, idx) in clips"
             :key="item.id"
-            class="mb-3 break-inside-avoid"
+            class="pinned-card mb-3 break-inside-avoid"
+            :class="selectedIndex === idx ? 'is-selected' : ''"
+            @click="selectedIndex = idx"
         >
-          <div class="relative overflow-hidden rounded-2xl border border-accent bg-surface-field/70 shadow-soft">
+          <div
+              class="relative overflow-hidden rounded-2xl border bg-surface-field/70 shadow-soft transition-all"
+              :class="selectedIndex === idx ? 'border-gold ring-2 ring-gold/60' : 'border-accent'"
+          >
             <!-- 卡片主体 -->
             <div class="relative select-none">
               <!-- 序号角标 + 置顶标识 -->
@@ -147,8 +202,8 @@ onMounted(load);
                       rows="3"
                       class="mt-2 w-full rounded-xl border border-accent bg-surface-field px-3 py-1.5 text-sm text-ink focus:border-gold focus:outline-none"
                   ></textarea>
-                  <p v-else class="mt-2 text-xs text-ink-faint">图片内容不可直接编辑，可用「替换图片」更换。</p>
-                  <div class="mt-2 flex gap-2">
+                  <p v-else class="mt-2 text-xs text-ink-faint">图片内容不支持编辑。</p>
+                  <div class="mt-2 flex flex-wrap gap-2">
                     <button type="button" class="btn-soft border-gold text-gold" @click="saveEdit" @pointerdown.stop.prevent>保存</button>
                     <button type="button" class="btn-soft" @click="cancelEdit" @pointerdown.stop.prevent>取消</button>
                   </div>
@@ -198,11 +253,6 @@ onMounted(load);
                 <div class="flex items-center gap-1 border-t border-accent/50 px-3 py-2">
                   <button type="button" class="btn-soft btn-circle p-1.5" title="编辑" @click="startEdit(item)" @pointerdown.stop.prevent>
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
-                  </button>
-                  <button v-if="item.type === 'image'" type="button" class="btn-soft btn-circle p-1.5" title="替换图片" @click="replaceImage(item)" @pointerdown.stop.prevent>
-                    <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                    </svg>
                   </button>
                   <button type="button" class="btn-soft btn-circle p-1.5" :title="item.pinned_at ? '取消置顶' : '置顶'" @click="togglePin(item)" @pointerdown.stop.prevent>
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

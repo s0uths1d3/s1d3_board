@@ -5,6 +5,7 @@ import { writeText, writeImageBase64 } from 'tauri-plugin-clipboard-api';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isTauri } from '~/src/utils/env';
+import { activeTab } from '~/composables/useTabs';
 
 /**
  * Enter 粘贴命令：将当前选中的 clip 项粘贴到唤起 clip 窗口前的目标输入框。
@@ -22,6 +23,10 @@ import { isTauri } from '~/src/utils/env';
 export class PasteCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {
         if (event?.state !== 'Pressed') return;
+
+        // 仅在剪贴板 / 常用剪贴板标签页激活粘贴：
+        // 避免在其他页面（如便签编辑时按 Enter 换行、待办输入）误触发隐藏窗口 + 模拟粘贴。
+        if (activeTab.value !== 'clip' && activeTab.value !== 'pinned') return;
 
         const selected = getSelectedContent();
         if (!selected) return;

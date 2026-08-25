@@ -302,6 +302,18 @@ onMounted(async () => {
     });
     unlistenTooltipHover = [u1, u2, u3];
   }
+  // Ctrl+U 添加为常用剪贴的结果提示（命令层通过事件上报，避免与组件耦合）
+  listen('add-to-pinned:result', (ev) => {
+    const status = (ev.payload as { status?: string })?.status;
+    if (status === 'added') showPinnedHint('已添加到常用剪贴');
+    else if (status === 'exists') showPinnedHint('该内容已在常用剪贴中');
+    else if (status === 'none') showPinnedHint('请先在剪贴板中选择一项');
+  });
+  // Ctrl+L 收藏/取消收藏的结果提示
+  listen('favorite:result', (ev) => {
+    const fav = (ev.payload as { favorite?: boolean })?.favorite;
+    showPinnedHint(fav ? '已收藏' : '已取消收藏');
+  });
   // Delete 键请求删除：打开独立删除确认窗口
   window.addEventListener('delete-request', onDeleteRequest);
 
@@ -423,6 +435,7 @@ onBeforeUnmount(async () => {
 async function favorite(id: number, value: number) {
   value = value === 0 ? 1 : 0;
   await clipboardService.updateFavorite(id, value)
+  showPinnedHint(value === 1 ? '已收藏' : '已取消收藏');
 }
 
 // ===== 右键菜单：添加到常用剪贴 =====
@@ -450,7 +463,13 @@ function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
 async function addToPinned(item: ClipboardData) {
   if (!item?.content) return;
   try {
-    await clipboardService.insertPinnedClip(item.content, item.type, '', item.source);
+    const type = (item.type ?? 'text') as 'text' | 'image';
+    const exists = await clipboardService.isPinnedContentExist(item.content, type);
+    if (exists) {
+      showPinnedHint('该内容已在常用剪贴中');
+      return;
+    }
+    await clipboardService.insertPinnedClip(item.content, type, '', item.source);
     showPinnedHint('已添加到常用剪贴');
   } catch (e) {
     console.error('添加常用剪贴失败:', e);
@@ -530,6 +549,7 @@ async function confirmDelete() {
   if (item) {
     await clipboardService.deleteClipboardData(item.id);
     await fetchData();
+    showPinnedHint('已删除');
   }
 }
 

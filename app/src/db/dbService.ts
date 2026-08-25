@@ -191,6 +191,19 @@ class ClipboardService {
         );
     }
 
+    /**
+     * 判断常用剪贴中是否已存在相同内容（按 content + type 去重）。
+     * 用于 Ctrl+U「添加为常用」时避免重复添加。
+     */
+    public async isPinnedContentExist(content: string, type: 'text' | 'image'): Promise<boolean> {
+        await this.ensureDbInitialized();
+        const rows = await this.db!.select(
+            "SELECT id FROM pinned_clip WHERE content = $1 AND type = $2 LIMIT 1",
+            [content, type]
+        ) as { id: number }[];
+        return rows.length > 0;
+    }
+
     /** 更新常用剪贴项（文本可改内容；图片替换传新 base64；name 可编辑） */
     public async updatePinnedClip(id: number, content: string, name: string, type: 'text' | 'image'): Promise<void> {
         await this.ensureDbInitialized();

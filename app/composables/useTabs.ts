@@ -20,6 +20,6 @@ export const tabItems: { key: TabKey; name: string }[] = [
   { key: 'clip', name: '剪贴板' },
   { key: 'todo', name: '待办' },
   { key: 'note', name: '便签' },
-  { key: 'pinned', name: '常用剪贴' },
+  { key: 'pinned', name: '常用剪贴板' },
   { key: 'setting', name: '设置' },
 ]

@@ -9,8 +9,11 @@ import {SwitchTabCommand} from "~/src/commands/local/SwitchTabCommand";
 import {DelCommand} from  "~/src/commands/local/DelCommand"
 import {FavoriteCommand} from  "~/src/commands/local/FavoriteCommand"
 import {ToggleAlwaysOnTopCommand} from "~/src/commands/local/ToggleAlwaysOnTopCommand"
+import {AddToPinnedCommand} from "~/src/commands/local/AddToPinnedCommand"
 import {PinnedClipPasteCommand} from "~/src/commands/local/PinnedClipPasteCommand"
 import {ClipboardSlotPasteCommand} from "~/src/commands/local/ClipboardSlotPasteCommand"
+import {SaveNoteCommand} from "~/src/commands/local/SaveNoteCommand"
+import {CreateNoteCommand} from "~/src/commands/local/CreateNoteCommand"
 import dbService from "~/src/db/dbService";
 
 const toggleWindowCommand = new ToggleWindowCommand();
@@ -23,6 +26,12 @@ const switchNextTabCommand = new SwitchTabCommand(1)
 const delCommand = new DelCommand();
 const favoriteCommand = new FavoriteCommand()
 const toggleAlwaysOnTopCommand = new ToggleAlwaysOnTopCommand()
+// Ctrl+U：将当前选中的剪贴项添加为常用剪贴（已存在则忽略）
+const addToPinnedCommand = new AddToPinnedCommand()
+// Ctrl+Enter：保存当前编辑中的便签
+const saveNoteCommand = new SaveNoteCommand()
+// Ctrl+N：新建便签
+const createNoteCommand = new CreateNoteCommand()
 // Ctrl+1~Ctrl+0：常用剪贴前 10 项快捷粘贴（槽位序号 1~10）
 const pinnedClipCommands = Array.from({ length: 10 }, (_, i) => new PinnedClipPasteCommand(i + 1))
 // Ctrl+Shift+1~Ctrl+Shift+0：主剪贴板列表前 10 项快捷粘贴（槽位序号 1~10）
@@ -120,13 +129,40 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         title: '切换窗口置顶',
         enabled: true
     },
+    {
+        id: 'add_to_pinned',
+        key: 'Control+U',
+        defaultKey: 'Control+U',
+        scope: 'local',
+        command: addToPinnedCommand,
+        title: '添加选中项为常用剪贴',
+        enabled: true
+    },
+    {
+        id: 'create_note',
+        key: 'Control+N',
+        defaultKey: 'Control+N',
+        scope: 'local',
+        command: createNoteCommand,
+        title: '新建便签',
+        enabled: true
+    },
+    {
+        id: 'save_note',
+        key: 'Control+Enter',
+        defaultKey: 'Control+Enter',
+        scope: 'local',
+        command: saveNoteCommand,
+        title: '保存便签（编辑中）',
+        enabled: true
+    },
     // Ctrl+1~Ctrl+0：粘贴常用剪贴列表第 N 项（第 10 项对应 0），全局生效
     ...Array.from({ length: 10 }, (_, i) => ({
         id: `pinned_paste_${i + 1}`,
         key: `CommandOrControl+${i + 1 === 10 ? 0 : i + 1}`,
         defaultKey: `CommandOrControl+${i + 1 === 10 ? 0 : i + 1}`,
         scope: 'global' as const,
-        command: pinnedClipCommands[i],
+        command: pinnedClipCommands[i]!,
         title: `粘贴常用剪贴第 ${i + 1} 项`,
         enabled: true
     })),
@@ -136,7 +172,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         key: `CommandOrControl+Shift+${i + 1 === 10 ? 0 : i + 1}`,
         defaultKey: `CommandOrControl+Shift+${i + 1 === 10 ? 0 : i + 1}`,
         scope: 'global' as const,
-        command: clipboardSlotCommands[i],
+        command: clipboardSlotCommands[i]!,
         title: `粘贴剪贴板第 ${i + 1} 项`,
         enabled: true
     }))
@@ -189,7 +225,20 @@ export async function initShortcuts() {
         const saved = await dbService.loadShortcutSettings();
         for (const item of saved) {
             const target = shortcuts.value.find(s => s.id === item.id);
-            if (target && !findShortcutConflict(item.value, target.id)) {
+            if (!target) continue;
+            // 切换标签页、保存便签、新建便签必须带修饰键（Ctrl/Cmd/Alt/Shift）：
+            // 防止误存的无修饰方向键/回车/字母（如 ArrowLeft、Enter、N）覆盖默认组合，
+            // 否则会导致「单按左右键就切标签」「Ctrl+Enter 保存失效」或单按字母误新建便签。
+            // 命中脏数据时顺带修复数据库（写回默认），避免持续污染。
+            const modifierRequiredIds = ['switch_prev_tab', 'switch_next_tab', 'save_note', 'create_note'];
+            if (modifierRequiredIds.includes(target.id)) {
+                const hasModifier = /(Control|Command|Ctrl|Alt|Shift)/i.test(item.value);
+                if (!hasModifier) {
+                    await dbService.saveShortcutSetting(target.id, target.defaultKey, target.scope, target.title);
+                    continue;
+                }
+            }
+            if (!findShortcutConflict(item.value, target.id)) {
                 target.key = item.value;
             }
         }
@@ -224,6 +273,14 @@ export async function updateShortcutKey(id: string, newKey: string): Promise<str
     const target = shortcuts.value.find(s => s.id === id);
     if (!target) return '快捷键不存在';
     if (!newKey) return '快捷键不能为空';
+
+    // 切换标签页、保存/新建便签必须带修饰键：避免无修饰方向键/回车/字母占用
+    // （会与页面内方向键导航、Enter 粘贴等冲突，且导致默认组合失效）
+    if (['switch_prev_tab', 'switch_next_tab', 'save_note', 'create_note'].includes(target.id)) {
+        if (!/(Control|Command|Ctrl|Alt|Shift)/i.test(newKey)) {
+            return '该快捷键必须包含修饰键（Ctrl/Cmd/Alt/Shift）';
+        }
+    }
 
     const conflict = findShortcutConflict(newKey, id);
     if (conflict) return `与「${conflict.title}」冲突`;
