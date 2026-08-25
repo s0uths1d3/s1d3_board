@@ -58,8 +58,11 @@ jobs:
             libssl-dev \
             build-essential
 
+      # 使用 npm install 而非 npm ci：本地（Node 24）生成的 lock 与 CI（Node 22）的
+      # hoisting 决策不一致时 npm ci 会严格报 "Missing: xxx from lock file"。
+      # npm install 按 package.json 解析并自动修正 lock 差异，保证可构建。
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build frontend
         run: npm run generate
