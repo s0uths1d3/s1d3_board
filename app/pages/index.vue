@@ -49,6 +49,38 @@ watch(activeTab, () => {
   emit('tooltip:hide').catch(() => {});
 })
 
+// ===== 各 tab 独立保存滚动位置：切换时保存当前 tab，恢复目标 tab =====
+const tabScrollPositions: Record<string, number> = {
+  clip: 0, todo: 0, note: 0, pinned: 0, setting: 0,
+};
+
+const getAppScrollContainer = () => document.getElementById('app-main');
+
+watch(activeTab, (newTab, oldTab) => {
+  // 保存旧 tab 的滚动位置
+  const main = getAppScrollContainer();
+  if (main && oldTab) {
+    tabScrollPositions[oldTab] = main.scrollTop;
+  }
+  // 恢复新 tab 的滚动位置（等待切换内容渲染完成）
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      const m = getAppScrollContainer();
+      if (m) m.scrollTop = tabScrollPositions[newTab] ?? 0;
+    });
+  });
+});
+
+// 切换到剪贴板 tab 时自动聚焦搜索框（支持 Ctrl+←/→ 与点击标题栏）
+watch(activeTab, (tab) => {
+  if (tab === 'clip') {
+    // 立即尝试一次聚焦（DOM 挂载后），并在页面切换动画（page-curtain）结束后再补一次，
+    // 避免动画期间焦点被重置导致无法输入
+    nextTick(() => searchInput.value?.focus());
+    setTimeout(() => searchInput.value?.focus(), 400);
+  }
+});
+
 const tooltip = ref({
   visible: false,
   text: '',
@@ -302,11 +334,11 @@ onMounted(async () => {
     });
     unlistenTooltipHover = [u1, u2, u3];
   }
-  // Ctrl+U 添加为常用剪贴的结果提示（命令层通过事件上报，避免与组件耦合）
+  // Ctrl+U 添加为常用剪贴版的结果提示（命令层通过事件上报，避免与组件耦合）
   listen('add-to-pinned:result', (ev) => {
     const status = (ev.payload as { status?: string })?.status;
-    if (status === 'added') showPinnedHint('已添加到常用剪贴');
-    else if (status === 'exists') showPinnedHint('该内容已在常用剪贴中');
+    if (status === 'added') showPinnedHint('已添加到常用剪贴版');
+    else if (status === 'exists') showPinnedHint('该内容已在常用剪贴版中');
     else if (status === 'none') showPinnedHint('请先在剪贴板中选择一项');
   });
   // Ctrl+L 收藏/取消收藏的结果提示
@@ -438,42 +470,42 @@ async function favorite(id: number, value: number) {
   showPinnedHint(value === 1 ? '已收藏' : '已取消收藏');
 }
 
-// ===== 右键菜单：添加到常用剪贴 =====
+// ===== 右键菜单：添加到常用剪贴版 =====
 const ctxMenuVisible = ref(false);
 const ctxMenuX = ref(0);
 const ctxMenuY = ref(0);
 const ctxMenuItems = ref<{ label: string; danger?: boolean; action: () => void }[]>([]);
-/** 添加到常用剪贴的即时反馈提示 */
+/** 添加到常用剪贴版的即时反馈提示 */
 const pinnedHint = ref('');
 let pinnedHintTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** 右键列表项：显示「添加到常用剪贴」菜单 */
+/** 右键列表项：显示「添加到常用剪贴版」菜单 */
 function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
   e.preventDefault();
   selectRow(index);
   ctxMenuX.value = e.clientX;
   ctxMenuY.value = e.clientY;
   ctxMenuItems.value = [
-    { label: '添加到常用剪贴', action: () => addToPinned(item) },
+    { label: '添加到常用剪贴版', action: () => addToPinned(item) },
   ];
   ctxMenuVisible.value = true;
 }
 
-/** 把当前剪贴项（文本/图片）添加到常用剪贴列表末尾 */
+/** 把当前剪贴项（文本/图片）添加到常用剪贴版列表末尾 */
 async function addToPinned(item: ClipboardData) {
   if (!item?.content) return;
   try {
     const type = (item.type ?? 'text') as 'text' | 'image';
     const exists = await clipboardService.isPinnedContentExist(item.content, type);
     if (exists) {
-      showPinnedHint('该内容已在常用剪贴中');
+      showPinnedHint('该内容已在常用剪贴版中');
       return;
     }
     await clipboardService.insertPinnedClip(item.content, type, '', item.source);
-    showPinnedHint('已添加到常用剪贴');
+    showPinnedHint('已添加到常用剪贴版');
   } catch (e) {
-    console.error('添加常用剪贴失败:', e);
-    showPinnedHint('添加常用剪贴失败');
+    console.error('添加常用剪贴版失败:', e);
+    showPinnedHint('添加常用剪贴版失败');
   }
 }
 
@@ -747,7 +779,8 @@ async function openImageViewer(item: ClipboardData) {
                   <button
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
-                      title="高亮匹配"
+                      :class="highlightState ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+                      :title="highlightState ? '高亮匹配（点击关闭）' : '高亮匹配（点击开启）'"
                       @click="highlightState = !highlightState"
                   >
                     <svg v-if="highlightState" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -880,7 +913,7 @@ async function openImageViewer(item: ClipboardData) {
                 </li>
               </ul>
 
-              <!-- 添加到常用剪贴的即时反馈 -->
+              <!-- 添加到常用剪贴版的即时反馈 -->
               <div
                   v-if="pinnedHint"
                   class="pointer-events-none fixed left-1/2 top-20 z-[90] -translate-x-1/2 rounded-full border border-accent bg-surface-field/95 px-4 py-2 text-sm text-ink shadow-float backdrop-blur"
@@ -902,7 +935,7 @@ async function openImageViewer(item: ClipboardData) {
             <!-- 便签 -->
             <StickyNote v-else-if="activeTab === 'note'" />
 
-            <!-- 常用剪贴 -->
+            <!-- 常用剪贴版 -->
             <PinnedClipList v-else-if="activeTab === 'pinned'" />
 
             <!-- 设置 -->

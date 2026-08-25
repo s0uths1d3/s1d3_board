@@ -76,6 +76,8 @@ class ClipboardService {
                 [content, 'T', type, now, now]
             );
             console.log(`New ${type} record inserted:`, result);
+            // 插入新记录后按「剪贴板最大存储数量」裁剪最旧记录
+            await this.trimClipboard();
         } else {
             const record = existingRecord[0];
             if (record && record.id !== undefined) {
@@ -91,6 +93,31 @@ class ClipboardService {
         }
     }
 
+
+    /**
+     * 按设置项「剪贴板最大存储数量」（max_save_count）裁剪剪贴板：
+     * 超出上限时删除最旧记录；未设置或值为无效数字时不裁剪。
+     */
+    private async trimClipboard(): Promise<void> {
+        try {
+            const maxRaw = await this.getKeyValue('max_save_count');
+            const max = parseInt(maxRaw ?? '', 10);
+            if (!max || max <= 0) return;
+
+            const rows: any[] = await this.db!.select("SELECT COUNT(*) AS cnt FROM clipboard");
+            const count = rows?.[0]?.cnt as number | undefined;
+            if (count === undefined || count <= max) return;
+
+            const excess = count - max;
+            await this.db!.execute(
+                "DELETE FROM clipboard WHERE id IN " +
+                "(SELECT id FROM clipboard ORDER BY updated_at ASC, id ASC LIMIT $1)",
+                [excess]
+            );
+        } catch (e) {
+            console.error('裁剪剪贴板失败:', e);
+        }
+    }
 
     public async fetchClipboardData(filter: any): Promise<ClipboardData[]> {
         await this.ensureDbInitialized();
@@ -123,7 +150,16 @@ class ClipboardService {
         }
 
         const whereSql = conds.length ? `WHERE ${conds.join(' AND ')}` : 'WHERE 1=1';
-        const limit = favorite === 1 ? 100 : 500;
+
+        // 查询上限随「剪贴板最大存储数量」（max_save_count）动态调整；
+        // 收藏列表仍保持 100 条上限；未设置时回退默认值。
+        let limit = favorite === 1 ? 100 : 500;
+        const maxRaw = await this.getKeyValue('max_save_count');
+        const parsed = parseInt(maxRaw ?? '', 10);
+        if (parsed > 0) {
+            limit = favorite === 1 ? Math.min(parsed, 100) : parsed;
+        }
+
         const sql = `SELECT * FROM clipboard ${whereSql} ORDER BY updated_at DESC LIMIT ${limit}`;
         return await this.db!.select(sql, params) as ClipboardData[];
     }

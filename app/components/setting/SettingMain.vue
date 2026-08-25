@@ -30,6 +30,14 @@ const schemeOptions = ['深色', '浅色'];
 const selectedScheme = ref('深色');
 /** 开机自启状态（系统级设置，使用 tauri autostart 插件，不存数据库） */
 const autoStartEnabled = ref(false);
+/** 设置页即时反馈提示（toast） */
+const hint = ref('');
+let hintTimer: ReturnType<typeof setTimeout> | null = null;
+const showHint = (msg: string) => {
+  hint.value = msg;
+  if (hintTimer) clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => { hint.value = ''; }, 2500);
+};
 /** 是否开启悬停提示窗口（tooltip），与主窗口共享同一状态 */
 const { tooltipEnabled } = useTooltipEnabled();
 watch(tooltipEnabled, async (val) => {
@@ -55,10 +63,14 @@ watch(autoStartEnabled, async (val) => {
     } else {
       await disable();
     }
+    showHint(val ? '已开启开机自启' : '已关闭开机自启');
   } catch (e) {
     console.error('设置开机自启失败:', e);
     // 失败回滚 UI 状态
     autoStartEnabled.value = !val;
+    // 提示用户：Tauri autostart 默认写当前用户注册表（HKCU），一般无需管理员权限，
+    // 失败多因系统策略/注册表权限限制
+    showHint('开机自启设置失败，请检查系统权限');
   }
 });
 
@@ -109,7 +121,7 @@ const settings: SettingGroup[] = [
     type: 'general',
     items: [
       {
-        label: '最大查询数量',
+        label: '剪贴板最大存储数量',
         value: '',
         type: 'input'
       },
@@ -263,7 +275,10 @@ async function resetAll(scope?: 'global' | 'local') {
 // 切换设置组时取消录制
 watch(activeSetting, () => cancelRecording());
 
-onBeforeUnmount(() => cancelRecording());
+onBeforeUnmount(() => {
+  cancelRecording();
+  if (hintTimer) clearTimeout(hintTimer);
+});
 
 onMounted(async () => {
   osType.value = getOsTypeFromNavigator();
@@ -503,7 +518,7 @@ onMounted(async () => {
                          v-model="apiKey"
                          placeholder="输入 API key"
                          class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
-                  <input v-else-if="item.type === 'input' && item.label === '最大查询数量'" type="text"
+                  <input v-else-if="item.type === 'input' && item.label === '剪贴板最大存储数量'" type="text"
                          v-model="maxLimit"
                          placeholder="如 500"
                          class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
@@ -559,6 +574,14 @@ onMounted(async () => {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- 即时反馈提示（toast） -->
+    <div
+        v-if="hint"
+        class="pointer-events-none fixed left-1/2 top-20 z-[90] -translate-x-1/2 rounded-full border border-accent bg-surface-field/95 px-4 py-2 text-sm text-ink shadow-float backdrop-blur"
+    >
+      {{ hint }}
     </div>
   </div>
 </template>

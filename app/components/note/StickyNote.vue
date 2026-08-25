@@ -13,7 +13,7 @@
         </button>
       </div>
 
-      <div ref="gridEl" class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <div ref="gridEl" class="columns-1 gap-4 sm:columns-2 md:columns-3 lg:columns-4 xl:columns-5">
         <StickyNoteItem
             v-for="(note, idx) in displayNotes"
             :key="note.id"
@@ -94,6 +94,7 @@ import { v4 as uuidv4 } from 'uuid'
 import type { Note } from "~/src/Entities";
 import {isTauri} from "~/src/utils/env";
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
+import { findNearestInDirection } from "~/src/utils/focusNavigation";
 
 interface StickyNote extends Note {
   position?: { x: number; y: number }
@@ -232,14 +233,6 @@ const changeNoteColor = async (id: string, color: string) => {
   }
 }
 
-/** 动态获取当前网格列数（响应式断点：1/2/3/4/5 列） */
-function getColumnCount(): number {
-  if (!gridEl.value) return 1
-  const cols = getComputedStyle(gridEl.value).gridTemplateColumns
-  const count = cols.split(' ').filter(Boolean).length
-  return count > 0 ? count : 1
-}
-
 /** 把选中卡片滚动到可见区域 */
 async function scrollSelectedIntoView() {
   await nextTick()
@@ -293,8 +286,9 @@ async function onKeydown(e: KeyboardEvent) {
     if (isEditingField || editingId.value !== null) return
     e.preventDefault()
     e.stopPropagation()
-    if (notes.value[selectedIndex.value]) {
-      editingId.value = notes.value[selectedIndex.value].id
+    const note = notes.value[selectedIndex.value]
+    if (note) {
+      editingId.value = note.id
     }
     return
   }
@@ -315,21 +309,28 @@ async function onKeydown(e: KeyboardEvent) {
   const total = notes.value.length
   if (total === 0) return
 
-  const columns = getColumnCount()
   let handled = true
   switch (e.key) {
+    // 方向键：几何最近邻导航（适配网格与任意布局，按下切到该方向上距离最近的便签）
     case 'ArrowUp':
-      if (selectedIndex.value >= columns) selectedIndex.value -= columns
-      break
     case 'ArrowDown':
-      if (selectedIndex.value + columns < total) selectedIndex.value += columns
-      break
     case 'ArrowLeft':
-      if (selectedIndex.value > 0) selectedIndex.value -= 1
+    case 'ArrowRight': {
+      const cards = gridEl.value?.querySelectorAll('.sticky-note-card')
+      if (cards && cards.length > 0) {
+        const dirMap = {
+          ArrowUp: 'up', ArrowDown: 'down',
+          ArrowLeft: 'left', ArrowRight: 'right',
+        } as const
+        const next = findNearestInDirection(
+          Array.from(cards) as HTMLElement[],
+          selectedIndex.value,
+          dirMap[e.key as keyof typeof dirMap],
+        )
+        if (next >= 0) selectedIndex.value = next
+      }
       break
-    case 'ArrowRight':
-      if (selectedIndex.value < total - 1) selectedIndex.value += 1
-      break
+    }
     case 'Delete':
     case 'Backspace': {
       const note = notes.value[selectedIndex.value]

@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import clipboardService from '~/src/db/dbService';
 import type { PinnedClip } from '~/src/Entities';
 import { formatDate } from '~/src/utils/formatDate';
+import { findNearestInDirection } from '~/src/utils/focusNavigation';
 
 /** 常用剪贴管理页：最多 10 条，瀑布流卡片，左滑删除 / 右滑置顶，时间倒序（置顶优先） */
 const clips = ref<PinnedClip[]>([]);
@@ -117,18 +118,27 @@ async function onKeydown(e: KeyboardEvent) {
 
   let handled = true;
   switch (e.key) {
+    // 方向键：几何最近邻导航（适配瀑布流列高不均，按下切到该方向上距离最近的项）
     case 'ArrowUp':
-      if (selectedIndex.value > 0) selectedIndex.value -= 1;
-      break;
     case 'ArrowDown':
-      if (selectedIndex.value < total - 1) selectedIndex.value += 1;
-      break;
     case 'ArrowLeft':
-      if (selectedIndex.value >= COLUMNS) selectedIndex.value -= COLUMNS;
+    case 'ArrowRight': {
+      const root = document.querySelector('#pinned-clip-root');
+      const cards = root?.querySelectorAll('.pinned-card');
+      if (cards && cards.length > 0) {
+        const dirMap = {
+          ArrowUp: 'up', ArrowDown: 'down',
+          ArrowLeft: 'left', ArrowRight: 'right',
+        } as const;
+        const next = findNearestInDirection(
+          Array.from(cards) as HTMLElement[],
+          selectedIndex.value,
+          dirMap[e.key as keyof typeof dirMap],
+        );
+        if (next >= 0) selectedIndex.value = next;
+      }
       break;
-    case 'ArrowRight':
-      if (selectedIndex.value + COLUMNS < total) selectedIndex.value += COLUMNS;
-      break;
+    }
     case 'Delete':
     case 'Backspace': {
       const item = clips.value[selectedIndex.value];

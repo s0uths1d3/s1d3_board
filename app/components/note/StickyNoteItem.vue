@@ -1,6 +1,6 @@
 <template>
   <div
-      class="sticky-note-card glass-card group relative flex min-h-[200px] cursor-pointer flex-col rounded-2xl p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
+      class="sticky-note-card glass-card group relative mb-4 flex min-h-[200px] cursor-pointer break-inside-avoid flex-col rounded-2xl p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
       :class="[getColorClass(note.color || 'yellow'), selected ? 'border-gold shadow-[0_0_18px_-2px_rgba(196,167,125,0.45)]' : 'border-transparent', saved ? 'note-saved' : '']"
       @click="$emit('select')"
   >
@@ -43,39 +43,38 @@
       </button>
     </div>
 
-    <Transition name="note-fade">
-      <div
-          v-if="!editing"
-          key="view"
-          class="flex-1 whitespace-pre-wrap break-words select-none pt-3 text-ink"
-          @dblclick="$emit('request-edit')"
-      >
-        {{ note.content || '双击编辑内容...' }}
-      </div>
-
-      <div v-else key="edit" class="relative flex flex-1 flex-col">
-        <textarea
-            v-model="editContent"
-            ref="textareaRef"
-            class="w-full resize-none overflow-hidden rounded-lg bg-transparent px-1 py-0.5 text-ink outline-none focus:bg-white/30 focus:shadow-[inset_0_0_0_1px_rgba(196,167,125,0.35)] transition-colors"
-            placeholder="输入便签内容..."
-            @blur="saveAndClose"
-            @input="autoResize"
-            @keydown.ctrl.enter="onCtrlEnterSave"
-        ></textarea>
-      </div>
-    </Transition>
-
-    <!-- 保存快捷键提示：固定在卡片右下角，不随编辑内容滚动/遮挡；快捷键被禁用时不显示 -->
     <div
-        v-if="editing && saveShortcut"
-        class="pointer-events-none absolute bottom-2 right-2 z-10 rounded-md bg-white/35 px-2 py-0.5 text-[11px] text-ink-soft backdrop-blur-sm"
+        v-if="!editing"
+        class="flex-1 whitespace-pre-wrap break-words select-none pt-3 text-ink"
+        @dblclick="$emit('request-edit')"
     >
-      {{ saveShortcut }} 保存
+      {{ note.content || '双击编辑内容...' }}
     </div>
 
-    <div class="pt-2 text-xs text-ink-faint opacity-0 transition-opacity duration-300 ease-soft group-hover:opacity-100">
-      {{ formatDate(parseInt(note.updated_at)) }}
+    <div v-else class="flex-1">
+      <textarea
+          v-model="editContent"
+          ref="textareaRef"
+          rows="1"
+          class="w-full resize-none overflow-hidden rounded-lg bg-transparent px-1 py-0.5 text-ink outline-none focus:bg-white/30 focus:shadow-[inset_0_0_0_1px_rgba(196,167,125,0.35)] transition-colors"
+          placeholder="输入便签内容..."
+          @blur="saveAndClose"
+          @input="autoResize"
+          @keydown.ctrl.enter="onCtrlEnterSave"
+      ></textarea>
+    </div>
+
+    <!-- 底部行：日期（左）+ 保存快捷键提示（右），mt-auto 推到底部，水平两端对齐垂直居中 -->
+    <div class="mt-auto flex items-center justify-between gap-2 pt-2">
+      <div class="text-xs text-ink-faint opacity-0 transition-opacity duration-300 ease-soft group-hover:opacity-100">
+        {{ formatDate(parseInt(note.updated_at)) }}
+      </div>
+      <div
+          v-if="editing && saveShortcut"
+          class="pointer-events-none rounded-md bg-white/35 px-2 py-0.5 text-[11px] text-ink-soft backdrop-blur-sm"
+      >
+        {{ saveShortcut }} 保存
+      </div>
     </div>
   </div>
 </template>

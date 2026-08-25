@@ -149,24 +149,9 @@ body::after {
   background: transparent;
 }
 
-/* ===== 便签编辑切换与保存动画 ===== */
+/* ===== 便签保存动画 ===== */
 
-/* 编辑态 ↔ 展示态切换：内容淡入 + 轻微上浮 */
-.note-fade-enter-active {
-  transition: opacity 0.28s cubic-bezier(0.22, 1, 0.36, 1), transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.note-fade-leave-active {
-  transition: opacity 0.16s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.note-fade-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
-}
-.note-fade-leave-to {
-  opacity: 0;
-}
-
-/* Ctrl+Enter 保存成功：金色光晕向外扩散脉冲 + 轻微缩放回弹 */
+/* Ctrl+Enter 保存成功：金色光晕向外扩散脉冲 */
 @keyframes note-saved-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(196, 167, 125, 0.55);

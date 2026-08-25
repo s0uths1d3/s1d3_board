@@ -2,7 +2,7 @@
   <div class="flex h-screen flex-col overflow-hidden rounded-2xl">
     <!-- 图片查看器/删除确认/tooltip 等子窗口不渲染主窗口的自定义 TitleBar -->
     <TitleBar v-if="route.path !== '/viewer' && route.path !== '/delete-confirm' && route.path !== '/tooltip'" />
-    <main class="flex-1 overflow-y-auto">
+    <main id="app-main" class="flex-1 overflow-y-auto">
       <NuxtPage />
     </main>
   </div>
