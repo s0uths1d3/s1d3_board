@@ -14,6 +14,10 @@ export class ToggleWindowCommand implements Command {
             } else {
                 await win.show();
 
+                // 等待窗口/WebView2 完成显示后再聚焦，避免对未就绪的 webview
+                // 调用 SetFocus 报 0x80070057(E_INVALIDARG)。
+                await new Promise(r => setTimeout(r, 50));
+
                 // 系统级聚焦：窗口 + webview 都必须拿到键盘焦点，local 快捷键（方向键）才会生效。
                 // 仅 window.focus()（JS）无法转移系统键盘焦点，必须调用 Tauri 的 setFocus。
                 await win.setFocus();

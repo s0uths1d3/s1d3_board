@@ -19,8 +19,10 @@ import TodoList from "~/components/todo/TodoList.vue";
 import SettingMain from "~/components/setting/SettingMain.vue";
 import ContextMenu from "~/components/mainpage/ContextMenu.vue";
 import PinnedClipList from "~/components/pinned/PinnedClipList.vue";
+import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
 import { activeTab } from "~/composables/useTabs";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
+import { useSearchHighlight } from "~/composables/useSearchHighlight";
 // 统计页懒加载（§14.5）：统计 Tab 非首屏，异步加载降低主窗口初始包体与内存
 import { defineAsyncComponent } from "vue";
 const StatsPage = defineAsyncComponent(() => import("~/components/statistics/StatsPage.vue"));
@@ -32,7 +34,7 @@ const searchInput = ref<HTMLElement | null>(null);
 
 let updateInterval: ReturnType<typeof setInterval> | null = null;
 
-const highlightState = ref(true);
+const { searchHighlightEnabled } = useSearchHighlight();
 const highlightContent = ref('')
 
 watch(highlightContent, (newValue, oldValue) => {
@@ -83,6 +85,15 @@ watch(activeTab, (tab) => {
     setTimeout(() => searchInput.value?.focus(), 400);
   }
 });
+
+// Ctrl+F：聚焦主剪贴板搜索框（clip 标签页）
+const onFocusSearch = () => {
+  // 立即尝试，并在页面切换动画结束后补一次，避免动画期间焦点被重置
+  nextTick(() => searchInput.value?.focus());
+  setTimeout(() => searchInput.value?.focus(), 400);
+};
+onMounted(() => window.addEventListener('focus-search', onFocusSearch));
+onBeforeUnmount(() => window.removeEventListener('focus-search', onFocusSearch));
 
 const tooltip = ref({
   visible: false,
@@ -206,6 +217,8 @@ async function openTooltipWindow() {
 
 /** 列表本地方向键导航：上下移动选中项，并阻止冒泡避免与 ShortcutManager 的 window 监听重复触发 */
 function onListKeydown(e: KeyboardEvent) {
+  // 删除确认框打开时：键盘操作由 DeleteConfirm 组件统一处理，这里不响应（避免误删/重复弹框）
+  if (deleteConfirmVisible.value) return;
   if (e.key === 'ArrowUp') {
     e.preventDefault();
     e.stopPropagation();
@@ -214,6 +227,12 @@ function onListKeydown(e: KeyboardEvent) {
     e.preventDefault();
     e.stopPropagation();
     moveSelection(1);
+  } else if (e.key === 'Delete') {
+    // 直接响应 Delete 键：停止冒泡避免 ShortcutManager 的 delete_item 重复触发，并弹出删除确认框
+    e.preventDefault();
+    e.stopPropagation();
+    const item = getSelectedItem();
+    if (item) handleDelete(item);
   }
 }
 
@@ -349,46 +368,8 @@ onMounted(async () => {
     const fav = (ev.payload as { favorite?: boolean })?.favorite;
     showPinnedHint(fav ? '已收藏' : '已取消收藏');
   });
-  // Delete 键请求删除：打开独立删除确认窗口
+  // Delete 键请求删除：弹出内联删除确认框（DeleteConfirm 组件，与便签一致）
   window.addEventListener('delete-request', onDeleteRequest);
-
-  // 删除确认窗口的回执：yes=删除，no=取消。
-  // 收到回执后设标志并延迟兜底聚焦；真正聚焦在 delete-confirm:closed（窗口销毁后）。
-  // 兜底定时器：若 closed 事件因窗口销毁丢失，300ms 后仍恢复焦点（避免 Del 键失效）
-  const scheduleRefocus = () => {
-    deleteConfirmClosedByUser = true;
-    setTimeout(() => {
-      if (deleteConfirmClosedByUser) {
-        deleteConfirmClosedByUser = false;
-        refocusList();
-      }
-    }, 300);
-  };
-  listen('delete-confirm:yes', (ev) => {
-    const l = (ev.payload as string | undefined) ?? '';
-    if (l && l !== deleteConfirmLabel) return;
-    if (deleteConfirmLabel) deleteConfirmLabel = null;
-    confirmDelete();
-    scheduleRefocus();
-  });
-  listen('delete-confirm:no', (ev) => {
-    const l = (ev.payload as string | undefined) ?? '';
-    if (l && l !== deleteConfirmLabel) return;
-    if (deleteConfirmLabel) deleteConfirmLabel = null;
-    scheduleRefocus();
-  });
-  // 删除确认窗口已销毁（此时聚焦不再被抢占）：
-  // - 用户主动操作关闭（Enter/Esc，yes/no 回执置位标志）→ 恢复焦点，局部快捷键可用
-  // - 失焦自动关闭（用户主动切到其他应用）→ 不抢焦点，尊重用户切换意图
-  listen('delete-confirm:closed', (ev) => {
-    const l = (ev.payload as string | undefined) ?? '';
-    if (l && l !== deleteConfirmLabel) return;
-    if (deleteConfirmLabel) deleteConfirmLabel = null;
-    if (deleteConfirmClosedByUser) {
-      deleteConfirmClosedByUser = false;
-      refocusList();
-    }
-  });
   // 图片查看器已关闭：焦点回归列表（用户主动关闭查看器）
   listen('image-viewer:closed', () => {
     refocusList();
@@ -520,72 +501,42 @@ function showPinnedHint(msg: string) {
   }, 2000);
 }
 
-/** 删除确认窗口 label（单例） */
-let deleteConfirmLabel: string | null = null;
-/** 删除确认窗口正在创建中（防止快速多次按 Delete 重复创建窗口） */
-let deleteConfirmOpening = false;
-/** 删除确认窗口是否由用户主动操作关闭（Enter/Esc），用于区分"失焦自动关闭"不抢焦点 */
-let deleteConfirmClosedByUser = false;
+// ===== 删除确认（DeleteConfirm 内联组件，样式/操作与便签一致）=====
+const deleteConfirmVisible = ref(false);
+const deleteConfirmMessage = ref('');
+const deleteConfirmAnchor = ref<DOMRect | null>(null);
+const deleteConfirmTarget = ref<ClipboardData | null>(null);
 
-/** 点击删除按钮：在独立确认窗口弹窗，不再内嵌展示内容 */
-async function handleDelete(target: ClipboardData) {
-  if (!target || !isTauri() || deleteConfirmOpening) return;
-
-  // 复用已存在的删除确认窗口，直接更新待删除项
-  if (deleteConfirmLabel) {
-    const existing = await WebviewWindow.getByLabel(deleteConfirmLabel).catch(() => null);
-    if (existing) {
-      await emit('delete-confirm:payload', { label: deleteConfirmLabel, type: target.type });
-      return;
-    }
-    deleteConfirmLabel = null;
-  }
-
-  deleteConfirmOpening = true;
-  const label = `delete-confirm-${Date.now()}`;
-  deleteConfirmLabel = label;
-  // 标记子窗口正在打开，临时豁免主窗口的失焦自动隐藏（避免创建瞬间误隐藏）
-  (window as any).__childOpeningUntil = Date.now() + 600;
-  const win = new WebviewWindow(label, {
-    url: '/delete-confirm',
-    title: '删除确认',
-    width: 360,
-    height: 200,
-    resizable: false,
-    decorations: false,
-    transparent: true,
-    skipTaskbar: true,
-    center: true,
-  });
-  win.once('tauri://created', () => {
-    deleteConfirmOpening = false;
-    // 窗口已创建，延长豁免期至其稳定聚焦
-    (window as any).__childOpeningUntil = Date.now() + 400;
-  });
-  win.once('tauri://error', () => {
-    console.error('删除确认窗口创建失败:', label);
-    deleteConfirmOpening = false;
-    if (deleteConfirmLabel === label) deleteConfirmLabel = null;
-  });
-
-  // 等待确认窗口 ready 后发送待删除项类型
-  const unlistenReady = await listen('delete-confirm:ready', async (ev) => {
-    const readyLabel = (ev.payload as string | undefined) ?? '';
-    if (readyLabel && readyLabel !== label) return;
-    await emit('delete-confirm:payload', { label, type: target.type });
-    unlistenReady();
-  });
-  setTimeout(() => unlistenReady(), 5000);
+/** 点击删除按钮：弹出内联删除确认框（就近定位，不创建子窗口） */
+function handleDelete(target: ClipboardData, e?: MouseEvent) {
+  if (!target) return;
+  deleteConfirmTarget.value = target;
+  deleteConfirmMessage.value = target.type === 'image' ? '确定要删除该图片吗？' : '确定要删除该项吗？';
+  const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null;
+  deleteConfirmAnchor.value = btn?.getBoundingClientRect() ?? null;
+  deleteConfirmVisible.value = true;
 }
 
-/** 收到删除确认：执行删除并刷新列表 */
+/** 确认删除：执行删除并刷新列表 */
 async function confirmDelete() {
-  const item = getSelectedItem();
-  if (item) {
-    await clipboardService.deleteClipboardData(item.id);
+  const target = deleteConfirmTarget.value;
+  deleteConfirmVisible.value = false;
+  deleteConfirmTarget.value = null;
+  deleteConfirmAnchor.value = null;
+  if (target) {
+    await clipboardService.deleteClipboardData(target.id);
     await fetchData();
     showPinnedHint('已删除');
   }
+  refocusList();
+}
+
+/** 取消删除：关闭确认框并恢复列表焦点 */
+function cancelDelete() {
+  deleteConfirmVisible.value = false;
+  deleteConfirmTarget.value = null;
+  deleteConfirmAnchor.value = null;
+  refocusList();
 }
 
 /** Delete 键请求：对当前选中项打开独立删除确认窗口 */
@@ -782,20 +733,6 @@ async function openImageViewer(item: ClipboardData) {
                   <button
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
-                      :class="highlightState ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
-                      v-tip="highlightState ? '高亮匹配（点击关闭）' : '高亮匹配（点击开启）'"
-                      @click="highlightState = !highlightState"
-                  >
-                    <svg v-if="highlightState" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M4 6h16M4 12h16M4 18h10" />
-                    </svg>
-                    <svg v-else class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M4 6h10M4 12h16M4 18h16" />
-                    </svg>
-                  </button>
-                  <button
-                      type="button"
-                      class="btn-soft btn-circle p-0 ml-1"
                       :class="filter.favorite === 1 ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
                       v-tip="filter.favorite === 1 ? '仅显示收藏（点击取消）' : '仅显示收藏'"
                       @click="handelFilter"
@@ -888,7 +825,7 @@ async function openImageViewer(item: ClipboardData) {
                         <HighlightText
                           :text="getFirstTwoLines(item.content)"
                           :highlightString="highlightContent"
-                          :active="highlightState"
+                          :active="searchHighlightEnabled"
                         />
                       </span>
                     </div>
@@ -908,7 +845,7 @@ async function openImageViewer(item: ClipboardData) {
                       <path d="M985.6 1022.976c-14.848 0-31.744-4.096-47.104-12.288L716.288 899.584l-223.744 111.104c-14.336 7.68-30.208 11.776-47.104 11.776-21.504 0-42.496-6.656-59.392-19.456-31.232-23.552-47.104-64-39.936-101.376l45.568-237.056-175.616-163.328c-27.136-27.648-37.376-67.072-27.136-104.448l0.512-1.024c12.8-38.4 44.544-65.024 82.944-70.144l243.712-44.544L625.152 58.88C642.56 23.552 678.4 1.024 716.288 1.024c39.424 0 76.288 23.552 91.648 58.368l109.056 221.696 243.712 42.496c38.4 5.632 70.656 33.28 81.408 71.168 12.288 36.864 2.048 77.312-25.6 104.96l-0.512 0.512-174.592 164.864 44.032 237.568c7.168 37.888-8.192 76.288-39.424 100.352-17.92 12.8-38.912 19.968-60.416 19.968z" fill="#c4a77d"></path>
                     </svg>
                   </button>
-                  <button class="btn-soft btn-circle p-2 text-[rgba(176,92,92,1)]" @click="handleDelete(item)">
+                  <button class="btn-soft btn-circle p-2 text-[rgba(176,92,92,1)]" @click="handleDelete(item, $event)">
                     <svg class="size-[1.2em]" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" p-id="4580">
                       <path d="M254.398526 804.702412l-0.030699-4.787026C254.367827 801.546535 254.380106 803.13573 254.398526 804.702412zM614.190939 259.036661c-22.116717 0-40.047088 17.910928-40.047088 40.047088l0.37146 502.160911c0 22.097274 17.930371 40.048111 40.047088 40.048111s40.048111-17.950837 40.048111-40.048111l-0.350994-502.160911C654.259516 276.948613 636.328122 259.036661 614.190939 259.036661zM893.234259 140.105968l-318.891887 0.148379-0.178055-41.407062c0-22.13616-17.933441-40.048111-40.067554-40.048111-7.294127 0-14.126742 1.958608-20.017916 5.364171-5.894244-3.405563-12.729929-5.364171-20.031219-5.364171-22.115694 0-40.047088 17.911952-40.047088 40.048111l0.188288 41.463344-230.115981 0.106424c-3.228531-0.839111-6.613628-1.287319-10.104125-1.287319-3.502777 0-6.89913 0.452301-10.136871 1.296529l-73.067132 0.033769c-22.115694 0-40.048111 17.950837-40.048111 40.047088 0 22.13616 17.931395 40.048111 40.048111 40.048111l43.176358-0.020466 0.292666 617.902982 0.059352 0 0 42.551118c0 44.233434 35.862789 80.095199 80.095199 80.095199l40.048111 0 0 0.302899 440.523085-0.25685 0-0.046049 40.048111 0c43.663452 0 79.146595-34.95 80.054267-78.395488l-0.329505-583.369468c0-22.135136-17.930371-40.047088-40.048111-40.047088-22.115694 0-40.047088 17.911952-40.047088 40.047088l0.287549 509.324054c-1.407046 60.314691-18.594497 71.367421-79.993892 71.367421l41.575908 1.022283-454.442096 0.26606 52.398394-1.288343c-62.715367 0-79.305207-11.522428-80.0645-75.308173l0.493234 76.611865-0.543376 0-0.313132-660.818397 236.82273-0.109494c1.173732 0.103354 2.360767 0.166799 3.561106 0.166799 1.215688 0 2.416026-0.063445 3.604084-0.169869l32.639375-0.01535c1.25355 0.118704 2.521426 0.185218 3.805676 0.185218 1.299599 0 2.582825-0.067538 3.851725-0.188288l354.913289-0.163729c22.115694 0 40.050158-17.911952 40.050158-40.047088C933.283394 158.01792 915.349953 140.105968 893.234259 140.105968zM774.928806 815.294654l0.036839 65.715701-0.459464 0L774.928806 815.294654zM413.953452 259.036661c-22.116717 0-40.048111 17.910928-40.048111 40.047088l0.37146 502.160911c0 22.097274 17.931395 40.048111 40.049135 40.048111 22.115694 0 40.047088-17.950837 40.047088-40.048111l-0.37146-502.160911C454.00054 276.948613 436.069145 259.036661 413.953452 259.036661z" fill="currentColor" p-id="4581"></path>
                     </svg>
@@ -929,6 +866,13 @@ async function openImageViewer(item: ClipboardData) {
                   :y="ctxMenuY"
                   :items="ctxMenuItems"
                   @close="ctxMenuVisible = false"
+              />
+              <DeleteConfirm
+                  :visible="deleteConfirmVisible"
+                  :message="deleteConfirmMessage"
+                  :anchor="deleteConfirmAnchor"
+                  @confirm="confirmDelete"
+                  @cancel="cancelDelete"
               />
             </div>
 

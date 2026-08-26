@@ -16,8 +16,8 @@ const props = defineProps({
 
 // 处理文本，标记需要高亮的字符
 const processedText = computed(() => {
-  // 基础验证
-  if (props.active || !props.highlightString || !props.text) {
+  // 基础验证：未启用高亮、无搜索词或无文本时，返回纯文本
+  if (!props.active || !props.highlightString || !props.text) {
     return props.text?.split('').map(char => ({ char, isHighlight: false })) || [];
   }
 

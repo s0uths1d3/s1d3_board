@@ -14,6 +14,7 @@ import {PinnedClipPasteCommand} from "~/src/commands/local/PinnedClipPasteComman
 import {ClipboardSlotPasteCommand} from "~/src/commands/local/ClipboardSlotPasteCommand"
 import {SaveNoteCommand} from "~/src/commands/local/SaveNoteCommand"
 import {CreateNoteCommand} from "~/src/commands/local/CreateNoteCommand"
+import {FocusSearchCommand} from "~/src/commands/local/FocusSearchCommand"
 import dbService from "~/src/db/dbService";
 
 const toggleWindowCommand = new ToggleWindowCommand();
@@ -32,6 +33,8 @@ const addToPinnedCommand = new AddToPinnedCommand()
 const saveNoteCommand = new SaveNoteCommand()
 // Ctrl+N：新建便签
 const createNoteCommand = new CreateNoteCommand()
+// Ctrl+F：聚焦当前标签页的搜索框（clip / todo 等）
+const focusSearchCommand = new FocusSearchCommand()
 // Ctrl+1~Ctrl+0：常用剪贴前 10 项快捷粘贴（槽位序号 1~10）
 const pinnedClipCommands = Array.from({ length: 10 }, (_, i) => new PinnedClipPasteCommand(i + 1))
 // Ctrl+Shift+1~Ctrl+Shift+0：主剪贴板列表前 10 项快捷粘贴（槽位序号 1~10）
@@ -145,6 +148,15 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         scope: 'local',
         command: createNoteCommand,
         title: '新建便签',
+        enabled: true
+    },
+    {
+        id: 'find_in_tab',
+        key: 'CommandOrControl+F',
+        defaultKey: 'CommandOrControl+F',
+        scope: 'global',
+        command: focusSearchCommand,
+        title: '聚焦当前页搜索框',
         enabled: true
     },
     {

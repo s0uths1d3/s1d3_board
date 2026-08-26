@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 import { isTauri } from '~/src/utils/env';
 
-const itemType = ref<'text' | 'image' | ''>('');
+const itemType = ref<'text' | 'image' | 'category' | 'todo' | ''>('');
 const confirmBtn = ref<HTMLButtonElement | null>(null);
 const cancelBtn = ref<HTMLButtonElement | null>(null);
 let keyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -78,7 +78,7 @@ onMounted(async () => {
 
   // 接收主窗口传来的待删除项类型（仅用于显示；不展示内容本身）
   await listen('delete-confirm:payload', (ev) => {
-    const payload = ev.payload as { label?: string; type?: 'text' | 'image' } | undefined;
+    const payload = ev.payload as { label?: string; type?: 'text' | 'image' | 'category' | 'todo' } | undefined;
     if (payload && typeof payload === 'object' && payload.label && payload.label !== myLabel) return;
     itemType.value = payload?.type ?? '';
   });
@@ -109,20 +109,20 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="delete-root">
-    <div class="glass-card flex w-[320px] max-w-[90vw] flex-col items-center rounded-2xl p-6 shadow-float">
-      <div class="mb-2 flex w-full items-start gap-2">
+    <div class="glass-card flex w-[400px] max-w-[90vw] flex-col items-center rounded-2xl p-6 shadow-float">
+      <div class="mb-4 flex w-full items-start gap-2">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
              class="mt-1 h-6 w-6 shrink-0 text-gold">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
         <div class="flex-1 font-bold text-ink">
-          确定要删除{{ itemType === 'image' ? '该图片' : '该项' }}吗？
+          确定要删除{{ itemType === 'image' ? '该图片' : itemType === 'category' ? '该分类' : itemType === 'todo' ? '该任务' : '该项' }}吗？
         </div>
       </div>
-      <div class="mt-4 flex w-full justify-center gap-4">
-        <button ref="confirmBtn" class="btn-gold" tabindex="-1" v-tip="'删除 (Enter)'" @click="doDelete">删除</button>
+      <div class="flex w-full justify-center gap-4">
         <button ref="cancelBtn" class="btn-soft" tabindex="-1" v-tip="'取消 (Esc)'" @click="cancelDelete">取消</button>
+        <button ref="confirmBtn" class="btn-gold" tabindex="-1" v-tip="'删除 (Enter)'" @click="doDelete">确定</button>
       </div>
     </div>
   </div>

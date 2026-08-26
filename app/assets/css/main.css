@@ -186,6 +186,66 @@ body::after {
   animation: note-saved-pulse 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* ===== 新建便签弹窗动画 ===== */
+/* 遮罩：淡入 + 轻微变暗 */
+.create-overlay-enter-active,
+.create-overlay-leave-active {
+  transition: opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              backdrop-filter 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.create-overlay-enter-from,
+.create-overlay-leave-to {
+  opacity: 0;
+}
+
+/* 卡片：缩放 + 上浮 + 柔和阴影 */
+.create-card-enter-active {
+  transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+              filter 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.create-card-leave-active {
+  transition: opacity 0.22s cubic-bezier(0.4, 0, 1, 1),
+              transform 0.22s cubic-bezier(0.4, 0, 1, 1);
+}
+.create-card-enter-from {
+  opacity: 0;
+  transform: translateY(16px) scale(0.92);
+  filter: blur(6px);
+}
+.create-card-leave-to {
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+}
+
+/* 配色选中对勾：弹入 */
+.check-pop-enter-active {
+  transition: transform 0.26s cubic-bezier(0.34, 1.56, 0.64, 1),
+              opacity 0.2s ease-out;
+}
+.check-pop-enter-from {
+  opacity: 0;
+  transform: scale(0.3);
+}
+
+/* ===== 待办「添加新任务」收起/展开：grid-rows 平滑高度 + 透明度渐变 =====
+   使用 grid-template-rows 0fr→1fr 实现不依赖 JS 测高的高度过渡，
+   内层需 min-h-0 防止内容溢出撑断动画 */
+.add-form-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-top: 0;
+}
+.add-form-wrap.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-top: 0;
+}
+.add-form-wrap > div {
+  min-height: 0;
+}
+
 /* 无障碍：尊重 prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -213,22 +273,41 @@ body::after {
   position: absolute;
   z-index: 50;
   top: 100%;
-  margin-top: 0.25rem;
+  left: 0;
+  margin-top: 0.5rem;
   min-width: max-content;
+  max-width: min(calc(100vw - 1.5rem), 18rem);
   opacity: 0;
   visibility: hidden;
-  transform: translateY(-4px);
-  transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-    visibility 0.2s;
+  transform-origin: top center;
+  transform: translateY(-6px) scale(0.96);
+  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 0.22s;
 }
 .dropdown-end .dropdown-content {
+  left: auto;
   right: 0;
 }
+.dropdown-up .dropdown-content {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  transform-origin: bottom center;
+  transform: translateY(6px) scale(0.96);
+}
+.dropdown-up:focus-within .dropdown-content {
+  transform: translateY(0) scale(1);
+}
+/* 展开：淡入 + 上浮放大归位，明显的弹性渐变 */
 .dropdown:focus-within .dropdown-content {
   opacity: 1;
   visibility: visible;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
+  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s;
 }
 
 /* 竖向菜单 */

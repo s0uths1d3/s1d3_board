@@ -8,6 +8,7 @@ import clipboardService from '~/src/db/dbService';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/src/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
+import { useSearchHighlight } from '~/composables/useSearchHighlight';
 
 const osType = ref('');
 
@@ -42,6 +43,11 @@ const showHint = (msg: string) => {
 const { tooltipEnabled } = useTooltipEnabled();
 watch(tooltipEnabled, async (val) => {
   await clipboardService.setKeyValue('tooltip_enabled', val ? '1' : '0');
+});
+/** 是否开启搜索高亮，与所有搜索框共享同一状态 */
+const { searchHighlightEnabled } = useSearchHighlight();
+watch(searchHighlightEnabled, async (val) => {
+  await clipboardService.setKeyValue('search_highlight_enabled', val ? '1' : '0');
 });
 // 实时保存：任意设置项变化即写入数据库
 watch(apiKey, async (val) => {
@@ -132,6 +138,11 @@ const settings: SettingGroup[] = [
       },
       {
         label: '提示窗口',
+        value: '',
+        type: 'checkbox'
+      },
+      {
+        label: '搜索高亮',
         value: '',
         type: 'checkbox'
       },
@@ -543,6 +554,16 @@ onMounted(async () => {
                   >
                     <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
                           :class="tooltipEnabled ? 'translate-x-5' : 'translate-x-0.5'"></span>
+                  </button>
+                  <button
+                      v-else-if="item.type === 'checkbox' && item.label === '搜索高亮'"
+                      type="button" role="switch" :aria-checked="searchHighlightEnabled"
+                      class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
+                      :class="searchHighlightEnabled ? 'bg-gold' : 'bg-accent'"
+                      @click="searchHighlightEnabled = !searchHighlightEnabled"
+                  >
+                    <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
+                          :class="searchHighlightEnabled ? 'translate-x-5' : 'translate-x-0.5'"></span>
                   </button>
                   <div v-else-if="item.type === 'select'" class="dropdown dropdown-end w-full">
                     <button

@@ -11,7 +11,7 @@
             tabindex="0"
             role="button"
             v-tip="'更改配色'"
-            class="cursor-pointer rounded-lg p-1 text-ink-soft outline-none transition-colors hover:bg-white/40 hover:text-ink focus:outline-none"
+            class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-ink-soft outline-none transition-colors hover:bg-white/40 hover:text-ink focus:outline-none"
         >
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path>
@@ -33,9 +33,9 @@
       </div>
       <button
           type="button"
-          @click="$emit('request-delete')"
+          @click="$emit('request-delete', $event)"
           v-tip="'删除'"
-          class="rounded-lg p-1 text-[rgba(176,92,92,1)] transition-colors hover:bg-[rgba(196,122,122,0.12)]"
+          class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-[rgba(176,92,92,1)] transition-colors hover:bg-[rgba(196,122,122,0.12)]"
       >
         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -45,13 +45,19 @@
 
     <div
         v-if="!editing"
-        class="flex-1 whitespace-pre-wrap break-words select-none pt-3 text-ink"
+        class="flex-1 whitespace-pre-wrap break-words select-none pr-14 pt-3 text-ink"
         @dblclick="$emit('request-edit')"
     >
-      {{ note.content || '双击编辑内容...' }}
+      <HighlightText
+          v-if="note.content"
+          :text="note.content"
+          :highlight-string="highlightString"
+          :active="highlight"
+      />
+      <span v-else>双击编辑内容...</span>
     </div>
 
-    <div v-else class="flex-1">
+    <div v-else class="flex-1 pr-14">
       <textarea
           v-model="editContent"
           ref="textareaRef"
@@ -82,6 +88,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import type { Note } from '~/src/Entities';
+import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {formatDate} from "~/src/utils/formatDate";
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { formatShortcutForDisplay } from "~/src/utils/shortcutFormat";
@@ -90,11 +97,13 @@ const props = defineProps<{
   note: Note
   selected?: boolean
   editing?: boolean
+  highlightString?: string
+  highlight?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'update', id: string, content: string): void
-  (e: 'request-delete'): void
+  (e: 'request-delete', event?: MouseEvent): void
   (e: 'color-change', id: string, color: string): void
   (e: 'request-edit'): void
   (e: 'finish-edit'): void

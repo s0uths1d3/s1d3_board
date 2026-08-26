@@ -21,15 +21,34 @@ const props = withDefaults(defineProps<{
   max?: string;
   /** 日期模式 / 日期时间模式 */
   mode?: 'date' | 'datetime';
+  /** 尺寸：sm 紧凑，md 与表单 select/button 等高 */
+  size?: 'sm' | 'md';
+  /**
+   * 面板开关（v-model:open）。传入则由外部完全控制面板，组件不再自管 open 状态。
+   * 不传则维持原有"点击触发按钮 toggle 面板"行为。
+   */
+  open?: boolean;
+  /** 隐藏触发按钮：仅用作"面板"容器（典型场景：由父组件编程打开面板） */
+  hideTrigger?: boolean;
+  /**
+   * datetime 模式下，时分选择变化是否实时 emit（默认 true）。
+   * 由外部编程控制面板（v-model:open）时建议 false，避免选小时/分钟时面板被父组件立即关闭。
+   */
+  liveEmit?: boolean;
 }>(), {
   placeholder: '选择日期',
   mode: 'date',
   min: '',
   max: '',
+  size: 'sm',
+  open: undefined,
+  hideTrigger: false,
+  liveEmit: true,
 });
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void;
+  (e: 'update:open', value: boolean): void;
 }>();
 
 // ===== 工具 =====
@@ -56,7 +75,23 @@ const selectedDate = computed(() => parsed.value?.date ?? '');
 const selectedTime = computed(() => parsed.value?.time ?? '');
 
 // ===== 弹出状态 =====
-const open = ref(false);
+const internalOpen = ref(false);
+const isOpenControlled = computed(() => props.open !== undefined);
+const open = computed({
+  get: () => (isOpenControlled.value ? props.open! : internalOpen.value),
+  set: (v: boolean) => {
+    if (isOpenControlled.value) emit('update:open', v);
+    else internalOpen.value = v;
+  },
+});
+/** 外部受控时，同步到 internalOpen 以兼容原有面板定位/外部点击等逻辑 */
+watch(
+  () => props.open,
+  (v) => {
+    if (isOpenControlled.value) internalOpen.value = v ?? false;
+  },
+  { immediate: true },
+);
 const rootEl = ref<HTMLDivElement | null>(null);
 const panelRef = ref<HTMLElement | null>(null);
 const panelStyle = ref<Record<string, string>>({});
@@ -154,7 +189,8 @@ function emitValue() {
 }
 
 watch([hour, minute], () => {
-  if (props.mode === 'datetime' && selectedDate.value) emitValue();
+  // liveEmit=false 时不实时 emit（配合外部 v-model:open 使用），只在 selectDate / "确定"时提交
+  if (props.mode === 'datetime' && selectedDate.value && props.liveEmit) emitValue();
 });
 
 function selectDate(d: Date) {
@@ -230,6 +266,9 @@ function onEsc(e: KeyboardEvent) {
 
 watch(open, (v) => {
   if (v) {
+    // 外部 v-model:open 编程打开时不走 toggle()，这里统一初始化视图/时间
+    syncView();
+    initTime();
     positionPanel();
     // capture 捕获所有祖先滚动，保证面板跟随按钮位置
     window.addEventListener('resize', positionPanel);
@@ -267,11 +306,15 @@ const clearable = computed(() => hasValue.value);
 
 <template>
   <div ref="rootEl" class="relative inline-block">
-    <!-- 触发按钮（外观与输入框一致） -->
+    <!-- 触发按钮（外观与输入框一致）。hideTrigger 时不渲染，仅作"面板"容器使用。 -->
     <button
+      v-if="!hideTrigger"
       type="button"
-      class="flex w-full items-center justify-between gap-2 rounded-lg border border-accent bg-surface-field px-3 py-1.5 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
-      :class="open ? 'border-gold' : ''"
+      class="flex w-full items-center justify-between gap-2 rounded-lg border border-accent bg-surface-field transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
+      :class="[
+        open ? 'border-gold' : '',
+        size === 'md' ? 'px-3 py-2 text-sm' : 'px-3 py-1.5 text-sm',
+      ]"
       @click="toggle"
     >
       <span class="truncate" :class="hasValue ? 'text-ink' : 'text-ink-faint'">{{ display }}</span>
@@ -354,20 +397,68 @@ const clearable = computed(() => hasValue.value);
             </div>
           </Transition>
 
-          <!-- 日期时间模式：时分选择 -->
+          <!-- 日期时间模式：时分选择（自定义下拉，避免原生 select 项数限制） -->
           <div v-if="mode === 'datetime'" class="mt-3 flex items-center justify-center gap-2 border-t border-accent/60 pt-3">
             <span class="text-xs text-ink-faint">时间</span>
-            <select
-              v-model="hour" class="rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none"
-            >
-              <option v-for="h in hourOptions" :key="h" :value="Number(h)">{{ h }}</option>
-            </select>
+
+            <!-- 小时选择（0-23）：面板靠近视口底部，向上展开避免被屏幕裁切 -->
+            <div class="dropdown dropdown-end dropdown-up">
+              <label
+                tabindex="0"
+                class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none"
+              >
+                <span>{{ pad(hour) }}</span>
+                <svg class="h-3 w-3 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </label>
+              <ul
+                tabindex="0"
+                class="dropdown-content glass-card menu z-10 mt-1 max-h-60 w-16 overflow-y-auto rounded-xl p-1"
+              >
+                <li v-for="h in hourOptions" :key="h">
+                  <button
+                    type="button"
+                    class="w-full rounded-md px-2 py-1 text-center text-sm text-ink hover:bg-secondary"
+                    :class="Number(h) === hour ? 'bg-gold/20 font-semibold' : ''"
+                    @click="hour = Number(h)"
+                  >
+                    {{ h }}
+                  </button>
+                </li>
+              </ul>
+            </div>
+
             <span class="text-ink-faint">:</span>
-            <select
-              v-model="minute" class="rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none"
-            >
-              <option v-for="m in minuteOptions" :key="m" :value="Number(m)">{{ m }}</option>
-            </select>
+
+            <!-- 分钟选择（0-59） -->
+            <div class="dropdown dropdown-end dropdown-up">
+              <label
+                tabindex="0"
+                class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none"
+              >
+                <span>{{ pad(minute) }}</span>
+                <svg class="h-3 w-3 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </label>
+              <ul
+                tabindex="0"
+                class="dropdown-content glass-card menu z-10 mt-1 max-h-60 w-16 overflow-y-auto rounded-xl p-1"
+              >
+                <li v-for="m in minuteOptions" :key="m">
+                  <button
+                    type="button"
+                    class="w-full rounded-md px-2 py-1 text-center text-sm text-ink hover:bg-secondary"
+                    :class="Number(m) === minute ? 'bg-gold/20 font-semibold' : ''"
+                    @click="minute = Number(m)"
+                  >
+                    {{ m }}
+                  </button>
+                </li>
+              </ul>
+            </div>
+
             <button
               type="button" class="btn-soft ml-1 px-3 py-1 text-xs"
               @click="emitValue(); close()"

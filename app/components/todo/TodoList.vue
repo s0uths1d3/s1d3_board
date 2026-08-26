@@ -2,55 +2,58 @@
   <div class="min-h-screen p-4">
     <div class="max-w-6xl mx-auto">
       <div class="mb-8">
-        <div class="gold-bar mb-4 inline-block">
-          <h1 class="text-4xl font-bold text-ink">任务清单</h1>
-        </div>
 
         <div class="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-          <div class="glass-card rounded-2xl p-4 shadow-soft">
-            <div class="mb-1 text-gold">
-              <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="glass-card flex items-center gap-3 rounded-2xl p-4 shadow-soft">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-gold">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
               </svg>
             </div>
-            <div class="text-xs uppercase tracking-wide text-ink-faint">总任务</div>
-            <div class="text-2xl font-semibold text-ink">{{ todos.length }}</div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">总任务</div>
+            <div class="text-xl font-semibold text-ink tabular-nums">{{ todos.length }}</div>
           </div>
 
-          <div class="glass-card rounded-2xl p-4 shadow-soft">
-            <div class="mb-1 text-gold">
-              <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="glass-card flex items-center gap-3 rounded-2xl p-4 shadow-soft">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-gold">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
             </div>
-            <div class="text-xs uppercase tracking-wide text-ink-faint">进行中</div>
-            <div class="text-2xl font-semibold text-ink">{{ pendingCount }}</div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">进行中</div>
+            <div class="text-xl font-semibold text-ink tabular-nums">{{ pendingCount }}</div>
           </div>
 
-          <div class="glass-card rounded-2xl p-4 shadow-soft">
-            <div class="mb-1 text-gold">
-              <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="glass-card flex items-center gap-3 rounded-2xl p-4 shadow-soft">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-gold">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
             </div>
-            <div class="text-xs uppercase tracking-wide text-ink-faint">已完成</div>
-            <div class="text-2xl font-semibold text-ink">{{ completedCount }}</div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">已完成</div>
+            <div class="text-xl font-semibold text-ink tabular-nums">{{ completedCount }}</div>
           </div>
 
-          <div class="glass-card rounded-2xl p-4 shadow-soft">
-            <div class="mb-1 text-gold">
-              <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div class="glass-card flex items-center gap-3 rounded-2xl p-4 shadow-soft">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-gold">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
               </svg>
             </div>
-            <div class="text-xs uppercase tracking-wide text-ink-faint">完成率</div>
-            <div class="text-2xl font-semibold text-ink">{{ completionRate }}%</div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">完成率</div>
+            <div class="text-xl font-semibold text-ink tabular-nums">{{ completionRate }}%</div>
           </div>
         </div>
       </div>
 
-      <div class="glass-card mb-6 rounded-2xl p-4 shadow-soft">
-        <div class="mb-3 flex items-center justify-between">
+      <div
+          class="glass-card mb-6 rounded-2xl shadow-soft transition-all duration-300 ease-soft"
+          :class="showAddForm ? 'p-4' : 'p-4 pb-2.5'"
+      >
+        <div
+            class="flex items-center justify-between"
+            :class="showAddForm ? 'mb-3' : ''"
+        >
           <h2 class="text-lg font-semibold text-ink">添加新任务</h2>
           <button
               @click="toggleAddForm"
@@ -69,13 +72,17 @@
           </button>
         </div>
 
-        <div v-show="showAddForm" class="space-y-3">
+        <div
+            class="add-form-wrap overflow-hidden transition-all duration-300 ease-soft"
+            :class="showAddForm ? 'is-open' : ''"
+        >
+          <div class="space-y-3 pt-3">
           <input
               v-model="newTodo.title"
               type="text"
               placeholder="任务标题 *"
               class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-              @keyup.enter="newTodo.title ? $refs.descriptionInput?.focus() : null"
+              @keyup.enter="newTodo.title ? descriptionInput?.focus() : null"
           />
 
           <textarea
@@ -86,72 +93,78 @@
               rows="2"
           ></textarea>
 
-          <div style="display: flex;justify-content: space-between">
-            <div>
-              <label class="mb-1 block text-ink-faint">优先级</label>
-              <select
-                  v-model="newTodo.priority"
-                  class="rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
-              >
-                <option value="low">低优先级</option>
-                <option value="medium">中优先级</option>
-                <option value="high">高优先级</option>
-              </select>
+          <!-- 控件 + 操作按钮 同一行：控件在左、按钮靠右；按钮采用纯图标形式 -->
+          <div class="flex flex-wrap items-center justify-between gap-4">
+            <div class="flex flex-wrap items-center gap-4">
+              <div class="flex items-center gap-2">
+                <label class="whitespace-nowrap text-sm text-ink-faint">优先级</label>
+                <select
+                    v-model="newTodo.priority"
+                    class="rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink focus:border-gold focus:outline-none"
+                >
+                  <option value="low">低优先级</option>
+                  <option value="medium">中优先级</option>
+                  <option value="high">高优先级</option>
+                </select>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <label class="whitespace-nowrap text-sm text-ink-faint">截止日期</label>
+                <DueTimeSelect v-model="newTodo.dueDate" />
+              </div>
+
+              <div class="flex items-center gap-2">
+                <label class="whitespace-nowrap text-sm text-ink-faint">分类</label>
+                <CategorySelect v-model="newTodo.category" @category-delete="handleCategoryDelete" />
+              </div>
             </div>
 
-            <div>
-              <label class="mb-1 block text-ink-faint">截止日期</label>
-              <DatePicker v-model="newTodo.dueDate" mode="datetime" placeholder="选择截止时间" class="w-48" />
-            </div>
-
-            <div>
-              <label class="mb-1 block text-ink-faint">分类</label>
-              <select
-                  v-model="newTodo.category"
-                  class="rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
+            <div class="flex items-center gap-2">
+              <button
+                  type="button"
+                  @click="addTodo"
+                  title="添加任务"
+                  class="btn-gold flex h-9 w-9 items-center justify-center p-0"
+                  :disabled="!newTodo.title.trim()"
               >
-                <option v-for="category in categories" :key="category" :value="category">
-                  {{ category }}
-                </option>
-              </select>
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                </svg>
+              </button>
+              <button
+                  type="button"
+                  @click="resetForm"
+                  title="重置"
+                  class="btn-soft flex h-9 w-9 items-center justify-center p-0"
+              >
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              </button>
             </div>
           </div>
-
-          <div class="flex gap-2">
-            <button
-                @click="addTodo"
-                class="btn-gold flex items-center"
-                :disabled="!newTodo.title.trim()"
-            >
-              <svg class="mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
-              </svg>
-              添加任务
-            </button>
-            <button
-                @click="resetForm"
-                class="btn-soft"
-            >
-              重置
-            </button>
           </div>
         </div>
       </div>
 
-      <div class="glass-card mb-6 rounded-2xl p-4 shadow-soft">
+      <!-- 搜索/筛选栏：relative z-40 提升 stacking context 层级，
+           避免下拉菜单被下方 TodoItem 列表（同样 backdrop-filter 的 glass-card）覆盖 -->
+      <div class="glass-card relative z-40 mb-6 rounded-2xl p-4 shadow-soft">
         <div class="flex flex-col gap-4 lg:flex-row">
-          <div class="flex flex-1 gap-2">
+          <div class="flex flex-1 items-center gap-2">
             <input
+                ref="todoSearchInput"
                 v-model="searchQuery"
                 type="text"
                 placeholder="搜索任务..."
-                class="w-64 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                class="min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             />
 
             <div class="dropdown dropdown-end">
-              <label tabindex="0" class="btn-soft flex items-center">
-                {{ currentFilter }}
-                <svg class="ml-1 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <label tabindex="0" class="btn-soft flex items-center" @focusin="isFilterOpen = true" @focusout="isFilterOpen = false">
+                {{ currentFilterLabel }}
+                <svg class="ml-1 h-4 w-4 transform transition-transform duration-200" :class="{ 'rotate-180': isFilterOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                 </svg>
               </label>
@@ -163,9 +176,9 @@
             </div>
 
             <div class="dropdown dropdown-end">
-              <label tabindex="0" class="btn-soft flex items-center">
+              <label tabindex="0" class="btn-soft flex items-center" @focusin="isSortOpen = true" @focusout="isSortOpen = false">
                 排序
-                <svg class="ml-1 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="ml-1 h-4 w-4 transform transition-transform duration-200" :class="{ 'rotate-180': isSortOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"></path>
                 </svg>
               </label>
@@ -184,11 +197,14 @@
             v-for="todo in filteredAndSortedTodos"
             :key="todo.id"
             :todo="todo"
+            :highlight-string="searchHighlightEnabled ? searchQuery : ''"
+            :highlight="searchHighlightEnabled && searchQuery.trim() !== ''"
             @toggle="toggleTodo"
             @update="updateTodo"
             @delete="deleteTodo"
             @priority-change="changePriority"
             @category-change="changeCategory"
+            @category-delete="handleCategoryDelete"
         />
       </div>
 
@@ -200,6 +216,15 @@
           {{ todos.length === 0 ? '还没有任务，添加第一个任务吧！' : '没有符合条件的任务' }}
         </p>
       </div>
+
+      <!-- 删除确认框：与全局一致的 DeleteConfirm 组件（就近定位、键盘操作一致） -->
+      <DeleteConfirm
+          :visible="deleteConfirmVisible"
+          :message="deleteConfirmMessage"
+          :anchor="deleteConfirmAnchor"
+          @confirm="onDeleteConfirm"
+          @cancel="onDeleteCancel"
+      />
     </div>
   </div>
 </template>
@@ -212,7 +237,12 @@ import { v4 as uuidv4 } from 'uuid'
 import type {Todo} from '~/src/Entities'
 import {isTauri} from "~/src/utils/env"
 import statsService from "~/src/statistics/statsService"
-import DatePicker from '~/components/common/DatePicker.vue'
+import DueTimeSelect from '~/components/todo/DueTimeSelect.vue'
+import CategorySelect from '~/components/todo/CategorySelect.vue'
+import { useSearchHighlight } from "~/composables/useSearchHighlight"
+import { useCategories } from "~/composables/useCategories"
+import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
+import DeleteConfirm from '~/components/common/DeleteConfirm.vue'
 
 const todos = ref<Todo[]>([])
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -227,6 +257,12 @@ const newTodo = ref({
 })
 
 const searchQuery = ref('')
+/** 搜索框 ref：Ctrl+F 聚焦使用 */
+const todoSearchInput = ref<HTMLInputElement | null>(null)
+/** 全局搜索高亮开关（设置页通用控制） */
+const { searchHighlightEnabled } = useSearchHighlight()
+/** 任务描述输入框（回车从标题跳转到描述时聚焦） */
+const descriptionInput = ref<HTMLTextAreaElement | null>(null)
 const currentFilter = ref('全部')
 const currentSort = ref('date-desc')
 
@@ -234,7 +270,9 @@ const filters = [
   { label: '全部', value: 'all' },
   { label: '进行中', value: 'pending' },
   { label: '已完成', value: 'completed' },
-  { label: '高优先级', value: 'high' }
+  { label: '高优先级', value: 'high' },
+  { label: '已逾期', value: 'overdue' },
+  { label: '逾期完成', value: 'overdue-completed' }
 ]
 
 const sortOptions = [
@@ -244,7 +282,8 @@ const sortOptions = [
   { label: '名称', value: 'name' }
 ]
 
-const categories = ['工作', '学习', '生活', '娱乐', '其他']
+/** 筛选按钮显示的中文标签：value→label 映射（避免点击后显示英文 value） */
+const currentFilterLabel = computed(() => filters.find(f => f.value === currentFilter.value)?.label ?? currentFilter.value)
 
 // 通知相关
 const notificationShown = ref(new Set()) // 用于记录已通知的任务ID
@@ -253,17 +292,6 @@ const notificationConfig = ref({
   timeWindow: 1000 // ±1秒的时间窗口
 })
 
-// 辅助函数：格式化日期为datetime-local格式
-const formatDateTimeForInput = (date = new Date()) => {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hours = String(date.getHours()).padStart(2, '0')
-  const minutes = String(date.getMinutes()).padStart(2, '0')
-
-  return `${year}-${month}-${day}T${hours}:${minutes}`
-}
-
 // 计算属性
 const pendingCount = computed(() => todos.value.filter(t => !t.completed).length)
 const completedCount = computed(() => todos.value.filter(t => t.completed).length)
@@ -271,6 +299,10 @@ const completionRate = computed(() => {
   if (todos.value.length === 0) return 0
   return Math.round((completedCount.value / todos.value.length) * 100)
 })
+
+/** 判断任务是否已逾期：有截止时间且早于当前时间。 */
+const isOverdueTodo = (todo: Todo) =>
+    !!todo.dueDate && new Date(todo.dueDate).getTime() < Date.now()
 
 const filteredAndSortedTodos = computed(() => {
   let filtered = todos.value
@@ -281,6 +313,16 @@ const filteredAndSortedTodos = computed(() => {
         todo.title.toLowerCase().includes(query) ||
         (todo.description && todo.description.toLowerCase().includes(query))
     )
+  }
+
+  // 默认视图（全部/进行中/已完成/高优先级）不显示已逾期任务；
+  // "已逾期"筛选显示所有已逾期任务，"逾期完成"筛选仅显示已完成且已逾期的任务。
+  if (currentFilter.value === 'overdue') {
+    filtered = filtered.filter(isOverdueTodo)
+  } else if (currentFilter.value === 'overdue-completed') {
+    filtered = filtered.filter(t => isOverdueTodo(t) && t.completed === 1)
+  } else {
+    filtered = filtered.filter(t => !isOverdueTodo(t))
   }
 
   if (currentFilter.value === 'pending') {
@@ -312,8 +354,8 @@ const filteredAndSortedTodos = computed(() => {
 const toggleAddForm = () => {
   showAddForm.value = !showAddForm.value
   if (showAddForm.value) {
-    // 设置默认截止日期为当前时间
-    newTodo.value.dueDate = formatDateTimeForInput()
+    // 截止时间默认留空，由用户在快捷选择器中按需选择未来时间
+    newTodo.value.dueDate = ''
 
     nextTick(() => {
       const titleInput = document.querySelector('input[placeholder="任务标题 *"]') as HTMLInputElement
@@ -350,7 +392,7 @@ const resetForm = () => {
     description: '',
     priority: 'medium',
     category: '其他',
-    dueDate: formatDateTimeForInput()
+    dueDate: ''
   }
 }
 
@@ -374,11 +416,25 @@ const updateTodo = async (id: string, updates: Partial<Todo>) => {
   }
 }
 
-const deleteTodo = async (id: string) => {
+/** 点击待办删除按钮：弹出内联删除确认框 */
+const deleteTodo = (id: string, rect?: DOMRect) => {
+  deleteConfirmAction = 'todo'
+  deleteConfirmId = id
+  deleteConfirmMessage.value = '确定要删除该任务吗？'
+  deleteConfirmAnchor.value = rect ?? null
+  deleteConfirmVisible.value = true
+}
+
+/** 确认后真正执行待办删除 */
+async function executeTodoDelete(id: string) {
+  const todo = todos.value.find(t => t.id === id)
   await clipboardService.deleteTodo(id)
   const index = todos.value.findIndex(t => t.id === id)
   if (index > -1) {
     todos.value.splice(index, 1)
+  }
+  if (todo) {
+    await sendSystemNotification('任务已删除', `任务 "${todo.title}" 已删除`)
   }
 }
 
@@ -400,13 +456,74 @@ const changeCategory = async (id: string, category: string) => {
   }
 }
 
+/** 分类列表（含用户增删后的状态） */
+const { categories, removeCategory } = useCategories()
+
+// ===== 删除确认（DeleteConfirm 内联组件，样式/操作与便签一致）=====
+const deleteConfirmVisible = ref(false)
+const deleteConfirmMessage = ref('')
+/** 触发删除按钮的位置（供 DeleteConfirm 就近定位） */
+const deleteConfirmAnchor = ref<DOMRect | null>(null)
+let deleteConfirmAction: 'todo' | 'category' | null = null
+let deleteConfirmId: string | null = null
+
+/** 点击分类 ×：弹出内联删除确认框 */
+const handleCategoryDelete = (name: string, rect?: DOMRect) => {
+  deleteConfirmAction = 'category'
+  deleteConfirmId = name
+  deleteConfirmMessage.value = '确定要删除该分类吗？'
+  deleteConfirmAnchor.value = rect ?? null
+  deleteConfirmVisible.value = true
+}
+
+/** 确认删除：执行对应删除动作并关闭确认框 */
+const onDeleteConfirm = () => {
+  const action = deleteConfirmAction
+  const id = deleteConfirmId
+  deleteConfirmVisible.value = false
+  deleteConfirmAction = null
+  deleteConfirmId = null
+  deleteConfirmAnchor.value = null
+  if (action === 'todo' && id) void executeTodoDelete(id)
+  else if (action === 'category' && id) void executeCategoryDelete(id)
+}
+
+/** 取消删除：仅关闭确认框 */
+const onDeleteCancel = () => {
+  deleteConfirmVisible.value = false
+  deleteConfirmAction = null
+  deleteConfirmId = null
+  deleteConfirmAnchor.value = null
+}
+
+/** 确认后真正执行分类删除：持久化 + 清理使用该分类的待办（重置为剩余第一个分类） */
+async function executeCategoryDelete(name: string) {
+  const ok = await removeCategory(name)
+  if (!ok) return
+  const fallback = categories.value[0] ?? '其他'
+  for (const todo of todos.value) {
+    if (todo.category === name) {
+      todo.category = fallback
+      todo.updated_at = new Date().toString()
+      await clipboardService.updateTodo(todo)
+    }
+  }
+  if (newTodo.value.category === name) newTodo.value.category = fallback
+}
+
 const setFilter = (filter: string) => {
   currentFilter.value = filter
+  isFilterOpen.value = false
 }
 
 const setSort = (sort: string) => {
   currentSort.value = sort
+  isSortOpen.value = false
 }
+
+// 下拉展开态：仅用于控制箭头旋转方向（展开动画本身由 CSS :focus-within 驱动）
+const isFilterOpen = ref(false)
+const isSortOpen = ref(false)
 
 const fetchTodos = async () => {
   try {
@@ -417,14 +534,32 @@ const fetchTodos = async () => {
   }
 }
 
+// 发送系统原生通知（Tauri）
+const sendSystemNotification = async (title: string, body: string) => {
+  if (!isTauri()) return
+
+  try {
+    let permissionGranted = await isPermissionGranted()
+    if (!permissionGranted) {
+      const permission = await requestPermission()
+      permissionGranted = permission === 'granted'
+    }
+    if (permissionGranted) {
+      sendNotification({ title, body })
+    }
+  } catch (error) {
+    console.error('发送系统通知失败:', error)
+  }
+}
+
 // 通知检查函数，接收配置参数
-const checkDueDateNotifications = (config = notificationConfig.value) => {
+const checkDueDateNotifications = async (config = notificationConfig.value) => {
   const now = new Date()
   const oneSecondBefore = new Date(now.getTime() - config.timeWindow)
   const oneSecondAfter = new Date(now.getTime() + config.timeWindow)
 
-  todos.value.forEach(todo => {
-    if (!todo.dueDate) return
+  for (const todo of todos.value) {
+    if (!todo.dueDate) continue
 
     const dueDate = new Date(todo.dueDate)
 
@@ -432,7 +567,7 @@ const checkDueDateNotifications = (config = notificationConfig.value) => {
     if (dueDate >= oneSecondBefore && dueDate <= oneSecondAfter) {
       // 如果不允许多次通知，且已经通知过，则跳过
       if (!config.allowMultiple && notificationShown.value.has(todo.id)) {
-        return
+        continue
       }
 
       console.log('任务提醒:', todo)
@@ -442,21 +577,22 @@ const checkDueDateNotifications = (config = notificationConfig.value) => {
         notificationShown.value.add(todo.id)
       }
 
-      // 可选：显示浏览器通知
-      if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification('任务提醒', {
-          body: `任务 "${todo.title}" 即将到期！`,
-          icon: '/path/to/icon.png' // 可选：添加图标路径
-        })
-      }
+      // 发送系统原生通知
+      await sendSystemNotification('任务提醒', `任务 "${todo.title}" 即将到期！`)
     }
-  })
+  }
 }
 
 // 请求通知权限
-const requestNotificationPermission = () => {
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission()
+const requestNotificationPermission = async () => {
+  if (!isTauri()) return
+  try {
+    let permissionGranted = await isPermissionGranted()
+    if (!permissionGranted) {
+      await requestPermission()
+    }
+  } catch (error) {
+    console.error('请求通知权限失败:', error)
   }
 }
 
@@ -465,11 +601,14 @@ onMounted(async () => {
   requestNotificationPermission() // 请求通知权限
   fetchTodos()
 
+  // Ctrl+F：聚焦待办搜索框
+  window.addEventListener('focus-search', onFocusSearch)
+
   // 仅在 Tauri 桌面容器内启用轮询（Web 端无数据，避免空转）
   if (isTauri()) {
     pollTimer = setInterval(() => {
-      fetchTodos()
-      checkDueDateNotifications() // 使用默认配置
+      void fetchTodos()
+      void checkDueDateNotifications().catch((error) => console.error('通知检查失败:', error))
     }, 1000)
   }
 })
@@ -479,5 +618,11 @@ onBeforeUnmount(() => {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  window.removeEventListener('focus-search', onFocusSearch)
 })
+
+/** Ctrl+F 聚焦待办搜索框 */
+const onFocusSearch = () => {
+  nextTick(() => todoSearchInput.value?.focus())
+}
 </script>

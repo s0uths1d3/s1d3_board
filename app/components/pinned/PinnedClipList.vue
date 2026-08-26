@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import clipboardService from '~/src/db/dbService';
 import type { PinnedClip } from '~/src/Entities';
 import { formatDate } from '~/src/utils/formatDate';
 import { findNearestInDirection } from '~/src/utils/focusNavigation';
+import DeleteConfirm from '~/components/common/DeleteConfirm.vue';
 
 /** 常用剪贴管理页：最多 10 条，瀑布流卡片，左滑删除 / 右滑置顶，时间倒序（置顶优先） */
 const clips = ref<PinnedClip[]>([]);
@@ -91,16 +92,20 @@ async function removeClip(id: number) {
   showHint('已删除');
 }
 
-// ===== 删除确认（与便签 note 一致：页面内联确认框，非独立窗口）=====
+// ===== 删除确认（DeleteConfirm 共享组件，样式/操作与便签一致）=====
 /** 待删除项（存在时显示内联确认框） */
 const deleteConfirmTarget = ref<PinnedClip | null>(null);
-const confirmOkBtn = ref<HTMLButtonElement | null>(null);
-const confirmCancelBtn = ref<HTMLButtonElement | null>(null);
+/** 触发删除按钮的位置（供 DeleteConfirm 就近定位） */
+const deleteConfirmAnchor = ref<DOMRect | null>(null);
+const deleteConfirmMessage = computed(() =>
+    deleteConfirmTarget.value?.type === 'image' ? '确定要删除该图片吗？' : '确定要删除该项吗？');
 
-/** 请求删除：弹出内联确认框 */
-function requestDelete(item: PinnedClip) {
+/** 请求删除：弹出内联确认框并记录触发位置 */
+function requestDelete(item: PinnedClip, e?: MouseEvent) {
   if (!item) return;
   deleteConfirmTarget.value = item;
+  const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null;
+  deleteConfirmAnchor.value = btn?.getBoundingClientRect() ?? null;
 }
 
 /** 确认删除 */
@@ -108,13 +113,15 @@ async function confirmDelete() {
   const target = deleteConfirmTarget.value;
   if (!target) return;
   deleteConfirmTarget.value = null;
+  deleteConfirmAnchor.value = null;
   await removeClip(target.id);
 }
 
-/** 确认框打开时默认聚焦「确定」按钮，关闭后清空 ref */
-watch(deleteConfirmTarget, (target) => {
-  if (target) nextTick(() => confirmOkBtn.value?.focus());
-});
+/** 取消删除 */
+function cancelDelete() {
+  deleteConfirmTarget.value = null;
+  deleteConfirmAnchor.value = null;
+}
 
 /** 置顶/取消置顶 */
 async function togglePin(item: PinnedClip) {
@@ -136,37 +143,10 @@ async function onKeydown(e: KeyboardEvent) {
   // 处于编辑态时，方向键/删除交给输入框处理，不拦截
   if (editingId.value != null) return;
 
-  // 删除确认框打开时：方向键/Tab 在「取消/确定」间切换焦点，Enter 触发当前按钮，Esc 取消，
-  // Delete/Backspace 忽略（避免误触发重新弹框）。键盘操作作用于确认框，不作用于列表。
+  // 删除确认框打开时：键盘操作（Enter/Esc/方向键）由 DeleteConfirm 组件统一处理，
+  // 这里直接交还控制权，避免与组件键盘监听冲突。
   if (deleteConfirmTarget.value) {
-    const ok = confirmOkBtn.value;
-    const cancel = confirmCancelBtn.value;
-    const focusOnOk = document.activeElement === ok;
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab'].includes(e.key)) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (focusOnOk) cancel?.focus();
-      else ok?.focus();
-      return;
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      e.stopPropagation();
-      if (document.activeElement === cancel) deleteConfirmTarget.value = null;
-      else void confirmDelete();
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      deleteConfirmTarget.value = null;
-      return;
-    }
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
+    return;
   }
 
   // Ctrl/Meta 组合（如 Ctrl+←/→ 切换标签）不在此处理
@@ -330,7 +310,7 @@ onUnmounted(() => {
                     </svg>
                   </button>
                   <span class="flex-1"></span>
-                  <button type="button" class="btn-soft btn-circle p-1.5 text-[rgba(176,92,92,1)]" v-tip="'删除'" @click="requestDelete(item)" @pointerdown.stop.prevent>
+                  <button type="button" class="btn-soft btn-circle p-1.5 text-[rgba(176,92,92,1)]" v-tip="'删除'" @click="requestDelete(item, $event)" @pointerdown.stop.prevent>
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14" /></svg>
                   </button>
                 </div>
@@ -341,34 +321,13 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 删除确认框（与便签 note 一致：页面内联确认，非独立窗口） -->
-    <div
-        v-if="deleteConfirmTarget"
-        role="alert"
-        class="glass-card fixed top-1/2 left-1/2 z-50 flex w-[400px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 flex-col items-center rounded-2xl p-6 shadow-float"
-    >
-      <div class="mb-4 flex w-full items-start gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-             class="mt-1 h-6 w-6 shrink-0 text-gold">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-        <div class="flex-1 font-bold text-ink">
-          确定要删除{{ deleteConfirmTarget.type === 'image' ? '该图片' : '该项' }}吗？
-        </div>
-      </div>
-      <div class="flex w-full justify-center gap-4">
-        <button
-            ref="confirmCancelBtn"
-            class="btn-soft outline-none focus:ring-2 focus:ring-gold/60"
-            @click="deleteConfirmTarget = null"
-        >取消</button>
-        <button
-            ref="confirmOkBtn"
-            class="btn-gold outline-none focus:ring-2 focus:ring-gold/60"
-            @click="confirmDelete"
-        >确定</button>
-      </div>
-    </div>
+    <!-- 删除确认框：与全局一致的 DeleteConfirm 组件（就近定位、键盘操作一致） -->
+    <DeleteConfirm
+        :visible="!!deleteConfirmTarget"
+        :message="deleteConfirmMessage"
+        :anchor="deleteConfirmAnchor"
+        @confirm="confirmDelete"
+        @cancel="cancelDelete"
+    />
   </div>
 </template>

@@ -30,6 +30,8 @@ export default defineNuxtPlugin(async (nuxtApp) => {
                             await main.hide();
                         } else {
                             await main.show();
+                            // 等待窗口/WebView2 就绪后再聚焦，避免 SetFocus 报 0x80070057
+                            await new Promise(r => setTimeout(r, 50));
                             await main.setFocus();
                         }
                     }
