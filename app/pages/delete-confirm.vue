@@ -121,8 +121,8 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="mt-4 flex w-full justify-center gap-4">
-        <button ref="confirmBtn" class="btn-gold" tabindex="-1" title="删除 (Enter)" @click="doDelete">删除</button>
-        <button ref="cancelBtn" class="btn-soft" tabindex="-1" title="取消 (Esc)" @click="cancelDelete">取消</button>
+        <button ref="confirmBtn" class="btn-gold" tabindex="-1" v-tip="'删除 (Enter)'" @click="doDelete">删除</button>
+        <button ref="cancelBtn" class="btn-soft" tabindex="-1" v-tip="'取消 (Esc)'" @click="cancelDelete">取消</button>
       </div>
     </div>
   </div>

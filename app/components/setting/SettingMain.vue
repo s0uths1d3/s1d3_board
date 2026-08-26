@@ -326,7 +326,9 @@ onMounted(async () => {
         </div>
       </div>
       <div class="w-4/5">
-        <div v-if="activeSetting">
+        <!-- 分类切换过渡：复用全局 page-curtain（淡入 + 上浮），key 驱动 -->
+        <Transition name="page-curtain" mode="out-in">
+        <div v-if="activeSetting" :key="activeSetting.title" class="min-h-[280px]">
           <!-- 快捷键设置组 -->
           <div v-if="activeSetting.type === 'shortcut'" class="flex flex-col gap-4">
             <div v-for="group in shortcutGroups" :key="group.scope">
@@ -343,7 +345,7 @@ onMounted(async () => {
                           type="button" role="switch" :aria-checked="item.enabled"
                           class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
                           :class="item.enabled ? 'bg-gold' : 'bg-accent'"
-                          :title="item.enabled ? '点击禁用' : '点击启用'"
+                          v-tip="item.enabled ? '点击禁用' : '点击启用'"
                           @click="toggleShortcutEnabled(item.id)"
                       >
                         <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
@@ -364,7 +366,7 @@ onMounted(async () => {
                           v-if="item.isModified"
                           type="button"
                           class="btn-soft p-2"
-                          title="重置为默认"
+                          v-tip="'重置为默认'"
                           @click="resetOne(item.id)"
                       >
                         <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -409,7 +411,7 @@ onMounted(async () => {
                       type="button" role="switch" :aria-checked="groupAllEnabled(cg)"
                       class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
                       :class="groupAllEnabled(cg) ? 'bg-gold' : 'bg-accent'"
-                      :title="groupAllEnabled(cg) ? '点击关闭该组全部' : '点击开启该组全部'"
+                      v-tip="groupAllEnabled(cg) ? '点击关闭该组全部' : '点击开启该组全部'"
                       @click="toggleGroup(cg)"
                   >
                     <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
@@ -419,7 +421,7 @@ onMounted(async () => {
                   <button
                       type="button"
                       class="btn-soft p-2"
-                      title="一键还原该组为默认"
+                      v-tip="'一键还原该组为默认'"
                       @click="resetGroup(cg)"
                   >
                     <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -438,7 +440,7 @@ onMounted(async () => {
                           type="button" role="switch" :aria-checked="item.enabled"
                           class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
                           :class="item.enabled ? 'bg-gold' : 'bg-accent'"
-                          :title="item.enabled ? '点击禁用' : '点击启用'"
+                          v-tip="item.enabled ? '点击禁用' : '点击启用'"
                           @click="toggleShortcutEnabled(item.id)"
                       >
                         <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
@@ -459,7 +461,7 @@ onMounted(async () => {
                           v-if="item.isModified"
                           type="button"
                           class="btn-soft p-2"
-                          title="重置为默认"
+                          v-tip="'重置为默认'"
                           @click="resetOne(item.id)"
                       >
                         <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -573,6 +575,7 @@ onMounted(async () => {
             </ul>
           </div>
         </div>
+        </Transition>
       </div>
     </div>
 

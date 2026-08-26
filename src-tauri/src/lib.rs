@@ -230,6 +230,39 @@ ALTER TABLE pinned_clip ADD COLUMN source TEXT;
 -- 置顶时间（置顶后按此排序置顶优先；为空表示未置顶）
 ALTER TABLE pinned_clip ADD COLUMN pinned_at TEXT;
                             "#
+                        },
+                        Migration {
+                            version: 6,
+                            description: "Create daily_stat table for permanent usage statistics",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+CREATE TABLE IF NOT EXISTS daily_stat
+(
+    stat_date       TEXT PRIMARY KEY,             -- 统计日期 YYYY-MM-DD（本地时区），一行一天
+    clip_text       INTEGER NOT NULL DEFAULT 0,  -- 新增文本剪贴数
+    clip_image      INTEGER NOT NULL DEFAULT 0,  -- 新增图片剪贴数
+    clip_use        INTEGER NOT NULL DEFAULT 0,  -- 粘贴使用次数（Enter / Ctrl+数字）
+    clip_chars      INTEGER NOT NULL DEFAULT 0,  -- 复制字符总量（文本剪贴时累加 content.length）
+    todo_added      INTEGER NOT NULL DEFAULT 0,  -- 待办新增数
+    todo_completed  INTEGER NOT NULL DEFAULT 0,  -- 待办完成数
+    todo_deleted    INTEGER NOT NULL DEFAULT 0,  -- 待办删除数
+    note_added      INTEGER NOT NULL DEFAULT 0,  -- 便签新增数
+    note_deleted    INTEGER NOT NULL DEFAULT 0,  -- 便签删除数
+    favorite_toggle INTEGER NOT NULL DEFAULT 0,  -- 收藏切换次数
+    usage_seconds   INTEGER NOT NULL DEFAULT 0,  -- 当日窗口可见+聚焦时长（秒）
+    shortcut_count  INTEGER NOT NULL DEFAULT 0,  -- 快捷键使用次数
+    tab_clip        INTEGER NOT NULL DEFAULT 0,  -- 剪贴板 Tab 访问次数
+    tab_todo        INTEGER NOT NULL DEFAULT 0,  -- 待办 Tab 访问次数
+    tab_note        INTEGER NOT NULL DEFAULT 0,  -- 便签 Tab 访问次数
+    tab_pinned      INTEGER NOT NULL DEFAULT 0,  -- 常用剪贴板 Tab 访问次数
+    tab_setting     INTEGER NOT NULL DEFAULT 0,  -- 设置 Tab 访问次数
+    tab_statistics  INTEGER NOT NULL DEFAULT 0,  -- 统计 Tab 访问次数
+    active_dawn     INTEGER NOT NULL DEFAULT 0,  -- 清晨 05:00-08:59 操作次数
+    active_day      INTEGER NOT NULL DEFAULT 0,  -- 白天 09:00-17:59 操作次数
+    active_evening  INTEGER NOT NULL DEFAULT 0,  -- 晚间 18:00-22:59 操作次数
+    active_night    INTEGER NOT NULL DEFAULT 0   -- 深夜 23:00-04:59 操作次数
+);
+                            "#
                         }
                     ]
                 )

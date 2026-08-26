@@ -1,6 +1,7 @@
 import Database from "@tauri-apps/plugin-sql";
 import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from 'tauri-plugin-clipboard-api';
 import type { ClipboardData,Note,Todo,PinnedClip } from "../Entities";
+import statsService from "~/src/statistics/statsService";
 
 
 class ClipboardService {
@@ -76,6 +77,12 @@ class ClipboardService {
                 [content, 'T', type, now, now]
             );
             console.log(`New ${type} record inserted:`, result);
+            // 统计埋点（fire-and-forget）：插入新文本/图片剪贴 +1；文本额外累加字符量（图片 base64 不计入"打字量"）
+            if (type === 'text') {
+                void statsService.record({ clip_text: 1, clip_chars: content.length });
+            } else {
+                void statsService.record({ clip_image: 1 });
+            }
             // 插入新记录后按「剪贴板最大存储数量」裁剪最旧记录
             await this.trimClipboard();
         } else {
@@ -172,12 +179,16 @@ class ClipboardService {
     public async updateFavorite(id: number, value: number): Promise<void> {
         await this.ensureDbInitialized();
         await this.db!.execute("UPDATE clipboard SET is_favorite = $2 WHERE id = $1", [id, value]);
+        // 统计埋点（fire-and-forget）：收藏/取消收藏切换 +1
+        void statsService.record({ favorite_toggle: 1 });
     }
 
     public async increaseUseCount(id: number): Promise<void> {
         await this.ensureDbInitialized();
         const now = Math.floor(Date.now());
         await this.db!.execute("UPDATE clipboard SET count = count + 1, updated_at = $2 WHERE id = $1", [id, now]);
+        // 统计埋点（fire-and-forget）：粘贴使用 +1
+        void statsService.record({ clip_use: 1 });
     }
 
     public async deleteClipboardData(id: number): Promise<void> {
@@ -344,7 +355,8 @@ class ClipboardService {
             "INSERT INTO note (id,content, color, created_at, updated_at) VALUES ($1,$2, $3, $4, $5)",
             [note.id,note.content, note.color || '', now, now]
         );
-
+        // 统计埋点（fire-and-forget）：新建便签 +1
+        void statsService.record({ note_added: 1 });
     }
 
     public async updateNote(note: Note): Promise<void> {
@@ -359,6 +371,8 @@ class ClipboardService {
     public async deleteNote(noteId: string): Promise<void> {
         await this.ensureDbInitialized();
         await this.db!.execute("DELETE FROM note WHERE id = $1", [noteId]);
+        // 统计埋点（fire-and-forget）：删除便签 +1
+        void statsService.record({ note_deleted: 1 });
     }
 
     public async fetchNotes(filter: any): Promise<Note[]> {
@@ -385,6 +399,8 @@ class ClipboardService {
             "INSERT INTO todo (id,title, description, completed, priority, category, created_at, updated_at, dueDate) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             [todo.id,todo.title, todo.description || '', todo.completed, todo.priority, todo.category || '', now, now, todo.dueDate || '']
         );
+        // 统计埋点（fire-and-forget）：新建待办 +1
+        void statsService.record({ todo_added: 1 });
     }
 
     public async updateTodo(todo: Todo): Promise<void> {
@@ -399,6 +415,8 @@ class ClipboardService {
     public async deleteTodo(todoId: string): Promise<void> {
         await this.ensureDbInitialized();
         await this.db!.execute("DELETE FROM todo WHERE id = $1", [todoId]);
+        // 统计埋点（fire-and-forget）：删除待办 +1
+        void statsService.record({ todo_deleted: 1 });
     }
 
     public async fetchTodos(filter: any): Promise<Todo[]> {

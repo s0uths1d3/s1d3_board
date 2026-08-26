@@ -97,7 +97,8 @@ function onImageDblClick() {
 function showImage(newIndex: number) {
   if (!images.length) return;
   currentIndex.value = (newIndex + images.length) % images.length;
-  imgSrc.value = images[currentIndex.value];
+  const img = images[currentIndex.value];
+  if (img) imgSrc.value = img;
   applyFit();
 }
 
@@ -119,8 +120,9 @@ function applyPayload(payload: unknown) {
   if (typeof p === 'object' && Array.isArray(p.images)) {
     images = p.images;
     currentIndex.value = Math.min(Math.max(0, p.index ?? 0), Math.max(0, images.length - 1));
-    if (images[currentIndex.value]) {
-      imgSrc.value = images[currentIndex.value];
+    const img = images[currentIndex.value];
+    if (img) {
+      imgSrc.value = img;
       loading.value = false;
       applyFit();
     }
@@ -234,7 +236,7 @@ onBeforeUnmount(() => {
       <div class="no-drag flex items-center gap-2">
         <button
             class="flex h-7 w-7 items-center justify-center rounded-full text-[rgba(176,92,92,1)] transition-all duration-300 ease-soft hover:bg-[rgba(196,122,122,0.14)] hover:shadow-sm"
-            title="关闭 (Esc)"
+            v-tip="'关闭 (Esc)'"
             @click="closeViewer"
         >
           <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -272,41 +274,41 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="imgSrc" class="viewer-toolbar no-drag">
-      <button class="viewer-btn" title="上一张 (←)" :disabled="images.length <= 1" @click="prevImage">
+      <button class="viewer-btn" v-tip="'上一张 (←)'" :disabled="images.length <= 1" @click="prevImage">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M19 12H5M12 19l-7-7 7-7" />
         </svg>
       </button>
-      <button class="viewer-btn" title="下一张 (→)" :disabled="images.length <= 1" @click="nextImage">
+      <button class="viewer-btn" v-tip="'下一张 (→)'" :disabled="images.length <= 1" @click="nextImage">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 12h14M12 5l7 7-7 7" />
         </svg>
       </button>
       <span class="viewer-count">{{ currentIndex + 1 }} / {{ images.length }}</span>
-      <button class="viewer-btn" title="缩小 (-)" @click="zoom(-0.1)">
+      <button class="viewer-btn" v-tip="'缩小 (-)'" @click="zoom(-0.1)">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M5 12h14" />
         </svg>
       </button>
       <span class="viewer-scale">{{ Math.round(scale * 100) }}%</span>
-      <button class="viewer-btn" title="放大 (+)" @click="zoom(0.1)">
+      <button class="viewer-btn" v-tip="'放大 (+)'" @click="zoom(0.1)">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M5 12h14M12 5v14" />
         </svg>
       </button>
-      <button class="viewer-btn" title="向左旋转" @click="rotate(-90)">
+      <button class="viewer-btn" v-tip="'向左旋转'" @click="rotate(-90)">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
           <path d="M3 3v5h5" />
         </svg>
       </button>
-      <button class="viewer-btn" title="向右旋转 (R)" @click="rotate(90)">
+      <button class="viewer-btn" v-tip="'向右旋转 (R)'" @click="rotate(90)">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
           <path d="M21 3v5h-5" />
         </svg>
       </button>
-      <button class="viewer-btn" title="关闭 (Esc)" @click="closeViewer">
+      <button class="viewer-btn" v-tip="'关闭 (Esc)'" @click="closeViewer">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M6 6l12 12M18 6L6 18" />
         </svg>

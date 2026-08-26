@@ -10,7 +10,7 @@
         <div
             tabindex="0"
             role="button"
-            title="更改配色"
+            v-tip="'更改配色'"
             class="cursor-pointer rounded-lg p-1 text-ink-soft outline-none transition-colors hover:bg-white/40 hover:text-ink focus:outline-none"
         >
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -22,7 +22,7 @@
             <button
                 type="button"
                 @click="$emit('color-change', note.id, color.name)"
-                :title="color.label"
+                v-tip="color.label"
                 class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-ink transition-colors hover:bg-white/40"
             >
               <span class="h-3.5 w-3.5 flex-none rounded-full border border-white/50 shadow-sm" :class="color.dotClass"></span>
@@ -34,7 +34,7 @@
       <button
           type="button"
           @click="$emit('request-delete')"
-          title="删除"
+          v-tip="'删除'"
           class="rounded-lg p-1 text-[rgba(176,92,92,1)] transition-colors hover:bg-[rgba(196,122,122,0.12)]"
       >
         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

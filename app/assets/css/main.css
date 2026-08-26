@@ -86,6 +86,28 @@ body::after {
   }
 }
 
+/* ===== 统一 hover 提示气泡（v-tip 指令，替代原生 title）===== */
+.s1d3-tip {
+  position: fixed;
+  z-index: 99999;
+  max-width: 280px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: #3a342a;
+  color: #f5efe3;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid rgba(196, 167, 125, 0.45);
+  box-shadow: 0 6px 20px rgba(58, 52, 42, 0.3);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
 /* 自定义标题栏拖拽区域（Tauri 无边框窗口） */
 .drag-region {
   -webkit-app-region: drag;

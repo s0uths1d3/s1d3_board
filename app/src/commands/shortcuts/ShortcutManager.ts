@@ -1,5 +1,6 @@
 import { register, unregister, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
 import type { ShortcutConfig } from './ShortcutConfig';
+import statsService from "~/src/statistics/statsService";
 
 export class ShortcutManager {
     private localHandlers: (() => void)[] = [];
@@ -19,6 +20,8 @@ export class ShortcutManager {
                 // 未注册过则忽略
             }
             await register(config.key, async (event) => {
+                // 统计埋点（fire-and-forget）：全局快捷键命中 +1
+                void statsService.record({ shortcut_count: 1 });
                 await config.command.execute(event);
             });
             console.log(`[Global Shortcut Registered] ${config.key}`);
@@ -66,6 +69,8 @@ export class ShortcutManager {
                     e.preventDefault();
                     e.stopPropagation();
                     e.stopImmediatePropagation();
+                    // 统计埋点（fire-and-forget）：局部快捷键命中 +1
+                    void statsService.record({ shortcut_count: 1 });
                     await config.command.execute({state: 'Pressed'});
                 } else if (pressedKey === 'arrowup' || pressedKey === 'arrowdown') {
                     // 方向键即使未命中命令也阻止默认滚动，避免页面随方向键滚动

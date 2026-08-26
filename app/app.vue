@@ -15,6 +15,9 @@ import {initShortcuts, unregisterAllShortcuts} from "~/src/commands/shortcuts/In
 import clipboardService from "~/src/db/dbService";
 import {isTauri} from "~/src/utils/env";
 import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
+import statsService from "~/src/statistics/statsService";
+import { seedMockStats, isStatsEmpty } from "~/src/statistics/mockData";
+import { statsUnlocked } from "~/composables/useTabs";
 
 /** 剪贴板监听与全局快捷键只需在主窗口注册一次；
  * 子窗口（如图片查看器）跳过，避免重复监听，以及关闭子窗口时误注销主窗口的全局快捷键。 */
@@ -152,10 +155,44 @@ onMounted(async () => {
 
   // 失焦自动隐藏（后台驻留模式）
   await setupAutoHideOnBlur();
+
+  // ===== 统计模块（§7.9 / §14.8）=====
+  // 使用时长跟踪（30s 结算一次，增量进入 pending 累加器，§4.5）
+  statsService.startUsageTracking();
+  // 退出前强制落库 pending（防崩溃/强制退出丢失当日未落库数据，§14.1.1）
+  window.addEventListener('beforeunload', flushStatsOnExit);
+  if (isTauri()) {
+    getCurrentWindow().onCloseRequested(() => {
+      void statsService.flush();
+    });
+  }
+  // 统计 Tab 显示门槛判定：轻量查询（仅 COUNT/SUM 两列），满足后置位解锁（§7.9 / §14.8）。
+  // 未解锁且统计表为空（全新环境）时，生成演示数据以展示统计功能；之后重新判定。
+  try {
+    let unlocked = await statsService.isStatsUnlocked();
+    if (!unlocked) {
+      const empty = await isStatsEmpty();
+      if (empty) {
+        await seedMockStats();
+      }
+      unlocked = await statsService.isStatsUnlocked();
+    }
+    if (unlocked) statsUnlocked.value = true;
+  } catch (e) {
+    console.error('统计解锁判定失败:', e);
+  }
 })
+
+/** 退出前兜底落库（§14.1.1）：pending 未落库数据不丢失 */
+async function flushStatsOnExit() {
+  await statsService.flush();
+}
 
 onBeforeUnmount(async () => {
   if (!isMainWindow()) return;
   await unregisterAllShortcuts();
+  // 停止使用时长跟踪（内部执行最后一次结算 + 落库）
+  statsService.stopUsageTracking();
+  window.removeEventListener('beforeunload', flushStatsOnExit);
 });
 </script>

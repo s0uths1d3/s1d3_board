@@ -21,13 +21,16 @@ import ContextMenu from "~/components/mainpage/ContextMenu.vue";
 import PinnedClipList from "~/components/pinned/PinnedClipList.vue";
 import { activeTab } from "~/composables/useTabs";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
+// 统计页懒加载（§14.5）：统计 Tab 非首屏，异步加载降低主窗口初始包体与内存
+import { defineAsyncComponent } from "vue";
+const StatsPage = defineAsyncComponent(() => import("~/components/statistics/StatsPage.vue"));
 
 const listElement = ref<HTMLElement | null>(null);
 /** 是否开启悬停提示窗口（tooltip），受设置页「提示窗口」开关控制 */
 const { tooltipEnabled } = useTooltipEnabled();
 const searchInput = ref<HTMLElement | null>(null);
 
-let updateInterval: NodeJS.Timeout;
+let updateInterval: ReturnType<typeof setInterval> | null = null;
 
 const highlightState = ref(true);
 const highlightContent = ref('')
@@ -51,7 +54,7 @@ watch(activeTab, () => {
 
 // ===== 各 tab 独立保存滚动位置：切换时保存当前 tab，恢复目标 tab =====
 const tabScrollPositions: Record<string, number> = {
-  clip: 0, todo: 0, note: 0, pinned: 0, setting: 0,
+  clip: 0, todo: 0, note: 0, pinned: 0, setting: 0, statistics: 0,
 };
 
 const getAppScrollContainer = () => document.getElementById('app-main');
@@ -460,7 +463,7 @@ onBeforeUnmount(async () => {
   window.removeEventListener('delete-request', onDeleteRequest);
   if (updateInterval) {
     clearInterval(updateInterval);
-    updateInterval = null as unknown as NodeJS.Timeout;
+    updateInterval = null;
   }
 });
 
@@ -780,7 +783,7 @@ async function openImageViewer(item: ClipboardData) {
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
                       :class="highlightState ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
-                      :title="highlightState ? '高亮匹配（点击关闭）' : '高亮匹配（点击开启）'"
+                      v-tip="highlightState ? '高亮匹配（点击关闭）' : '高亮匹配（点击开启）'"
                       @click="highlightState = !highlightState"
                   >
                     <svg v-if="highlightState" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -794,7 +797,7 @@ async function openImageViewer(item: ClipboardData) {
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
                       :class="filter.favorite === 1 ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
-                      :title="filter.favorite === 1 ? '仅显示收藏（点击取消）' : '仅显示收藏'"
+                      v-tip="filter.favorite === 1 ? '仅显示收藏（点击取消）' : '仅显示收藏'"
                       @click="handelFilter"
                   >
                     <svg class="h-4 w-4" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
@@ -805,7 +808,7 @@ async function openImageViewer(item: ClipboardData) {
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
                       :class="filter.type === 'image' ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
-                      :title="filter.type === 'image' ? '仅显示图片（点击取消）' : '仅显示图片'"
+                      v-tip="filter.type === 'image' ? '仅显示图片（点击取消）' : '仅显示图片'"
                       @click="handelTypeFilter"
                   >
                     <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -817,7 +820,7 @@ async function openImageViewer(item: ClipboardData) {
                   <button
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
-                      title="清空搜索"
+                      v-tip="'清空搜索'"
                       @click="highlightContent = ''"
                   >
                     <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -838,7 +841,7 @@ async function openImageViewer(item: ClipboardData) {
                 <button
                     type="button"
                     class="flex h-5 w-5 items-center justify-center rounded-full text-gold transition-colors hover:bg-gold/20"
-                    title="取消全部筛选"
+                    v-tip="'取消全部筛选'"
                     @click="filter.favorite = 0; filter.type = 'all'"
                 >
                   <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
@@ -940,6 +943,9 @@ async function openImageViewer(item: ClipboardData) {
 
             <!-- 设置 -->
             <SettingMain v-else-if="activeTab === 'setting'" />
+
+            <!-- 统计（懒加载，§14.5） -->
+            <StatsPage v-else-if="activeTab === 'statistics'" />
           </div>
         </Transition>
       </div>

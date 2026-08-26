@@ -101,11 +101,7 @@
 
             <div>
               <label class="mb-1 block text-ink-faint">截止日期</label>
-              <input
-                  v-model="newTodo.dueDate"
-                  type="datetime-local"
-                  class="rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
-              />
+              <DatePicker v-model="newTodo.dueDate" mode="datetime" placeholder="选择截止时间" class="w-48" />
             </div>
 
             <div>
@@ -215,6 +211,8 @@ import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
 import type {Todo} from '~/src/Entities'
 import {isTauri} from "~/src/utils/env"
+import statsService from "~/src/statistics/statsService"
+import DatePicker from '~/components/common/DatePicker.vue'
 
 const todos = ref<Todo[]>([])
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -359,9 +357,12 @@ const resetForm = () => {
 const toggleTodo = async (id: string) => {
   const todo = todos.value.find(t => t.id === id)
   if (todo) {
+    const completing = todo.completed === 0
     todo.completed = todo.completed === 0 ? 1 : 0
     todo.updated_at = new Date().toString()
     await clipboardService.updateTodo(todo)
+    // 统计埋点（fire-and-forget）：仅"切换为完成"时 +1
+    if (completing) void statsService.record({ todo_completed: 1 })
   }
 }
 
