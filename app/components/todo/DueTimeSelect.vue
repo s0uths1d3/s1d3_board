@@ -2,15 +2,19 @@
 /**
  * 快捷截止时间选择（DueTimeSelect）
  *
- * 用于待办截止时间：因为截止时间一般选"未来一小段时间"，
- * 所以不再使用完整的年-月-日 + 时-分选择器，而是提供若干相对当前时刻的快捷选项，
- * 天然满足"只能选未来时间"的校验。
+ * 设计目标：用最少点击完成截止时间选择。
+ * - 常用日期：今天 23:59 / 明天 / 后天 / 下周（一键套用）
+ * - 常用时长：30 分钟后 / 1 小时后 / 3 小时后
+ * - 上次选择：自动记忆用户上次选用的截止时间，一键复用
+ * - 自定义：打开 DatePicker 选择具体日期 + 时间
+ * - 清除：清空截止时间
  *
  * 下拉通过 <Teleport to="body"> 挂到 body 并用 fixed 定位，
  * 避免被调用方容器（典型场景：TodoList 新建表单的 overflow-hidden 折叠动画）裁切。
  */
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import DatePicker from '~/components/common/DatePicker.vue'
+import { useDueDateMemory } from '~/composables/useDueDateMemory'
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -23,75 +27,109 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
 }>()
 
+const { lastDueDate, remember } = useDueDateMemory()
+
 const open = ref(false)
 const rootEl = ref<HTMLDivElement | null>(null)
 const panelEl = ref<HTMLUListElement | null>(null)
 const panelStyle = ref<Record<string, string>>({})
 
-const PANEL_WIDTH = 192 // w-48
+const PANEL_WIDTH = 208
+const MARGIN = 8
 
 const pad = (n: number) => String(n).padStart(2, '0')
-
-/** 快捷选项：全部基于当前时刻计算，天然位于未来 */
-const quickOptions = [
-  { label: '30 分钟后', compute: () => new Date(Date.now() + 30 * 60_000) },
-  { label: '1 小时后', compute: () => new Date(Date.now() + 60 * 60_000) },
-  { label: '3 小时后', compute: () => new Date(Date.now() + 3 * 60 * 60_000) },
-  {
-    label: '今天结束',
-    compute: () => {
-      const d = new Date()
-      d.setHours(23, 59, 0, 0)
-      return d
-    },
-  },
-  {
-    label: '明天',
-    compute: () => {
-      const d = new Date()
-      d.setDate(d.getDate() + 1)
-      return d
-    },
-  },
-  { label: '3 天后', compute: () => new Date(Date.now() + 3 * 24 * 60 * 60_000) },
-]
-
 const toISO = (d: Date) =>
   `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 
-/** 已选截止时间的友好展示：今天/明天/后天/具体日期 */
-const display = computed(() => {
-  if (!props.modelValue) return props.placeholder
-  const d = new Date(props.modelValue)
+/** 设到指定时分（用于"今天 23:59"等） */
+function atTime(base: Date, h: number, m: number) {
+  const d = new Date(base)
+  d.setHours(h, m, 0, 0)
+  return d
+}
+
+/** 常用日期快捷项（基于当前日期，默认沿用当前时刻的时:分） */
+const dateOptions = [
+  { key: 'today', label: '今天 23:59', compute: () => atTime(new Date(), 23, 59) },
+  { key: 'tomorrow', label: '明天', compute: () => { const d = new Date(); d.setDate(d.getDate() + 1); return d } },
+  { key: 'dayAfter', label: '后天', compute: () => { const d = new Date(); d.setDate(d.getDate() + 2); return d } },
+  { key: 'nextWeek', label: '下周', compute: () => { const d = new Date(); d.setDate(d.getDate() + 7); return d } },
+]
+
+/** 常用时长快捷项（相对当前时刻） */
+const durationOptions = [
+  { key: '30m', label: '30 分钟后', compute: () => new Date(Date.now() + 30 * 60_000) },
+  { key: '1h', label: '1 小时后', compute: () => new Date(Date.now() + 60 * 60_000) },
+  { key: '3h', label: '3 小时后', compute: () => new Date(Date.now() + 3 * 60 * 60_000) },
+]
+
+/** 已选 / 上次选择的友好展示：今天/明天/后天/具体日期 */
+const display = (iso: string): string => {
+  if (!iso) return props.placeholder
+  const d = new Date(iso)
   if (isNaN(d.getTime())) return props.placeholder
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   const dayDiff = Math.round(
-      (new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - todayStart) / 86_400_000,
+    (new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - todayStart) / 86_400_000,
   )
   const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`
   if (dayDiff === 0) return `今天 ${time}`
   if (dayDiff === 1) return `明天 ${time}`
   if (dayDiff === 2) return `后天 ${time}`
   return `${d.getMonth() + 1}月${d.getDate()}日 ${time}`
+}
+
+const triggerDisplay = computed(() => display(props.modelValue))
+
+/** 上次选择：存在且与当前值不同才展示 */
+const lastOption = computed(() => {
+  const v = lastDueDate.value
+  if (!v || v === props.modelValue) return null
+  const d = new Date(v)
+  if (isNaN(d.getTime())) return null
+  return { value: v, label: display(v) }
 })
 
-/** 面板定位：与触发按钮左对齐，向下展开；视口右边界自适应。 */
+/** 面板定位：与触发按钮左对齐；根据视口上下空间自动向下或向上展开，避免被窗口底部遮挡。
+ *  同时记录展开方向，便于弹入动画从触发侧生长，避免"突然跳到上方"的突兀感。 */
 function positionPanel() {
   if (!rootEl.value) return
   const rect = rootEl.value.getBoundingClientRect()
   const vw = window.innerWidth
+  const vh = window.innerHeight
   let left = rect.left
-  if (left + PANEL_WIDTH > vw - 8) left = Math.max(8, vw - PANEL_WIDTH - 8)
+  if (left + PANEL_WIDTH > vw - MARGIN) left = Math.max(MARGIN, vw - PANEL_WIDTH - MARGIN)
+
+  // 面板的实际高度优先以已渲染 DOM 测量；首次渲染前使用估算值
+  const panelRect = panelEl.value?.getBoundingClientRect()
+  const panelHeight = panelRect?.height ?? 248
+
+  const spaceBelow = vh - rect.bottom - MARGIN
+  const spaceAbove = rect.top - MARGIN
+
+  let top: number
+  let up = false
+  if (spaceBelow >= panelHeight || spaceBelow >= spaceAbove) {
+    top = rect.bottom + 4
+  } else {
+    top = rect.top - panelHeight - 4
+    up = true
+  }
+
   panelStyle.value = {
     left: `${left}px`,
-    top: `${rect.bottom + 4}px`,
+    top: `${top}px`,
     width: `${PANEL_WIDTH}px`,
+    '--pop-origin': up ? 'bottom' : 'top',
+    '--pop-shift': up ? '-6px' : '6px',
   }
 }
 
-const select = (opt: { compute: () => Date }) => {
-  emit('update:modelValue', toISO(opt.compute()))
+/** 选择一个快捷项：提交 + 记忆 + 关闭 */
+const choose = (iso: string) => {
+  emit('update:modelValue', iso)
+  void remember(iso)
   open.value = false
 }
 
@@ -100,9 +138,8 @@ const clearValue = () => {
   open.value = false
 }
 
-// ===== 自定义截止时间：关闭 DueTimeSelect 下拉，直接打开 DatePicker 面板 =====
+// ===== 自定义截止时间：关闭下拉，直接打开 DatePicker 面板 =====
 const customValue = ref('')
-/** DatePicker 面板开关（v-model:open 桥接） */
 const customPickerOpen = ref(false)
 
 const fmtDateTimeLocal = (d: Date) =>
@@ -114,30 +151,31 @@ const todayStr = computed(() => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 })
 
-/** 进入自定义视图时是否正在预填初始值（用于抑制 watch 误触发） */
 let initializingCustom = false
 
-/** 点「自定义…」：关闭 DueTimeSelect 下拉，预填 1 小时后，编程打开 DatePicker 面板 */
+/** 点「选择具体日期…」：关闭当前下拉，预填（当前已有值优先，否则使用当前时间），编程打开 DatePicker 面板。
+ *  时间部分默认取当前时分，避免每次都带上上次选择的历史时间。 */
 const openCustom = () => {
   open.value = false
   initializingCustom = true
-  customValue.value = fmtDateTimeLocal(new Date(Date.now() + 60 * 60_000))
+  const base = props.modelValue || fmtDateTimeLocal(new Date())
+  customValue.value = base
   customPickerOpen.value = true
   nextTick(() => { initializingCustom = false })
 }
 
-/** DatePicker 选完确定 → customValue 更新 → 同步给父组件 */
+/** DatePicker 选完确定 → customValue 更新 → 同步给父组件并记忆。
+ *  注意：不要在回调里检查 customPickerOpen —— Vue 监听器异步刷新，
+ *  点击「确定」时 close() 已同步把 customPickerOpen 置为 false，
+ *  异步回调读到的是 false，会导致漏发。initializingCustom 已能挡住初始预填。 */
 watch(customValue, (v) => {
   if (initializingCustom) return
   if (!v) return
-  if (!customPickerOpen.value) return
   emit('update:modelValue', v)
+  void remember(v)
   customPickerOpen.value = false
 })
 
-// 点击组件/面板外部时关闭下拉。
-// 注意：自定义视图中嵌入了 DatePicker（面板 Teleport 到 body），
-// 点击 DatePicker 面板时不应当作"外部"关闭 DueTimeSelect。
 const onDocClick = (e: MouseEvent) => {
   const t = e.target as Node
   if (rootEl.value?.contains(t) || panelEl.value?.contains(t)) return
@@ -149,14 +187,9 @@ watch(open, (v) => {
   if (v) {
     nextTick(positionPanel)
     window.addEventListener('resize', positionPanel)
-    // capture 捕获所有祖先滚动，保证面板跟随按钮位置
     document.addEventListener('scroll', positionPanel, true)
     document.addEventListener('click', onDocClick)
   } else {
-    // 注意：这里【不能】重置 customPickerOpen / customValue。
-    // openCustom 里先 open=false 再 customPickerOpen=true，
-    // 若在此处重置，会覆盖掉刚打开的 DatePicker 面板，导致"自定义"无反应。
-    // customPickerOpen 由 DatePicker 的 v-model:open 自行同步（选完/外部点击 → emit update:open）。
     window.removeEventListener('resize', positionPanel)
     document.removeEventListener('scroll', positionPanel, true)
     document.removeEventListener('click', onDocClick)
@@ -164,7 +197,6 @@ watch(open, (v) => {
 })
 
 onMounted(() => {
-  // 若初始已 open（不常见），补一次定位
   if (open.value) positionPanel()
 })
 onBeforeUnmount(() => {
@@ -185,7 +217,7 @@ onBeforeUnmount(() => {
       @keydown.space.prevent="open = !open"
       @keydown.escape="open = false"
     >
-      <span class="truncate" :class="modelValue ? 'text-ink' : 'text-ink-faint'">{{ display }}</span>
+      <span class="truncate" :class="modelValue ? 'text-ink' : 'text-ink-faint'">{{ triggerDisplay }}</span>
       <span class="flex shrink-0 items-center gap-1.5">
         <svg
           v-if="modelValue"
@@ -202,10 +234,7 @@ onBeforeUnmount(() => {
       </span>
     </label>
 
-    <!-- 隐藏的 DatePicker 容器：仅作"面板"使用，由 DueTimeSelect 编程控制开关。
-         用 inline style 强制 absolute+inset:0 覆盖触发按钮位置（DatePicker 根元素自带
-         relative inline-block，Tailwind absolute 类与其冲突不可靠），opacity 0 + pointer-events:none
-         不显示也不拦截点击，positionPanel 据此把面板定位到按钮下方。 -->
+    <!-- 隐藏的 DatePicker 容器：仅作"面板"使用，由本组件编程控制开关 -->
     <DatePicker
         v-model="customValue"
         v-model:open="customPickerOpen"
@@ -221,25 +250,53 @@ onBeforeUnmount(() => {
         <ul
           v-if="open"
           ref="panelEl"
-          class="glass-card fixed z-[9999] rounded-xl p-1 shadow-float"
+          class="glass-card fixed z-[9999] max-h-80 overflow-y-auto rounded-xl p-1.5 shadow-float"
           :style="panelStyle"
         >
-          <li v-for="opt in quickOptions" :key="opt.label">
+          <!-- 上次选择：一键复用 -->
+          <li v-if="lastOption">
+            <button
+              type="button"
+              class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm text-ink transition-colors hover:bg-secondary"
+              @click.stop="choose(lastOption!.value)"
+            >
+              <span class="truncate">上次选择</span>
+              <span class="shrink-0 text-xs text-ink-faint">{{ lastOption!.label }}</span>
+            </button>
+          </li>
+
+          <!-- 常用日期 -->
+          <li class="px-2 pt-1.5 pb-0.5 text-xs text-ink-faint">常用日期</li>
+          <li v-for="opt in dateOptions" :key="opt.key">
             <button
               type="button"
               class="w-full rounded-md px-2 py-1.5 text-left text-sm text-ink transition-colors hover:bg-secondary"
-              @click.stop="select(opt)"
+              @click.stop="choose(toISO(opt.compute()))"
             >
               {{ opt.label }}
             </button>
           </li>
+
+          <!-- 常用时长 -->
+          <li class="px-2 pt-1.5 pb-0.5 text-xs text-ink-faint">常用时长</li>
+          <li v-for="opt in durationOptions" :key="opt.key">
+            <button
+              type="button"
+              class="w-full rounded-md px-2 py-1.5 text-left text-sm text-ink transition-colors hover:bg-secondary"
+              @click.stop="choose(toISO(opt.compute()))"
+            >
+              {{ opt.label }}
+            </button>
+          </li>
+
+          <!-- 自定义 + 清除 -->
           <li class="mt-1 border-t border-accent/60 pt-1">
             <button
               type="button"
               class="w-full rounded-md px-2 py-1.5 text-left text-sm text-gold transition-colors hover:bg-secondary"
               @click.stop="openCustom"
             >
-              自定义…
+              选择具体日期…
             </button>
           </li>
           <li v-if="modelValue">

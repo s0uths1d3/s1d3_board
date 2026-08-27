@@ -57,7 +57,7 @@
       <span v-else>双击编辑内容...</span>
     </div>
 
-    <div v-else class="flex-1 pr-14">
+    <div v-else class="flex-1">
       <textarea
           v-model="editContent"
           ref="textareaRef"

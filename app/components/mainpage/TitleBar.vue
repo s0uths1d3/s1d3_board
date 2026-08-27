@@ -64,15 +64,50 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 中部：顶层导航（窗口之上） -->
-    <nav class="no-drag flex items-center gap-1">
+    <nav class="no-drag flex items-center gap-2">
       <button
           v-for="tab in visibleTabs"
           :key="tab.key"
-          class="gold-underline rounded-lg px-3 py-1 text-xs font-medium transition-colors duration-300 ease-soft"
+          v-tip="tab.name"
+          class="gold-underline flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors duration-300 ease-soft"
           :class="activeTab === tab.key ? 'is-active text-gold' : 'text-ink-soft hover:text-ink'"
           @click="setActiveTab(tab.key)"
       >
-        {{ tab.name }}
+        <!-- 剪贴板 -->
+        <svg v-if="tab.key === 'clip'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+          <rect x="9" y="3" width="6" height="4" rx="1" />
+          <path d="M9 12h6M9 16h4" />
+        </svg>
+        <!-- 待办 -->
+        <svg v-else-if="tab.key === 'todo'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="17" rx="2" />
+          <path d="M8 2v4M16 2v4M3 10h18" />
+          <path d="M9 15l2 2 4-4" />
+        </svg>
+        <!-- 便签 -->
+        <svg v-else-if="tab.key === 'note'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4a2 2 0 0 1 2-2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+          <path d="M14 2v5h5" />
+          <path d="M8 12h8M8 16h6" />
+        </svg>
+        <!-- 常用剪贴板 -->
+        <svg v-else-if="tab.key === 'pinned'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 4h6M10 4v6l-4 5a1 1 0 0 0 .8 1.6h10.4a1 1 0 0 0 .8-1.6l-4-5V4" />
+          <path d="M5 21h14" />
+        </svg>
+        <!-- 设置 -->
+        <svg v-else-if="tab.key === 'setting'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+        <!-- 统计 -->
+        <svg v-else-if="tab.key === 'statistics'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3v18h18" />
+          <rect x="7" y="12" width="3" height="6" rx="0.5" />
+          <rect x="12.5" y="8" width="3" height="10" rx="0.5" />
+          <rect x="18" y="5" width="3" height="13" rx="0.5" />
+        </svg>
       </button>
     </nav>
 

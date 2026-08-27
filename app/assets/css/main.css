@@ -218,14 +218,26 @@ body::after {
   transform: translateY(8px) scale(0.96);
 }
 
-/* 配色选中对勾：弹入 */
+/* 下拉面板：从触发侧柔和淡入 + 轻微位移放大，避免突兀感 */
 .check-pop-enter-active {
-  transition: transform 0.26s cubic-bezier(0.34, 1.56, 0.64, 1),
-              opacity 0.2s ease-out;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: var(--pop-origin, top);
 }
 .check-pop-enter-from {
   opacity: 0;
-  transform: scale(0.3);
+  transform: translateY(var(--pop-shift, 6px)) scale(0.96);
+}
+
+/* 关闭：淡出 + 轻微回缩 */
+.check-pop-leave-active {
+  transition: transform 0.18s cubic-bezier(0.4, 0, 1, 1),
+              opacity 0.16s ease-in;
+  transform-origin: var(--pop-origin, top);
+}
+.check-pop-leave-to {
+  opacity: 0;
+  transform: translateY(var(--pop-shift, 6px)) scale(0.98);
 }
 
 /* ===== 待办「添加新任务」收起/展开：grid-rows 平滑高度 + 透明度渐变 =====
@@ -236,6 +248,9 @@ body::after {
   grid-template-rows: 0fr;
   opacity: 0;
   margin-top: 0;
+  transition: grid-template-rows 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    margin-top 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .add-form-wrap.is-open {
   grid-template-rows: 1fr;
@@ -244,6 +259,7 @@ body::after {
 }
 .add-form-wrap > div {
   min-height: 0;
+  overflow: hidden;
 }
 
 /* 无障碍：尊重 prefers-reduced-motion */
@@ -289,6 +305,11 @@ body::after {
   left: auto;
   right: 0;
 }
+.dropdown-center .dropdown-content {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%) translateY(-6px) scale(0.96);
+}
 .dropdown-up .dropdown-content {
   top: auto;
   bottom: 100%;
@@ -308,6 +329,39 @@ body::after {
   transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
     transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
     visibility 0s;
+}
+/* 居中对齐的下拉，展开时保持水平居中 */
+.dropdown-center:focus-within .dropdown-content {
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+/* JS 驱动显隐的下拉：完全由 .dropdown-open 类控制，不受 :focus-within 影响
+   （置于 :focus-within 规则之后，同优先级下后写生效，保证点击按钮能真正收起） */
+.dropdown-js .dropdown-content,
+.dropdown-js:focus-within .dropdown-content {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px) scale(0.96);
+  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 0.22s;
+}
+.dropdown-js.dropdown-open .dropdown-content,
+.dropdown-js.dropdown-open:focus-within .dropdown-content {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s;
+}
+/* JS 驱动 + 水平居中组合 */
+.dropdown-center.dropdown-js .dropdown-content,
+.dropdown-center.dropdown-js:focus-within .dropdown-content {
+  transform: translateX(-50%) translateY(-6px) scale(0.96);
+}
+.dropdown-center.dropdown-js.dropdown-open .dropdown-content,
+.dropdown-center.dropdown-js.dropdown-open:focus-within .dropdown-content {
+  transform: translateX(-50%) translateY(0) scale(1);
 }
 
 /* 竖向菜单 */

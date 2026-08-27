@@ -30,17 +30,37 @@ const newName = ref('')
 const inputEl = ref<HTMLInputElement | null>(null)
 
 const PANEL_WIDTH = 160
+const MARGIN = 8
 
 function positionPanel() {
   if (!rootEl.value) return
   const rect = rootEl.value.getBoundingClientRect()
   const vw = window.innerWidth
+  const vh = window.innerHeight
   let left = rect.left
-  if (left + PANEL_WIDTH > vw - 8) left = Math.max(8, vw - PANEL_WIDTH - 8)
+  if (left + PANEL_WIDTH > vw - MARGIN) left = Math.max(MARGIN, vw - PANEL_WIDTH - MARGIN)
+
+  const panelRect = panelEl.value?.getBoundingClientRect()
+  const panelHeight = panelRect?.height ?? 220
+
+  const spaceBelow = vh - rect.bottom - MARGIN
+  const spaceAbove = rect.top - MARGIN
+
+  let top: number
+  let up = false
+  if (spaceBelow >= panelHeight || spaceBelow >= spaceAbove) {
+    top = rect.bottom + 4
+  } else {
+    top = rect.top - panelHeight - 4
+    up = true
+  }
+
   panelStyle.value = {
     left: `${left}px`,
-    top: `${rect.bottom + 4}px`,
+    top: `${top}px`,
     width: `${PANEL_WIDTH}px`,
+    '--pop-origin': up ? 'bottom' : 'top',
+    '--pop-shift': up ? '-6px' : '6px',
   }
 }
 

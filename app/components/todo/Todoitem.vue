@@ -80,8 +80,20 @@
           </p>
 
           <div class="flex items-center justify-between">
-            <div class="text-xs text-ink-faint">
-              {{ formatDate(parseInt(todo.created_at))}}
+            <div class="flex items-center gap-3 text-xs text-ink-faint">
+              <span>{{ formatDate(Number(todo.created_at) || 0)}}</span>
+              <span
+                  v-if="todo.dueDate"
+                  class="flex items-center gap-1"
+                  :class="{ 'text-[rgba(176,92,92,1)]': isOverdue && !visualCompleted }"
+                  :title="isOverdue && !visualCompleted ? '已逾期' : '截止时间'"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 7v5l3 2"></path>
+                  <circle cx="12" cy="12" r="9"></circle>
+                </svg>
+                {{ formatDueDate }}
+              </span>
             </div>
 
             <!-- 操作按钮区：relative z-10 提升 dropdown 下拉菜单的 stacking context，
@@ -98,15 +110,15 @@
               </button>
 
               <!-- 优先级选择：三层递减线表示高/中/低优先级 -->
-              <div class="dropdown dropdown-end">
-                <label tabindex="0" class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2">
+              <div class="dropdown dropdown-center dropdown-js" :class="{ 'dropdown-open': priorityOpen }" @focusout="onPriorityBlur">
+                <label tabindex="0" class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2" @click="togglePriority">
                   <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h10M4 18h6"></path>
                   </svg>
                 </label>
                 <ul tabindex="0" class="dropdown-content glass-card menu rounded-2xl p-2">
                   <li v-for="(label, priority) in priorityLabels" :key="priority">
-                    <a @click="$emit('priority-change', todo.id, priority)" class="flex items-center gap-2 rounded-lg hover:bg-secondary">
+                    <a @click="choosePriority(priority)" class="flex items-center gap-2 rounded-lg hover:bg-secondary">
                       <span class="h-2 w-2 rounded-full" :class="{
                         'bg-[rgba(176,92,92,1)]': priority === 'high',
                         'bg-gold': priority === 'medium',
@@ -119,8 +131,8 @@
               </div>
 
               <!-- 分类选择：标签图标 -->
-              <div class="dropdown dropdown-end">
-                <label tabindex="0" class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2">
+              <div class="dropdown dropdown-center dropdown-js" :class="{ 'dropdown-open': categoryOpen }" @focusout="onCategoryBlur">
+                <label tabindex="0" class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2" @click="toggleCategory">
                   <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
                   </svg>
@@ -129,7 +141,7 @@
                   <li v-for="category in categories" :key="category">
                     <div class="flex w-full items-center rounded-lg hover:bg-secondary">
                       <a
-                          @click="$emit('category-change', todo.id, category)"
+                          @click="chooseCategory(category)"
                           class="flex-1 px-2 py-1"
                       >{{ category }}</a>
                       <button
@@ -175,26 +187,41 @@
     </div>
     <div v-if="isEditing" class="mt-4 rounded-xl bg-surface-field p-4">
       <div class="space-y-3">
-        <input
-            v-model="editTitle"
-            type="text"
-            class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-            placeholder="任务标题"
-        />
+        <div class="flex items-center gap-2">
+          <input
+              v-model="editTitle"
+              type="text"
+              class="min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+              placeholder="任务标题"
+              @keyup.enter="saveEdit"
+          />
+          <button
+              type="button"
+              title="保存"
+              @click="saveEdit"
+              class="btn-gold flex h-9 w-9 shrink-0 items-center justify-center p-0"
+          >
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 13l4 4L19 7"></path>
+            </svg>
+          </button>
+          <button
+              type="button"
+              title="取消"
+              @click="cancelEdit"
+              class="btn-soft flex h-9 w-9 shrink-0 items-center justify-center p-0"
+          >
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6L6 18M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
         <textarea
             v-model="editDescription"
             class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             placeholder="任务描述（可选）"
             rows="2"
         ></textarea>
-        <div class="flex gap-2">
-          <button @click="saveEdit" class="btn-gold">
-            保存
-          </button>
-          <button @click="cancelEdit" class="btn-soft">
-            取消
-          </button>
-        </div>
       </div>
     </div>
   </div>
@@ -205,6 +232,7 @@ import { ref, computed } from 'vue'
 import type {Todo} from "~/src/Entities";
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {formatDate} from "~/src/utils/formatDate";
+import { useNow } from "~/composables/useNow";
 
 
 const props = defineProps<{
@@ -232,9 +260,45 @@ const priorityLabels = {
   low: '低'
 }
 
+/** 响应式当前时间，用于截止时间到达时自动刷新逾期状态 */
+const now = useNow()
+
 /** 分类由 useCategories 统一管理（支持用户自定义/删除） */
 const { categories, addCategory, removeCategory } = useCategories()
 const newCategory = ref('')
+
+// 优先级/分类下拉：由 JS 状态控制展开与收起（点击按钮开/关，失焦到容器外自动收起）
+const priorityOpen = ref(false)
+const categoryOpen = ref(false)
+
+const togglePriority = () => {
+  priorityOpen.value = !priorityOpen.value
+}
+
+const toggleCategory = () => {
+  categoryOpen.value = !categoryOpen.value
+}
+
+const choosePriority = (priority: Todo['priority']) => {
+  priorityOpen.value = false
+  emit('priority-change', props.todo.id, priority)
+}
+
+const chooseCategory = (category: string) => {
+  categoryOpen.value = false
+  emit('category-change', props.todo.id, category)
+}
+
+/** 焦点移出整个下拉容器（含移入非下拉元素）时收起，保证点击别处能关闭 */
+const onPriorityBlur = (e: FocusEvent) => {
+  const next = e.relatedTarget as Node | null
+  if (!next || !(e.currentTarget as HTMLElement).contains(next)) priorityOpen.value = false
+}
+
+const onCategoryBlur = (e: FocusEvent) => {
+  const next = e.relatedTarget as Node | null
+  if (!next || !(e.currentTarget as HTMLElement).contains(next)) categoryOpen.value = false
+}
 
 /** 新增分类并立即应用到当前待办 */
 const addNewCategory = async () => {
@@ -243,8 +307,7 @@ const addNewCategory = async () => {
   const ok = await addCategory(name)
   if (ok) {
     emit('category-change', props.todo.id, name)
-    // 失焦关闭 dropdown（focus-within 机制）
-    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    categoryOpen.value = false
   }
   newCategory.value = ''
 }
@@ -256,6 +319,11 @@ const onDeleteCategory = (name: string, e?: MouseEvent) => {
 }
 
 const startEditing = () => {
+  // 再次点击编辑按钮时收起编辑表单（与其它下拉按钮一致的开/关切换）
+  if (isEditing.value) {
+    isEditing.value = false
+    return
+  }
   isEditing.value = true
   editTitle.value = props.todo.title
   editDescription.value = props.todo.description || ''
@@ -286,7 +354,7 @@ const isOverdue = computed(() => {
   if (!props.todo.dueDate) return false
   const due = new Date(props.todo.dueDate)
   if (isNaN(due.getTime())) return false
-  return due.getTime() < Date.now()
+  return due.getTime() <= now.value
 })
 
 /** 视觉完成态：数据库已完成即为完成（含"逾期完成"：已完成但已过截止时间）。 */
@@ -294,4 +362,13 @@ const visualCompleted = computed(() => props.todo.completed === 1)
 
 /** 逾期完成态：已完成但已过截止时间。 */
 const overdueCompleted = computed(() => props.todo.completed === 1 && isOverdue.value)
+
+/** 截止时间友好展示：月-日 时:分（无秒），用于卡片底部显示。 */
+const formatDueDate = computed(() => {
+  if (!props.todo.dueDate) return ''
+  const d = new Date(props.todo.dueDate)
+  if (isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`
+})
 </script>

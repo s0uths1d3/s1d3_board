@@ -11,7 +11,7 @@
  * 避免被调用方容器的 backdrop-filter 层叠上下文 / overflow 裁剪 / 原生控件遮挡；
  * 打开时根据触发按钮 getBoundingClientRect 计算位置，并对视口做左右/上下自适应。
  */
-import { ref, computed, watch, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue';
 
 const props = withDefaults(defineProps<{
   modelValue: string;
@@ -178,6 +178,20 @@ function initTime() {
 
 const hourOptions = Array.from({ length: 24 }, (_, i) => pad(i));
 const minuteOptions = Array.from({ length: 60 }, (_, i) => pad(i));
+
+const hourListEl = ref<HTMLUListElement | null>(null);
+const minuteListEl = ref<HTMLUListElement | null>(null);
+
+/** 当下拉展开时，把当前选中的时间项滚动到可视区域中央，避免从 00 开始显示 */
+function scrollToActive(listEl: HTMLUListElement | null, value: number) {
+  if (!listEl) return;
+  nextTick(() => {
+    const activeBtn = listEl.querySelector(`button[data-value="${value}"]`) as HTMLElement | null;
+    if (activeBtn) {
+      activeBtn.scrollIntoView({ block: 'center', behavior: 'auto' });
+    }
+  });
+}
 
 function emitValue() {
   if (!selectedDate.value) return;
@@ -406,27 +420,30 @@ const clearable = computed(() => hasValue.value);
               <label
                 tabindex="0"
                 class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none"
+                @click="scrollToActive(hourListEl, hour)"
               >
-                <span>{{ pad(hour) }}</span>
-                <svg class="h-3 w-3 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </label>
-              <ul
-                tabindex="0"
-                class="dropdown-content glass-card menu z-10 mt-1 max-h-60 w-16 overflow-y-auto rounded-xl p-1"
-              >
-                <li v-for="h in hourOptions" :key="h">
-                  <button
-                    type="button"
-                    class="w-full rounded-md px-2 py-1 text-center text-sm text-ink hover:bg-secondary"
-                    :class="Number(h) === hour ? 'bg-gold/20 font-semibold' : ''"
-                    @click="hour = Number(h)"
-                  >
-                    {{ h }}
-                  </button>
-                </li>
-              </ul>
+                  <span>{{ pad(hour) }}</span>
+                  <svg class="h-3 w-3 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </label>
+                <ul
+                  ref="hourListEl"
+                  tabindex="0"
+                  class="dropdown-content glass-card menu z-10 max-h-60 w-16 overflow-y-auto rounded-xl p-1"
+                >
+                  <li v-for="h in hourOptions" :key="h">
+                    <button
+                      type="button"
+                      class="w-full rounded-md px-2 py-1 text-center text-sm text-ink hover:bg-secondary"
+                      :class="Number(h) === hour ? 'bg-gold/20 font-semibold' : ''"
+                      :data-value="h"
+                      @click="hour = Number(h)"
+                    >
+                      {{ h }}
+                    </button>
+                  </li>
+                </ul>
             </div>
 
             <span class="text-ink-faint">:</span>
@@ -436,27 +453,30 @@ const clearable = computed(() => hasValue.value);
               <label
                 tabindex="0"
                 class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none"
+                @click="scrollToActive(minuteListEl, minute)"
               >
-                <span>{{ pad(minute) }}</span>
-                <svg class="h-3 w-3 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </label>
-              <ul
-                tabindex="0"
-                class="dropdown-content glass-card menu z-10 mt-1 max-h-60 w-16 overflow-y-auto rounded-xl p-1"
-              >
-                <li v-for="m in minuteOptions" :key="m">
-                  <button
-                    type="button"
-                    class="w-full rounded-md px-2 py-1 text-center text-sm text-ink hover:bg-secondary"
-                    :class="Number(m) === minute ? 'bg-gold/20 font-semibold' : ''"
-                    @click="minute = Number(m)"
-                  >
-                    {{ m }}
-                  </button>
-                </li>
-              </ul>
+                  <span>{{ pad(minute) }}</span>
+                  <svg class="h-3 w-3 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </label>
+                <ul
+                  ref="minuteListEl"
+                  tabindex="0"
+                  class="dropdown-content glass-card menu z-10 max-h-60 w-16 overflow-y-auto rounded-xl p-1"
+                >
+                  <li v-for="m in minuteOptions" :key="m">
+                    <button
+                      type="button"
+                      class="w-full rounded-md px-2 py-1 text-center text-sm text-ink hover:bg-secondary"
+                      :class="Number(m) === minute ? 'bg-gold/20 font-semibold' : ''"
+                      :data-value="m"
+                      @click="minute = Number(m)"
+                    >
+                      {{ m }}
+                    </button>
+                  </li>
+                </ul>
             </div>
 
             <button
