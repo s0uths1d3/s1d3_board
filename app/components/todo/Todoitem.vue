@@ -10,7 +10,7 @@
           <label
               class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border transition-all duration-300 ease-soft hover:shadow-sm"
               :class="visualCompleted ? 'border-gold bg-gold hover:bg-gold-soft' : 'border-line bg-surface-field hover:border-gold hover:bg-secondary'"
-              title="标记完成"
+              v-tip="'标记完成'"
           >
             <input
                 type="checkbox"
@@ -35,7 +35,7 @@
           <div class="mb-1 flex items-center gap-2">
             <h3
                 class="truncate font-semibold text-ink"
-                :class="{ 'text-ink-faint line-through': visualCompleted, 'text-[rgba(176,92,92,1)]': isOverdue && !visualCompleted }"
+                :class="{ 'text-ink-faint line-through': visualCompleted, 'text-danger': isOverdue && !visualCompleted }"
             >
               <HighlightText
                   :text="todo.title"
@@ -47,9 +47,9 @@
             <span
                 class="rounded-full px-2 py-0.5 text-xs font-medium"
                 :class="{
-                'bg-[rgba(200,90,90,0.15)] text-[rgba(176,92,92,1)]': todo.priority === 'high',
-                'bg-[rgba(196,167,125,0.2)] text-gold': todo.priority === 'medium',
-                'bg-[rgba(140,170,120,0.2)] text-[#6f8a55]': todo.priority === 'low'
+                'bg-[rgba(200,90,90,0.15)] text-danger': todo.priority === 'high',
+                'bg-gold/20 text-gold': todo.priority === 'medium',
+                'bg-success/20 text-success': todo.priority === 'low'
               }"
             >
               {{ priorityLabels[todo.priority] }}
@@ -64,8 +64,8 @@
                 v-if="isOverdue"
                 class="rounded-full px-2 py-0.5 text-xs font-medium"
                 :class="overdueCompleted
-                  ? 'bg-[rgba(196,167,125,0.2)] text-gold'
-                  : 'bg-[rgba(200,90,90,0.15)] text-[rgba(176,92,92,1)]'"
+                  ? 'bg-gold/20 text-gold'
+                  : 'bg-[rgba(200,90,90,0.15)] text-danger'"
             >
               {{ overdueCompleted ? '逾期完成' : '已逾期' }}
             </span>
@@ -74,7 +74,7 @@
           <p
               v-if="todo.description"
               class="mb-2 text-sm text-ink-soft"
-              :class="{ 'text-ink-faint line-through': visualCompleted, 'text-[rgba(176,92,92,0.85)]': isOverdue }"
+              :class="{ 'text-ink-faint line-through': visualCompleted, 'text-danger/85': isOverdue }"
           >
             <HighlightText
                 :text="todo.description"
@@ -89,8 +89,8 @@
               <span
                   v-if="todo.dueDate"
                   class="flex items-center gap-1"
-                  :class="{ 'text-[rgba(176,92,92,1)]': isOverdue && !visualCompleted }"
-                  :title="isOverdue && !visualCompleted ? '已逾期' : '截止时间'"
+                  :class="{ 'text-danger': isOverdue && !visualCompleted }"
+                  v-tip="isOverdue && !visualCompleted ? '已逾期' : '截止时间'"
               >
                 <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 7v5l3 2"></path>
@@ -114,70 +114,77 @@
               </button>
 
               <!-- 优先级选择：三层递减线表示高/中/低优先级 -->
-              <div class="dropdown dropdown-center dropdown-js" :class="{ 'dropdown-open': priorityOpen }" @focusout="onPriorityBlur">
-                <label tabindex="0" class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2" @click="togglePriority">
-                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h10M4 18h6"></path>
-                  </svg>
-                </label>
-                <ul tabindex="0" class="dropdown-content glass-card menu rounded-2xl p-2">
+              <UiDropdown align="center" aria-label="优先级" panel-class="glass-card menu rounded-2xl p-2">
+                <template #trigger>
+                  <label class="btn-soft flex h-8 w-8 items-center justify-center p-2">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h10M4 18h6"></path>
+                    </svg>
+                  </label>
+                </template>
+                <ul class="menu p-2">
                   <li v-for="(label, priority) in priorityLabels" :key="priority">
                     <a @click="choosePriority(priority)" class="flex items-center gap-2 rounded-lg hover:bg-secondary">
                       <span class="h-2 w-2 rounded-full" :class="{
-                        'bg-[rgba(176,92,92,1)]': priority === 'high',
+                        'bg-danger': priority === 'high',
                         'bg-gold': priority === 'medium',
-                        'bg-[#6f8a55]': priority === 'low'
+                        'bg-success': priority === 'low'
                       }"></span>
                       {{ label }}
                     </a>
                   </li>
                 </ul>
-              </div>
+              </UiDropdown>
 
               <!-- 分类选择：标签图标 -->
-              <div class="dropdown dropdown-center dropdown-js" :class="{ 'dropdown-open': categoryOpen }" @focusout="onCategoryBlur">
-                <label tabindex="0" class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2" @click="toggleCategory">
-                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
-                  </svg>
-                </label>
-                <ul tabindex="0" class="dropdown-content glass-card menu rounded-2xl p-2">
-                  <li v-for="category in categories" :key="category">
-                    <div class="flex w-full items-center rounded-lg hover:bg-secondary">
-                      <a
-                          @click="chooseCategory(category)"
-                          class="flex-1 px-2 py-1"
-                      >{{ category }}</a>
-                      <button
-                          type="button"
-                          title="删除分类"
-                          class="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-[rgba(176,92,92,1)] transition-colors hover:bg-[rgba(196,122,122,0.12)]"
-                          @click.stop="onDeleteCategory(category, $event)"
-                      >
-                        <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                             stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M18 6L6 18M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  </li>
-                  <li class="mt-1 border-t border-accent/60 pt-1">
-                    <input
-                        v-model="newCategory"
-                        type="text"
-                        placeholder="新增分类…"
-                        maxlength="10"
-                        class="w-full rounded-lg border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-                        @keydown.enter.prevent="addNewCategory"
-                    />
-                  </li>
-                </ul>
-              </div>
+              <UiDropdown align="center" :close-on-select="false" aria-label="分类" panel-class="glass-card menu rounded-2xl p-2">
+                <template #trigger>
+                  <label class="btn-soft flex h-8 w-8 items-center justify-center p-2">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
+                    </svg>
+                  </label>
+                </template>
+                <template #default="{ close }">
+                  <ul class="menu p-2">
+                    <li v-for="category in categories" :key="category">
+                      <div class="flex w-full items-center rounded-lg hover:bg-secondary">
+                        <a
+                            @click="chooseCategory(category, close)"
+                            class="flex-1 px-2 py-1"
+                        >{{ category }}</a>
+                        <button
+                            type="button"
+                            data-dd-keep-open
+                            v-tip="'删除分类'"
+                            class="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
+                            @click.stop="onDeleteCategory(category, $event)"
+                        >
+                          <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                               stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M18 6L6 18M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    </li>
+                    <li class="mt-1 border-t border-accent/60 pt-1" data-dd-keep-open>
+                      <input
+                          v-model="newCategory"
+                          type="text"
+                          placeholder="新增分类…"
+                          maxlength="10"
+                          class="w-full rounded-lg border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                          @keydown.enter.prevent="addNewCategory(close)"
+                      />
+                    </li>
+                  </ul>
+                </template>
+              </UiDropdown>
 
               <!-- 删除按钮：红色垃圾桶 -->
               <button
                   @click="deleteTodo($event)"
-                  class="btn-soft flex h-8 w-8 items-center justify-center p-2 text-[rgba(176,92,92,1)] hover:bg-[rgba(196,122,122,0.12)]"
+                  class="btn-soft flex h-8 w-8 items-center justify-center p-2 text-danger hover:bg-danger/10"
               >
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -203,7 +210,7 @@
             />
           <button
               type="button"
-              title="保存"
+              v-tip="'保存'"
               @click="saveEdit"
               class="btn-gold flex h-9 w-9 shrink-0 items-center justify-center p-0"
           >
@@ -213,7 +220,7 @@
           </button>
           <button
               type="button"
-              title="取消"
+              v-tip="'取消'"
               @click="cancelEdit"
               class="btn-soft flex h-9 w-9 shrink-0 items-center justify-center p-0"
           >
@@ -296,47 +303,25 @@ const now = useNow()
 const { categories, addCategory, removeCategory } = useCategories()
 const newCategory = ref('')
 
-// 优先级/分类下拉：由 JS 状态控制展开与收起（点击按钮开/关，失焦到容器外自动收起）
-const priorityOpen = ref(false)
-const categoryOpen = ref(false)
-
-const togglePriority = () => {
-  priorityOpen.value = !priorityOpen.value
-}
-
-const toggleCategory = () => {
-  categoryOpen.value = !categoryOpen.value
-}
-
+// 优先级/分类下拉：UiDropdown 统一管理开关（点击开/关、外部点击与 Escape 收起）
 const choosePriority = (priority: Todo['priority']) => {
-  priorityOpen.value = false
   emit('priority-change', props.todo.id, priority)
 }
 
-const chooseCategory = (category: string) => {
-  categoryOpen.value = false
+/** 选择分类后收起面板（close 由 UiDropdown 提供） */
+const chooseCategory = (category: string, close: () => void) => {
   emit('category-change', props.todo.id, category)
+  close()
 }
 
-/** 焦点移出整个下拉容器（含移入非下拉元素）时收起，保证点击别处能关闭 */
-const onPriorityBlur = (e: FocusEvent) => {
-  const next = e.relatedTarget as Node | null
-  if (!next || !(e.currentTarget as HTMLElement).contains(next)) priorityOpen.value = false
-}
-
-const onCategoryBlur = (e: FocusEvent) => {
-  const next = e.relatedTarget as Node | null
-  if (!next || !(e.currentTarget as HTMLElement).contains(next)) categoryOpen.value = false
-}
-
-/** 新增分类并立即应用到当前待办 */
-const addNewCategory = async () => {
+/** 新增分类并立即应用到当前待办，成功后收起面板 */
+const addNewCategory = async (close: () => void) => {
   const name = newCategory.value.trim()
   if (!name) return
   const ok = await addCategory(name)
   if (ok) {
     emit('category-change', props.todo.id, name)
-    categoryOpen.value = false
+    close()
   }
   newCategory.value = ''
 }

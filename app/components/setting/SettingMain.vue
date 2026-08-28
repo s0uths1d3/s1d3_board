@@ -8,7 +8,11 @@ import clipboardService from '~/src/db/dbService';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/src/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
+import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
+import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
+import { navRows, reorderTab, persistNavConfig, setTabEnabled, statsUnlocked } from '~/composables/useTabs';
+import { useLongPressReorder } from '~/composables/useLongPressReorder';
 
 const osType = ref('');
 
@@ -27,8 +31,15 @@ interface SettingGroup {
 // 各设置项的响应式状态（直接承载值，并通过 watch 实时持久化，无需“应用”按钮）
 const apiKey = ref('');
 const maxLimit = ref('');
-const schemeOptions = ['深色', '浅色'];
-const selectedScheme = ref('深色');
+// ===== 配色：琥珀（当前暖米色）/ 跟随系统 / 浅色 / 深色，与标题栏按钮、Ctrl+Alt+C 快捷键共用同一状态 =====
+const { scheme } = useColorScheme();
+const colorSchemeOptions = COLOR_SCHEME_ORDER.map(value => ({ value, label: COLOR_SCHEME_LABELS[value] }));
+const colorSchemeLabel = computed(() => COLOR_SCHEME_LABELS[scheme.value]);
+async function selectColorScheme(value: ColorSchemeMode) {
+  if (scheme.value === value) return;
+  await setColorScheme(value);
+  showHint(`已切换为${COLOR_SCHEME_LABELS[value]}配色`);
+}
 /** 开机自启状态（系统级设置，使用 tauri autostart 插件，不存数据库） */
 const autoStartEnabled = ref(false);
 /** 初始化标志：onMounted 读取系统自启状态时跳过 watch 的 enable/disable 与提示逻辑 */
@@ -46,6 +57,20 @@ const { tooltipEnabled } = useTooltipEnabled();
 watch(tooltipEnabled, async (val) => {
   await clipboardService.setKeyValue('tooltip_enabled', val ? '1' : '0');
 });
+
+// ===== 窗口弹出位置（快捷键唤出主窗口时的落点） =====
+const { popupPositionMode } = usePopupPosition();/** 三个候选模式：光标处 / 上次打开位置 / 光标所在屏幕居中 */
+const POPUP_POSITION_OPTIONS: { value: PopupPositionMode; label: string; tip: string }[] = [
+  { value: 'cursor', label: '光标处', tip: '在鼠标光标附近弹出' },
+  { value: 'last', label: '上次位置', tip: '在上次打开（含拖动后）的位置弹出' },
+  { value: 'center', label: '屏幕中央', tip: '在光标所在屏幕居中弹出' },
+];
+/** 切换弹出位置模式并持久化（UiSegmented 回传字符串值，此处收敛为模式类型） */
+function selectPopupPosition(v: string) {
+  const mode = v as PopupPositionMode;
+  void setPopupPositionMode(mode);
+  showHint('已保存窗口弹出位置');
+}
 /** 是否开启搜索高亮，与所有搜索框共享同一状态 */
 const { searchHighlightEnabled } = useSearchHighlight();
 watch(searchHighlightEnabled, async (val) => {
@@ -58,21 +83,8 @@ watch(apiKey, async (val) => {
 watch(maxLimit, async (val) => {
   await clipboardService.setKeyValue('max_save_count', val ?? '');
 });
-watch(selectedScheme, async (val) => {
-  await clipboardService.setKeyValue('color_scheme', val ?? '');
-});
 
-/** 切换提示窗口开关并给出即时反馈 */
-const toggleTooltip = () => {
-  tooltipEnabled.value = !tooltipEnabled.value;
-  showHint(tooltipEnabled.value ? '已开启提示窗口' : '已关闭提示窗口');
-};
-
-/** 切换搜索高亮开关并给出即时反馈 */
-const toggleSearchHighlight = () => {
-  searchHighlightEnabled.value = !searchHighlightEnabled.value;
-  showHint(searchHighlightEnabled.value ? '已开启搜索高亮' : '已关闭搜索高亮');
-};
+// 提示窗口 / 搜索高亮的切换提示已在模板 @change 中内联处理
 
 // 开机自启：切换时调用系统 autostart 插件（enable/disable）
 watch(autoStartEnabled, async (val) => {
@@ -128,6 +140,11 @@ const settings: SettingGroup[] = [
     items: [],
   },
   {
+    title: '导航栏设置',
+    type: 'nav',
+    items: [],
+  },
+  {
     title: 'Api设置',
     type: 'ai_setting',
     items: [
@@ -158,13 +175,18 @@ const settings: SettingGroup[] = [
         type: 'checkbox'
       },
       {
+        label: '窗口弹出位置',
+        value: '',
+        type: 'select'
+      },
+      {
         label: '搜索高亮',
         value: '',
         type: 'checkbox'
       },
       {
         label: '配色',
-        value: selectedScheme.value,
+        value: '',
         type: 'select'
       },
       {
@@ -181,6 +203,72 @@ const activeSetting = ref(settings[0]);
 watch(activeSetting, async (val) => {
   await clipboardService.setKeyValue('setting_active_tab', val?.title ?? '');
 });
+
+// ===== 设置左侧分类 + 导航配置列表 长按拖拽排序 =====
+/** 导航配置列表的拖动状态 key */
+const navDraggingKey = ref<string | null>(null);
+const navReorder = useLongPressReorder({
+  container: '[data-nav-config-list]',
+  items: '.nav-config-item',
+  axis: 'y',
+  onReorder: (from, to) => reorderTab(from as any, to as any),
+  onDrop: () => { void persistNavConfig(); },
+  onStateChange: (k) => { navDraggingKey.value = k; },
+});
+
+/** 设置左侧分类的拖动状态（用 title 标识，因 settings 是普通数组按 title 持久化顺序） */
+const settingGroupDragging = ref<string | null>(null);
+const SETTING_GROUP_ORDER_KEY = 'setting_group_order';
+/** 左侧分类顺序（持久化）；默认按 settings 定义顺序 */
+const settingOrder = ref<string[]>(settings.map(s => s.title));
+/** 加载已保存的分类顺序 */
+async function loadSettingOrder() {
+  try {
+    const raw = await clipboardService.getKeyValue(SETTING_GROUP_ORDER_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const valid = new Set(settings.map(s => s.title));
+        settingOrder.value = [...parsed.filter((t: unknown) => typeof t === 'string' && valid.has(t)), ...settings.map(s => s.title).filter(t => !parsed.includes(t))];
+      }
+    }
+  } catch { /* 使用默认顺序 */ }
+}
+/** 按用户顺序展示左侧分类 */
+const orderedSettings = computed(() =>
+  [...settings].sort((a, b) => settingOrder.value.indexOf(a.title) - settingOrder.value.indexOf(b.title)),
+);
+const settingReorder = useLongPressReorder({
+  container: '[data-setting-nav]',
+  items: '.setting-nav-item',
+  axis: 'y',
+  onReorder: (from, to) => {
+    const a = settingOrder.value.indexOf(from);
+    const b = settingOrder.value.indexOf(to);
+    if (a < 0 || b < 0) return;
+    const order = [...settingOrder.value];
+    order.splice(a, 1);
+    order.splice(b, 0, from);
+    settingOrder.value = order;
+  },
+  onDrop: () => {
+    void clipboardService.setKeyValue(SETTING_GROUP_ORDER_KEY, JSON.stringify(settingOrder.value));
+  },
+  onStateChange: (k) => { settingGroupDragging.value = k; },
+});
+void loadSettingOrder();
+
+/** 左侧分类点击：长按拖拽结束后的 click 抑制切换（拖动 ≠ 点击） */
+function onSettingClick(setting: (typeof settings)[number]) {
+  if (settingReorder.consumeDragged()) return;
+  activeSetting.value = setting;
+}
+
+/** 导航配置行开关点击：拖拽结束后的 click 抑制切换 */
+function onNavRowToggle(row: (typeof navRows.value)[number]) {
+  if (navReorder.consumeDragged()) return;
+  setTabEnabled(row.key, !row.enabled);
+}
 
 // ===== 快捷键录制 =====
 /** 当前正在录制的快捷键 id（null 表示未在录制） */
@@ -327,12 +415,7 @@ onMounted(async () => {
   osType.value = getOsTypeFromNavigator();
   maxLimit.value = await clipboardService.getKeyValue('max_save_count');
   apiKey.value = await clipboardService.getKeyValue('api_key');
-  try {
-    const scheme = await clipboardService.getKeyValue('color_scheme');
-    if (scheme) selectedScheme.value = scheme;
-  } catch (e) {
-    // 尚未设置过配色，使用默认值
-  }
+  // 配色的读取/应用/持久化由 useColorScheme 统一负责，这里无需处理
   // 恢复上次选中的设置分类（快捷键 / Api设置 / 通用）
   try {
     const savedTab = await clipboardService.getKeyValue('setting_active_tab');
@@ -363,16 +446,26 @@ onMounted(async () => {
 <template>
   <div class="container mx-auto p-4">
     <div class="flex">
-      <div class="w-1/5 pr-4 sticky top-4 self-start">
-        <div v-for="(setting, index) in settings" :key="index" class="mb-2">
-          <button
-              class="btn-soft btn-block w-full"
-              :class="{ 'border-gold bg-secondary text-gold': activeSetting === setting }"
-              @click="activeSetting = setting"
+      <div class="w-1/5 pr-4 sticky top-4 self-start" data-setting-nav>
+        <!-- 左侧分类列表：长按 1s 可拖动调整顺序，松开自动持久化；TransitionGroup 提供平滑让位 -->
+        <TransitionGroup name="reorder-list" tag="div">
+          <div
+              v-for="setting in orderedSettings"
+              :key="setting.title"
+              class="setting-nav-item mb-2"
+              :class="settingGroupDragging === setting.title ? 'opacity-50 scale-95' : ''"
+              :data-reorder-key="setting.title"
+              @pointerdown="settingReorder.pressStart(setting.title, $event)"
           >
-            {{ setting.title }}
-          </button>
-        </div>
+            <button
+                class="btn-soft btn-block w-full"
+                :class="{ 'border-gold bg-secondary text-gold': activeSetting === setting }"
+                @click="onSettingClick(setting)"
+            >
+              {{ setting.title }}
+            </button>
+          </div>
+        </TransitionGroup>
       </div>
       <div class="w-4/5">
         <!-- 分类切换过渡：复用全局 page-curtain（淡入 + 上浮），key 驱动 -->
@@ -390,16 +483,13 @@ onMounted(async () => {
                   <div class="flex items-center justify-between gap-4">
                     <div class="flex items-center gap-3">
                       <!-- 独立启用/禁用开关 -->
-                      <button
-                          type="button" role="switch" :aria-checked="item.enabled"
-                          class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
-                          :class="item.enabled ? 'bg-gold' : 'bg-accent'"
-                          v-tip="item.enabled ? '点击禁用' : '点击启用'"
-                          @click="toggleShortcutWithHint(item.id)"
-                      >
-                        <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
-                              :class="item.enabled ? 'translate-x-[1.125rem]' : 'translate-x-0.5'"></span>
-                      </button>
+                      <UiToggleSwitch
+                          size="sm"
+                          :model-value="item.enabled"
+                          tip-on="点击禁用" tip-off="点击启用"
+                          :label="item.label"
+                          @change="toggleShortcutWithHint(item.id)"
+                      />
                       <div class="text-ink" :class="{ 'opacity-50': !item.enabled }">{{ item.label }}</div>
                     </div>
                     <div class="flex items-center gap-2">
@@ -425,7 +515,7 @@ onMounted(async () => {
                       </button>
                     </div>
                   </div>
-                  <div v-if="errorMap[item.id]" class="text-xs text-[rgba(176,92,92,1)]">
+                  <div v-if="errorMap[item.id]" class="text-xs text-danger">
                     {{ errorMap[item.id] }}
                   </div>
                 </li>
@@ -456,16 +546,13 @@ onMounted(async () => {
                 </button>
                 <div class="flex items-center gap-3">
                   <!-- 整组启用/禁用胶囊开关 -->
-                  <button
-                      type="button" role="switch" :aria-checked="groupAllEnabled(cg)"
-                      class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
-                      :class="groupAllEnabled(cg) ? 'bg-gold' : 'bg-accent'"
-                      v-tip="groupAllEnabled(cg) ? '点击关闭该组全部' : '点击开启该组全部'"
-                      @click="toggleGroup(cg)"
-                  >
-                    <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
-                          :class="groupAllEnabled(cg) ? 'translate-x-[1.125rem]' : 'translate-x-0.5'"></span>
-                  </button>
+                  <UiToggleSwitch
+                      size="sm"
+                      :model-value="groupAllEnabled(cg)"
+                      tip-on="点击关闭该组全部" tip-off="点击开启该组全部"
+                      :label="cg.title"
+                      @change="toggleGroup(cg)"
+                  />
                   <!-- 一键还原（图标按钮） -->
                   <button
                       type="button"
@@ -485,16 +572,13 @@ onMounted(async () => {
                     class="flex flex-col gap-1 border-b border-accent/50 p-4 last:border-b-0">
                   <div class="flex items-center justify-between gap-4">
                     <div class="flex items-center gap-3">
-                      <button
-                          type="button" role="switch" :aria-checked="item.enabled"
-                          class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
-                          :class="item.enabled ? 'bg-gold' : 'bg-accent'"
-                          v-tip="item.enabled ? '点击禁用' : '点击启用'"
-                          @click="toggleShortcutWithHint(item.id)"
-                      >
-                        <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
-                              :class="item.enabled ? 'translate-x-[1.125rem]' : 'translate-x-0.5'"></span>
-                      </button>
+                      <UiToggleSwitch
+                          size="sm"
+                          :model-value="item.enabled"
+                          tip-on="点击禁用" tip-off="点击启用"
+                          :label="item.label"
+                          @change="toggleShortcutWithHint(item.id)"
+                      />
                       <div class="text-ink" :class="{ 'opacity-50': !item.enabled }">{{ item.label }}</div>
                     </div>
                     <div class="flex items-center gap-2">
@@ -520,7 +604,7 @@ onMounted(async () => {
                       </button>
                     </div>
                   </div>
-                  <div v-if="errorMap[item.id]" class="text-xs text-[rgba(176,92,92,1)]">
+                  <div v-if="errorMap[item.id]" class="text-xs text-danger">
                     {{ errorMap[item.id] }}
                   </div>
                 </li>
@@ -532,8 +616,8 @@ onMounted(async () => {
             </p>
           </div>
 
-          <!-- 其他设置组 -->
-          <div v-else>
+          <!-- 其他设置组（排除导航栏设置，导航栏有独立分支） -->
+          <div v-else-if="activeSetting.type !== 'nav'">
             <ul class="glass-card rounded-2xl shadow-soft">
               <li class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
                 {{ activeSetting.title }}
@@ -550,12 +634,12 @@ onMounted(async () => {
                   <!-- 操作型设置项（如清空数据库）：二次确认 -->
                   <template v-if="item.type === 'action'">
                     <button v-if="!showClearConfirm" type="button"
-                            class="btn-soft w-full text-[rgba(176,92,92,1)]"
+                            class="btn-soft w-full text-danger"
                             @click="showClearConfirm = true">
                       清空数据库
                     </button>
                     <div v-else class="flex gap-2">
-                      <button type="button" class="btn-soft flex-1 text-[rgba(176,92,92,1)]"
+                      <button type="button" class="btn-soft flex-1 text-danger"
                               :disabled="clearing" @click="confirmClearDatabase">
                         {{ clearing ? '清空中…' : '确认清空' }}
                       </button>
@@ -575,65 +659,134 @@ onMounted(async () => {
                          placeholder="如 500"
                          class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
                          @blur="showHint('已保存最大存储数量')"/>
-                  <button
+                  <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === '开机自启'"
-                      type="button" role="switch" :aria-checked="autoStartEnabled"
-                      class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
-                      :class="autoStartEnabled ? 'bg-gold' : 'bg-accent'"
-                      @click="autoStartEnabled = !autoStartEnabled"
-                  >
-                    <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
-                          :class="autoStartEnabled ? 'translate-x-5' : 'translate-x-0.5'"></span>
-                  </button>
-                  <button
+                      v-model="autoStartEnabled"
+                      label="开机自启"
+                  />
+                  <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === '提示窗口'"
-                      type="button" role="switch" :aria-checked="tooltipEnabled"
-                      class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
-                      :class="tooltipEnabled ? 'bg-gold' : 'bg-accent'"
-                      @click="toggleTooltip"
-                  >
-                    <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
-                          :class="tooltipEnabled ? 'translate-x-5' : 'translate-x-0.5'"></span>
-                  </button>
-                  <button
+                      v-model="tooltipEnabled"
+                      tip-on="点击禁用" tip-off="点击启用"
+                      label="提示窗口"
+                      @change="showHint(tooltipEnabled ? '已开启提示窗口' : '已关闭提示窗口')"
+                  />
+                  <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === '搜索高亮'"
-                      type="button" role="switch" :aria-checked="searchHighlightEnabled"
-                      class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
-                      :class="searchHighlightEnabled ? 'bg-gold' : 'bg-accent'"
-                      @click="toggleSearchHighlight"
+                      v-model="searchHighlightEnabled"
+                      tip-on="点击禁用" tip-off="点击启用"
+                      label="搜索高亮"
+                      @change="showHint(searchHighlightEnabled ? '已开启搜索高亮' : '已关闭搜索高亮')"
+                  />
+                  <!-- 窗口弹出位置：三选一分段控件（跟随系统风格，选中金色高亮） -->
+                  <UiSegmented
+                      v-else-if="item.type === 'select' && item.label === '窗口弹出位置'"
+                      :model-value="popupPositionMode"
+                      :options="POPUP_POSITION_OPTIONS"
+                      block
+                      label="窗口弹出位置"
+                      @update:model-value="selectPopupPosition"
+                  />
+                  <!-- 配色：琥珀/跟随系统/浅色/深色，与标题栏按钮、Ctrl+Alt+C 快捷键共用同一状态 -->
+                  <UiDropdown
+                      v-else-if="item.type === 'select'"
+                      class="w-full"
+                      align="end"
+                      match-trigger-width
+                      aria-label="配色"
+                      panel-class="glass-card menu w-full rounded-2xl p-2"
                   >
-                    <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
-                          :class="searchHighlightEnabled ? 'translate-x-5' : 'translate-x-0.5'"></span>
-                  </button>
-                  <div v-else-if="item.type === 'select'" class="dropdown dropdown-end w-full">
-                    <button
-                        type="button" tabindex="0"
-                        class="btn-soft flex w-full items-center justify-between rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink"
-                    >
-                      <span>{{ selectedScheme }}</span>
-                      <svg class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="m6 9 6 6 6-6" />
-                      </svg>
-                    </button>
-                    <ul tabindex="0" class="dropdown-content glass-card menu w-full rounded-2xl p-2">
-                      <li v-for="opt in schemeOptions" :key="opt">
+                    <template #trigger="{ open }">
+                      <button type="button" tabindex="-1" class="btn-soft flex w-full items-center justify-between rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink">
+                        <span>{{ colorSchemeLabel }}</span>
+                        <svg class="h-4 w-4 opacity-60 transition-transform duration-200" :class="open ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+                    </template>
+                    <ul class="menu p-2">
+                      <li v-for="opt in colorSchemeOptions" :key="opt.value">
                         <button
                             type="button"
                             class="flex w-full items-center justify-between rounded-xl"
-                            :class="selectedScheme === opt ? 'text-gold' : ''"
-                            @click="selectedScheme = opt; showHint('已保存配色设置')"
+                            :class="scheme === opt.value ? 'text-gold' : ''"
+                            @click="selectColorScheme(opt.value)"
                         >
-                          <span>{{ opt }}</span>
-                          <svg v-if="selectedScheme === opt" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <span>{{ opt.label }}</span>
+                          <svg v-if="scheme === opt.value" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M20 6 9 17l-5-5" />
                           </svg>
                         </button>
                       </li>
                     </ul>
-                  </div>
+                  </UiDropdown>
                 </div>
               </li>
             </ul>
+          </div>
+
+          <!-- 导航栏设置：tab 顺序与显示开关（剪贴板/设置强制保留；统计受解锁门槛控制） -->
+          <div v-else-if="activeSetting.type === 'nav'" class="flex flex-col gap-4">
+            <div class="glass-card rounded-2xl shadow-soft" data-nav-config-list>
+              <TransitionGroup name="reorder-list" tag="ul">
+                <li key="__header__" class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
+                  导航栏图标 · 显示与排序（至少保留 剪贴板 / 设置）
+                </li>
+                <li
+                    v-for="row in navRows"
+                    :key="row.key"
+                    class="nav-config-item flex items-center justify-between gap-4 border-b border-accent/50 p-4 last:border-b-0 transition-all duration-200 ease-soft"
+                    :class="navDraggingKey === row.key ? 'bg-gold/10 opacity-50 scale-[0.98]' : ''"
+                    :data-reorder-key="row.key"
+                    @pointerdown="navReorder.pressStart(row.key, $event)"
+                >
+                <div class="flex items-center gap-3">
+                  <svg class="h-4 w-4 shrink-0 text-ink-faint/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 9h.01M8 15h.01M16 9h.01M16 15h.01M12 9h.01M12 15h.01" />
+                    <circle cx="8" cy="9" r="0.1" /><circle cx="8" cy="15" r="0.1" />
+                    <circle cx="12" cy="9" r="0.1" /><circle cx="12" cy="15" r="0.1" />
+                    <circle cx="16" cy="9" r="0.1" /><circle cx="16" cy="15" r="0.1" />
+                  </svg>
+                  <div class="flex flex-col">
+                    <div class="flex items-center gap-1.5 text-ink" :class="{ 'opacity-50': !row.enabled || (row.gate && !statsUnlocked) }">
+                      {{ row.name }}
+                      <svg v-if="row.locked" class="h-3.5 w-3.5 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="5" y="11" width="14" height="10" rx="2" />
+                        <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                      </svg>
+                    </div>
+                    <div v-if="row.gate && !statsUnlocked" class="text-xs text-ink-faint">
+                      解锁条件：活跃使用 ≥ 7 天 且 累计粘贴 ≥ 1000 次
+                    </div>
+                    <div v-else-if="row.locked" class="text-xs text-ink-faint">内置项，不可关闭</div>
+                  </div>
+                </div>
+                <!-- 右侧操作：内置项显示锁定图标；未解锁统计显示禁用开关；其余为可切换胶囊开关 -->
+                <svg
+                    v-if="row.locked"
+                    class="h-4 w-4 text-ink-faint/70"
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round"
+                    v-tip="'内置项，不可关闭'"
+                >
+                  <rect x="5" y="11" width="14" height="10" rx="2" />
+                  <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                </svg>
+                <UiToggleSwitch
+                    v-else
+                    :model-value="row.enabled && !(row.gate && !statsUnlocked)"
+                    :disabled="row.gate && !statsUnlocked"
+                    tip-on="点击隐藏" tip-off="点击显示"
+                    disabled-tip="未解锁，满足条件后可开启"
+                    :label="row.name"
+                    @change="onNavRowToggle(row)"
+                />
+              </li>
+              </TransitionGroup>
+            </div>
+            <p class="text-xs text-ink-faint">
+              按住图标（约 0.5 秒）后拖动即可调整导航栏顺序，松开自动保存；关闭图标后将从标题栏隐藏（内置的剪贴板与设置不可关闭）。「统计」达到解锁条件后自动出现。
+            </p>
           </div>
         </div>
         </Transition>

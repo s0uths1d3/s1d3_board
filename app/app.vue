@@ -18,6 +18,7 @@ import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
 import statsService from "~/src/statistics/statsService";
 import { seedMockStats } from "~/src/statistics/mockData";
 import { statsUnlocked } from "~/composables/useTabs";
+import { savePopupLastPosition } from "~/composables/usePopupPosition";
 
 /** 剪贴板监听与全局快捷键只需在主窗口注册一次；
  * 子窗口（如图片查看器）跳过，避免重复监听，以及关闭子窗口时误注销主窗口的全局快捷键。 */
@@ -97,6 +98,8 @@ async function tryHideMainWindow() {
       } catch { /* 忽略单窗关闭失败 */ }
     }
 
+    // 隐藏前记录主窗口位置，供「上次位置」弹出模式恢复（拖动后的新位置也能被记住）
+    await savePopupLastPosition().catch(() => {});
     await getCurrentWindow().hide();
   } catch (e) {
     console.error('主窗口失焦自动隐藏失败:', e);

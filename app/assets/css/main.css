@@ -2,12 +2,115 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 全局背景：暖色斜向渐变 + 两处大尺寸暖光晕 */
+/* ===== 配色系统 =====
+   颜色以 RGB 通道组变量定义（供 Tailwind 以 rgb(var(--x) / <alpha>) 消费），
+   三套配色：default = 琥珀（当前暖米色）/ light（标准浅色）/ dark（暖深色）。
+   切换配色 = 在 <html> 上设置 data-scheme 属性，只换变量组，组件零改动。 */
+
+:root {
+  color-scheme: light;
+  /* Tailwind 令牌（当前暖米色，即原写死值） */
+  --c-primary: 240 233 225;
+  --c-secondary: 232 224 213;
+  --c-accent: 212 201 184;
+  --c-surface: 236 225 208;
+  --c-surface-field: 246 239 227;
+  --c-line: 203 191 169;
+  --c-gold: 196 167 125;
+  --c-gold-soft: 217 195 163;
+  --c-on-gold: 255 255 255;
+  --c-ink: 74 68 56;
+  --c-ink-soft: 107 99 84;
+  --c-ink-faint: 154 144 128;
+  --c-danger: 176 92 92;
+  --c-success: 111 138 85;
+  --c-code: 45 45 45;
+  --c-shadow: 74 64 52;
+  /* 页面背景渐变三段 + 光晕 */
+  --bg-a: 250 246 242;
+  --bg-b: 245 237 228;
+  --bg-c: 235 224 212;
+  --glow-a: 196 167 125;
+  --glow-a-alpha: 0.55;
+  --glow-b: 212 201 184;
+  --glow-b-alpha: 0.6;
+  /* 玻璃拟态 */
+  --glass-bg: 255 255 255;
+  --glass-bg-alpha: 0.45;
+  --glass-border-alpha: 0.55;
+  /* v-tip 气泡 */
+  --tip-bg: 58 52 42;
+  --tip-text: 245 239 227;
+}
+
+/* 标准浅色：中性白灰基底，金色加深保证白底对比度 */
+[data-scheme='light'] {
+  color-scheme: light;
+  --c-primary: 245 246 248;
+  --c-secondary: 236 238 242;
+  --c-accent: 216 220 227;
+  --c-surface: 255 255 255;
+  --c-surface-field: 247 248 250;
+  --c-line: 207 212 220;
+  --c-gold: 169 126 79;
+  --c-gold-soft: 201 168 120;
+  --c-on-gold: 255 255 255;
+  --c-ink: 43 47 54;
+  --c-ink-soft: 86 93 104;
+  --c-ink-faint: 139 147 160;
+  --c-danger: 178 62 62;
+  --c-success: 74 124 89;
+  --c-shadow: 40 50 70;
+  --bg-a: 247 248 250;
+  --bg-b: 238 241 246;
+  --bg-c: 229 233 240;
+  --glow-a: 169 126 79;
+  --glow-a-alpha: 0.3;
+  --glow-b: 160 170 190;
+  --glow-b-alpha: 0.3;
+  --glass-bg: 255 255 255;
+  --glass-bg-alpha: 0.6;
+  --glass-border-alpha: 0.65;
+}
+
+/* 暖深色：暖褐基底 + 提亮的金色/文字；v-tip 气泡反转为浅色保证对比 */
+[data-scheme='dark'] {
+  color-scheme: dark;
+  --c-primary: 42 39 35;
+  --c-secondary: 52 48 42;
+  --c-accent: 69 64 58;
+  --c-surface: 50 46 41;
+  --c-surface-field: 60 55 49;
+  --c-line: 86 80 67;
+  --c-gold: 207 174 126;
+  --c-gold-soft: 224 198 156;
+  --c-on-gold: 58 52 42;
+  --c-ink: 236 229 216;
+  --c-ink-soft: 181 172 156;
+  --c-ink-faint: 133 125 110;
+  --c-danger: 216 118 108;
+  --c-success: 128 168 106;
+  --c-shadow: 0 0 0;
+  --bg-a: 38 35 31;
+  --bg-b: 45 41 37;
+  --bg-c: 53 48 42;
+  --glow-a: 207 174 126;
+  --glow-a-alpha: 0.14;
+  --glow-b: 120 100 70;
+  --glow-b-alpha: 0.14;
+  --glass-bg: 255 255 255;
+  --glass-bg-alpha: 0.05;
+  --glass-border-alpha: 0.08;
+  --tip-bg: 236 229 216;
+  --tip-text: 58 52 42;
+}
+
+/* 全局背景：斜向渐变 + 两处大尺寸光晕（颜色随配色切换） */
 body {
   position: relative;
   min-height: 100vh;
-  color: #4a4438;
-  background: linear-gradient(135deg, #faf6f2 0%, #f5ede4 50%, #ebe0d4 100%);
+  color: rgb(var(--c-ink));
+  background: linear-gradient(135deg, rgb(var(--bg-a)) 0%, rgb(var(--bg-b)) 50%, rgb(var(--bg-c)) 100%);
   background-attachment: fixed;
 }
 
@@ -27,7 +130,7 @@ body::before {
   height: 520px;
   top: -160px;
   right: -120px;
-  background: radial-gradient(circle, rgba(196, 167, 125, 0.55), transparent 70%);
+  background: radial-gradient(circle, rgb(var(--glow-a) / var(--glow-a-alpha)), transparent 70%);
 }
 
 body::after {
@@ -35,25 +138,25 @@ body::after {
   height: 480px;
   bottom: -180px;
   left: -140px;
-  background: radial-gradient(circle, rgba(212, 201, 184, 0.6), transparent 70%);
+  background: radial-gradient(circle, rgb(var(--glow-b) / var(--glow-b-alpha)), transparent 70%);
 }
 
 @layer components {
-  /* 玻璃拟态（导航/弹层）：保留半透明白玻璃 */
+  /* 玻璃拟态（导航/弹层）：半透明面，随配色切换透明度 */
   .glass {
-    background-color: rgba(255, 255, 255, 0.45);
+    background-color: rgb(var(--glass-bg) / var(--glass-bg-alpha));
     -webkit-backdrop-filter: blur(20px);
     backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.55);
+    border: 1px solid rgb(var(--glass-bg) / var(--glass-border-alpha));
   }
 
-  /* 非选中卡片面：比米白背景深一档的暖褐实色 + 清晰描边，提升辨识度 */
+  /* 非选中卡片面：surface 实色 + line 描边 */
   .glass-card {
-    background-color: #ece1d0;
+    background-color: rgb(var(--c-surface));
     -webkit-backdrop-filter: blur(20px);
     backdrop-filter: blur(20px);
-    border: 1px solid #cbbfa9;
-    box-shadow: 0 4px 16px rgba(74, 64, 52, 0.14);
+    border: 1px solid rgb(var(--c-line));
+    box-shadow: 0 4px 16px rgb(var(--c-shadow) / 0.14);
   }
 
   /* 金色激活指示线（导航 tab、按钮） */
@@ -82,7 +185,7 @@ body::after {
     @apply rounded-xl border border-accent px-4 py-2 text-sm font-medium text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm;
   }
   .btn-gold {
-    @apply rounded-xl bg-gold px-4 py-2 text-sm font-medium text-white transition-all duration-300 ease-soft hover:bg-gold-soft hover:shadow-float;
+    @apply rounded-xl bg-gold px-4 py-2 text-sm font-medium text-on-gold transition-all duration-300 ease-soft hover:bg-gold-soft hover:shadow-float;
   }
 }
 
@@ -93,15 +196,15 @@ body::after {
   max-width: 280px;
   padding: 5px 10px;
   border-radius: 8px;
-  background: #3a342a;
-  color: #f5efe3;
+  background: rgb(var(--tip-bg));
+  color: rgb(var(--tip-text));
   font-size: 12px;
   line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border: 1px solid rgba(196, 167, 125, 0.45);
-  box-shadow: 0 6px 20px rgba(58, 52, 42, 0.3);
+  border: 1px solid rgb(var(--c-gold) / 0.45);
+  box-shadow: 0 6px 20px rgb(var(--c-shadow) / 0.3);
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.16s cubic-bezier(0.4, 0, 0.2, 1);
@@ -164,7 +267,7 @@ body::after {
   height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(196, 167, 125, 0.5);
+  background: rgb(var(--c-gold) / 0.5);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-track {
@@ -262,6 +365,26 @@ body::after {
   overflow: hidden;
 }
 
+/* ===== 长按拖拽排序让位动画（TransitionGroup move）=====
+   reorder-nav：导航栏图标横向让位
+   reorder-list：设置分类列表纵向让位 */
+.reorder-nav-move,
+.reorder-list-move {
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.reorder-nav-enter-active,
+.reorder-nav-leave-active,
+.reorder-list-enter-active,
+.reorder-list-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.reorder-nav-enter-from,
+.reorder-nav-leave-to,
+.reorder-list-enter-from,
+.reorder-list-leave-to {
+  opacity: 0;
+}
+
 /* 无障碍：尊重 prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -278,92 +401,6 @@ body::after {
   }
 }
 
-/* ===== 替代 daisyui 组件类（纯 CSS 实现） ===== */
-
-/* 下拉菜单：点击 label（tabindex）聚焦后展开，点击外部失焦收起 */
-.dropdown {
-  position: relative;
-  display: inline-block;
-}
-.dropdown-content {
-  position: absolute;
-  z-index: 50;
-  top: 100%;
-  left: 0;
-  margin-top: 0.5rem;
-  min-width: max-content;
-  max-width: min(calc(100vw - 1.5rem), 18rem);
-  opacity: 0;
-  visibility: hidden;
-  transform-origin: top center;
-  transform: translateY(-6px) scale(0.96);
-  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    visibility 0s linear 0.22s;
-}
-.dropdown-end .dropdown-content {
-  left: auto;
-  right: 0;
-}
-.dropdown-center .dropdown-content {
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%) translateY(-6px) scale(0.96);
-}
-.dropdown-up .dropdown-content {
-  top: auto;
-  bottom: 100%;
-  margin-top: 0;
-  margin-bottom: 0.5rem;
-  transform-origin: bottom center;
-  transform: translateY(6px) scale(0.96);
-}
-.dropdown-up:focus-within .dropdown-content {
-  transform: translateY(0) scale(1);
-}
-/* 展开：淡入 + 上浮放大归位，明显的弹性渐变 */
-.dropdown:focus-within .dropdown-content {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0) scale(1);
-  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    visibility 0s;
-}
-/* 居中对齐的下拉，展开时保持水平居中 */
-.dropdown-center:focus-within .dropdown-content {
-  transform: translateX(-50%) translateY(0) scale(1);
-}
-/* JS 驱动显隐的下拉：完全由 .dropdown-open 类控制，不受 :focus-within 影响
-   （置于 :focus-within 规则之后，同优先级下后写生效，保证点击按钮能真正收起） */
-.dropdown-js .dropdown-content,
-.dropdown-js:focus-within .dropdown-content {
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-6px) scale(0.96);
-  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    visibility 0s linear 0.22s;
-}
-.dropdown-js.dropdown-open .dropdown-content,
-.dropdown-js.dropdown-open:focus-within .dropdown-content {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0) scale(1);
-  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    visibility 0s;
-}
-/* JS 驱动 + 水平居中组合 */
-.dropdown-center.dropdown-js .dropdown-content,
-.dropdown-center.dropdown-js:focus-within .dropdown-content {
-  transform: translateX(-50%) translateY(-6px) scale(0.96);
-}
-.dropdown-center.dropdown-js.dropdown-open .dropdown-content,
-.dropdown-center.dropdown-js.dropdown-open:focus-within .dropdown-content {
-  transform: translateX(-50%) translateY(0) scale(1);
-}
-
 /* 竖向菜单 */
 .menu {
   display: flex;
@@ -377,13 +414,13 @@ body::after {
   width: 100%;
   padding: 0.5rem 0.75rem;
   border-radius: 0.5rem;
-  color: #4a4438;
+  color: rgb(var(--c-ink));
   cursor: pointer;
   transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .menu li > a:hover,
 .menu li > button:hover {
-  background: #e8e0d5;
+  background: rgb(var(--c-secondary));
 }
 
 /* 列表行（剪贴板） */

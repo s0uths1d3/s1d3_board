@@ -282,7 +282,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .tooltip-view {
   /* 与主窗口一致的暖色渐变背景，作为窗口底色，避免透明透出下方主窗口的导航/控件 */
-  background: linear-gradient(135deg, #faf6f2 0%, #f5ede4 50%, #ebe0d4 100%);
+  background: linear-gradient(135deg, rgb(var(--bg-a)) 0%, rgb(var(--bg-b)) 50%, rgb(var(--bg-c)) 100%);
   width: 100vw;
   height: 100vh;
   overflow: hidden;
@@ -378,7 +378,7 @@ onBeforeUnmount(() => {
   font-size: 0.7rem;
   line-height: 1.4;
   opacity: 0.6;
-  color: #6b6354;
+  color: rgb(var(--c-ink-soft));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   /* 与主窗口一致的暖色渐变 */
-  background: linear-gradient(135deg, #faf6f2 0%, #f5ede4 50%, #ebe0d4 100%);
+  background: linear-gradient(135deg, rgb(var(--bg-a)) 0%, rgb(var(--bg-b)) 50%, rgb(var(--bg-c)) 100%);
   border-radius: 1rem;
 }
 /* 键盘操作时可见的焦点环 */

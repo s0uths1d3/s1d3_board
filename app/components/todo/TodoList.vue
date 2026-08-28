@@ -49,39 +49,43 @@
                 class="todo-search-input min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             />
 
-            <div class="dropdown dropdown-center dropdown-js" :class="{ 'dropdown-open': filterOpen }" @focusout="onFilterBlur">
-              <label tabindex="0" class="btn-soft flex cursor-pointer items-center" @click="toggleFilter">
-                {{ currentFilterLabel }}
-                <svg class="ml-1 h-4 w-4 transform transition-transform duration-200" :class="{ 'rotate-180': filterOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                </svg>
-              </label>
-              <ul tabindex="0" class="dropdown-content glass-card menu w-32 rounded-2xl p-2">
+            <UiDropdown align="center" aria-label="筛选" panel-class="glass-card menu w-32 rounded-2xl p-2">
+              <template #trigger="{ open }">
+                <label class="btn-soft flex cursor-pointer items-center">
+                  {{ currentFilterLabel }}
+                  <svg class="ml-1 h-4 w-4 transform transition-transform duration-200" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                  </svg>
+                </label>
+              </template>
+              <ul class="menu p-2">
                 <li v-for="filter in filters" :key="filter.value">
                   <a @click="setFilter(filter.value)" class="cursor-pointer rounded-lg hover:bg-secondary">{{ filter.label }}</a>
                 </li>
               </ul>
-            </div>
+            </UiDropdown>
 
-            <div class="dropdown dropdown-center dropdown-js" :class="{ 'dropdown-open': sortOpen }" @focusout="onSortBlur">
-              <label tabindex="0" class="btn-soft flex cursor-pointer items-center" @click="toggleSort">
-                排序
-                <svg class="ml-1 h-4 w-4 transform transition-transform duration-200" :class="{ 'rotate-180': sortOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"></path>
-                </svg>
-              </label>
-              <ul tabindex="0" class="dropdown-content glass-card menu w-40 rounded-2xl p-2">
+            <UiDropdown align="center" aria-label="排序" panel-class="glass-card menu w-40 rounded-2xl p-2">
+              <template #trigger="{ open }">
+                <label class="btn-soft flex cursor-pointer items-center">
+                  排序
+                  <svg class="ml-1 h-4 w-4 transform transition-transform duration-200" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"></path>
+                  </svg>
+                </label>
+              </template>
+              <ul class="menu p-2">
                 <li v-for="sort in sortOptions" :key="sort.value">
                   <a @click="setSort(sort.value)" class="cursor-pointer rounded-lg hover:bg-secondary">{{ sort.label }}</a>
                 </li>
               </ul>
-            </div>
+            </UiDropdown>
 
             <!-- 新增任务：位于搜索框最右侧，点击下拉展开表单（与原先效果一致） -->
             <button
                 @click="toggleAddForm"
                 class="btn-gold ml-auto flex h-10 items-center gap-1.5 px-3"
-                :title="showAddForm ? '收起' : '展开新增任务'"
+                v-tip="showAddForm ? '收起' : '展开新增任务'"
             >
               <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
@@ -137,7 +141,7 @@
                   <button
                       type="button"
                       @click="addTodo"
-                      title="添加任务"
+                      v-tip="'添加任务'"
                       class="btn-gold flex h-9 w-9 items-center justify-center p-0"
                       :disabled="!newTodo.title.trim()"
                   >
@@ -148,7 +152,7 @@
                   <button
                       type="button"
                       @click="resetForm"
-                      title="重置"
+                      v-tip="'重置'"
                       class="btn-soft flex h-9 w-9 items-center justify-center p-0"
                   >
                     <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -554,36 +558,13 @@ async function executeCategoryDelete(name: string) {
 
 const setFilter = (filter: string) => {
   currentFilter.value = filter
-  filterOpen.value = false
 }
 
 const setSort = (sort: string) => {
   currentSort.value = sort
-  sortOpen.value = false
 }
 
-// 筛选/排序下拉：完全由 JS 状态控制展开与收起（点击按钮开/关，失焦到容器外自动收起）
-const filterOpen = ref(false)
-const sortOpen = ref(false)
-
-const toggleFilter = () => {
-  filterOpen.value = !filterOpen.value
-}
-
-const toggleSort = () => {
-  sortOpen.value = !sortOpen.value
-}
-
-/** 焦点移出整个下拉容器（含移入非下拉元素）时收起，保证点击别处能关闭 */
-const onFilterBlur = (e: FocusEvent) => {
-  const next = e.relatedTarget as Node | null
-  if (!next || !(e.currentTarget as HTMLElement).contains(next)) filterOpen.value = false
-}
-
-const onSortBlur = (e: FocusEvent) => {
-  const next = e.relatedTarget as Node | null
-  if (!next || !(e.currentTarget as HTMLElement).contains(next)) sortOpen.value = false
-}
+// 筛选/排序下拉：UiDropdown 统一管理开关（点击开/关、外部点击与 Escape 收起、选择后自动收起）
 
 const fetchTodos = async () => {
   try {

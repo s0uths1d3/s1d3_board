@@ -416,68 +416,56 @@ const clearable = computed(() => hasValue.value);
             <span class="text-xs text-ink-faint">时间</span>
 
             <!-- 小时选择（0-23）：面板靠近视口底部，向上展开避免被屏幕裁切 -->
-            <div class="dropdown dropdown-end dropdown-up">
-              <label
-                tabindex="0"
-                class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none"
-                @click="scrollToActive(hourListEl, hour)"
-              >
+            <UiDropdown align="end" direction="up" :close-on-select="false" aria-label="小时" panel-class="glass-card menu w-16 rounded-xl p-1" @open="scrollToActive(hourListEl, hour)">
+              <template #trigger>
+                <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none">
                   <span>{{ pad(hour) }}</span>
                   <svg class="h-3 w-3 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M6 9l6 6 6-6" />
                   </svg>
                 </label>
-                <ul
-                  ref="hourListEl"
-                  tabindex="0"
-                  class="dropdown-content glass-card menu z-10 max-h-60 w-16 overflow-y-auto rounded-xl p-1"
-                >
-                  <li v-for="h in hourOptions" :key="h">
-                    <button
-                      type="button"
-                      class="w-full rounded-md px-2 py-1 text-center text-sm text-ink hover:bg-secondary"
-                      :class="Number(h) === hour ? 'bg-gold/20 font-semibold' : ''"
-                      :data-value="h"
-                      @click="hour = Number(h)"
-                    >
-                      {{ h }}
-                    </button>
-                  </li>
-                </ul>
-            </div>
+              </template>
+              <ul ref="hourListEl" class="menu max-h-60 w-16 overflow-y-auto p-1">
+                <li v-for="h in hourOptions" :key="h">
+                  <button
+                    type="button"
+                    class="w-full rounded-md px-2 py-1 text-center text-sm text-ink hover:bg-secondary"
+                    :class="Number(h) === hour ? 'bg-gold/20 font-semibold' : ''"
+                    :data-value="h"
+                    @click="hour = Number(h)"
+                  >
+                    {{ h }}
+                  </button>
+                </li>
+              </ul>
+            </UiDropdown>
 
             <span class="text-ink-faint">:</span>
 
             <!-- 分钟选择（0-59） -->
-            <div class="dropdown dropdown-end dropdown-up">
-              <label
-                tabindex="0"
-                class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none"
-                @click="scrollToActive(minuteListEl, minute)"
-              >
+            <UiDropdown align="end" direction="up" :close-on-select="false" aria-label="分钟" panel-class="glass-card menu w-16 rounded-xl p-1" @open="scrollToActive(minuteListEl, minute)">
+              <template #trigger>
+                <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none">
                   <span>{{ pad(minute) }}</span>
                   <svg class="h-3 w-3 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M6 9l6 6 6-6" />
                   </svg>
                 </label>
-                <ul
-                  ref="minuteListEl"
-                  tabindex="0"
-                  class="dropdown-content glass-card menu z-10 max-h-60 w-16 overflow-y-auto rounded-xl p-1"
-                >
-                  <li v-for="m in minuteOptions" :key="m">
-                    <button
-                      type="button"
-                      class="w-full rounded-md px-2 py-1 text-center text-sm text-ink hover:bg-secondary"
-                      :class="Number(m) === minute ? 'bg-gold/20 font-semibold' : ''"
-                      :data-value="m"
-                      @click="minute = Number(m)"
-                    >
-                      {{ m }}
-                    </button>
-                  </li>
-                </ul>
-            </div>
+              </template>
+              <ul ref="minuteListEl" class="menu max-h-60 w-16 overflow-y-auto p-1">
+                <li v-for="m in minuteOptions" :key="m">
+                  <button
+                    type="button"
+                    class="w-full rounded-md px-2 py-1 text-center text-sm text-ink hover:bg-secondary"
+                    :class="Number(m) === minute ? 'bg-gold/20 font-semibold' : ''"
+                    :data-value="m"
+                    @click="minute = Number(m)"
+                  >
+                    {{ m }}
+                  </button>
+                </li>
+              </ul>
+            </UiDropdown>
 
             <button
               type="button" class="btn-soft ml-1 px-3 py-1 text-xs"

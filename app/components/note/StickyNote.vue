@@ -36,24 +36,17 @@
             </svg>
           </button>
           <!-- 当前/全部 分段切换：仅显示数字（当前高亮位置 / 总数），无搜索时显示 — -->
-          <div class="flex h-8 shrink-0 items-center rounded-xl border border-accent p-0.5 text-xs">
-            <button
-                type="button"
-                class="rounded-lg px-2.5 py-1 tabular-nums transition-all duration-300 ease-soft"
-                :class="searchScope === 'current' ? 'bg-gold text-white shadow-sm' : 'text-ink-soft hover:text-ink'"
-                @click="searchScope = 'current'"
-            >
-              {{ matchCount > 0 ? `${currentMatchIndex + 1}/${matchCount}` : '—' }}
-            </button>
-            <button
-                type="button"
-                class="rounded-lg px-2.5 py-1 tabular-nums transition-all duration-300 ease-soft"
-                :class="searchScope === 'all' ? 'bg-gold text-white shadow-sm' : 'text-ink-soft hover:text-ink'"
-                @click="searchScope = 'all'"
-            >
-              {{ matchCount > 0 ? matchCount : '—' }}
-            </button>
-          </div>
+          <UiSegmented
+              class="h-8 shrink-0"
+              size="sm"
+              :model-value="searchScope"
+              :options="[
+                { value: 'current', label: matchCount > 0 ? `${currentMatchIndex + 1}/${matchCount}` : '—', tip: '仅在当前便签内搜索' },
+                { value: 'all', label: matchCount > 0 ? String(matchCount) : '—', tip: '在全部便签中搜索' },
+              ]"
+              label="搜索范围"
+              @update:model-value="searchScope = $event as 'current' | 'all'"
+          />
         </div>
       </div>
 

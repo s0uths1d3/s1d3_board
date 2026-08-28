@@ -6,18 +6,18 @@
   >
     <!-- 右上角工具栏：悬浮不占用内容空间；编辑态隐藏，避免遮挡 textarea -->
     <div v-if="!editing" class="absolute right-2 top-1 z-10 flex items-center gap-0.5">
-      <div class="dropdown dropdown-end">
-        <div
-            tabindex="0"
-            role="button"
-            v-tip="'更改配色'"
-            class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-ink-soft outline-none transition-colors hover:bg-white/40 hover:text-ink focus:outline-none"
-        >
-          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path>
-          </svg>
-        </div>
-        <ul tabindex="0" class="dropdown-content glass-card z-20 w-fit rounded-2xl p-1.5 shadow-float outline-none">
+      <UiDropdown align="end" aria-label="更改配色" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
+        <template #trigger>
+          <div
+              v-tip="'更改配色'"
+              class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-ink-soft outline-none transition-colors hover:bg-white/40 hover:text-ink focus:outline-none"
+          >
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path>
+            </svg>
+          </div>
+        </template>
+        <ul class="w-fit p-1.5">
           <li v-for="color in colors" :key="color.name">
             <button
                 type="button"
@@ -30,12 +30,12 @@
             </button>
           </li>
         </ul>
-      </div>
+      </UiDropdown>
       <button
           type="button"
           @click="$emit('request-delete', $event)"
           v-tip="'删除'"
-          class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-[rgba(176,92,92,1)] transition-colors hover:bg-[rgba(196,122,122,0.12)]"
+          class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-danger transition-colors hover:bg-danger/10"
       >
         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>

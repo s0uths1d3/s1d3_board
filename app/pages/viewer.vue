@@ -235,7 +235,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="no-drag flex items-center gap-2">
         <button
-            class="flex h-7 w-7 items-center justify-center rounded-full text-[rgba(176,92,92,1)] transition-all duration-300 ease-soft hover:bg-[rgba(196,122,122,0.14)] hover:shadow-sm"
+            class="flex h-7 w-7 items-center justify-center rounded-full text-danger transition-all duration-300 ease-soft hover:bg-danger/10 hover:shadow-sm"
             v-tip="'关闭 (Esc)'"
             @click="closeViewer"
         >
@@ -323,7 +323,7 @@ onBeforeUnmount(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, #faf6f2 0%, #f5ede4 50%, #ebe0d4 100%);
+  background: linear-gradient(135deg, rgb(var(--bg-a)) 0%, rgb(var(--bg-b)) 50%, rgb(var(--bg-c)) 100%);
   overflow: hidden;
   border-radius: 1rem;
 }
@@ -355,7 +355,7 @@ onBeforeUnmount(() => {
   transition: none;
 }
 .viewer-hint {
-  color: #6b6354;
+  color: rgb(var(--c-ink-soft));
   font-size: 14px;
   opacity: 0.8;
 }
@@ -378,7 +378,7 @@ onBeforeUnmount(() => {
   height: 2rem;
   width: 2rem;
   border-radius: 0.75rem;
-  color: #6b6354;
+  color: rgb(var(--c-ink-soft));
   border: 1px solid #d4c9b8;
   background: transparent;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -396,7 +396,7 @@ onBeforeUnmount(() => {
   background: transparent;
 }
 .viewer-scale {
-  color: #6b6354;
+  color: rgb(var(--c-ink-soft));
   font-size: 13px;
   min-width: 48px;
   text-align: center;

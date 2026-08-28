@@ -8,30 +8,34 @@ export default {
   ],
   theme: {
     extend: {
+      // 颜色令牌全部指向 CSS 变量（RGB 通道组，见 main.css :root / [data-scheme]），
+      // 配色切换即切换变量组；<alpha-value> 使 bg-gold/15 等透明度修饰符继续可用
       colors: {
-        primary: "#f0e9e1",
-        secondary: "#e8e0d5",
-        accent: "#d4c9b8",
-        // 非选中卡片面：比米白背景深一档的暖褐实色，提升与背景的区分度
-        surface: "#ece1d0",
-        // 卡片内层（输入框/编辑区）：比卡片面略亮的暖面，形成层次
-        "surface-field": "#f6efe3",
-        // 描边：accent 再深一档的暖褐，提供清晰轮廓
-        line: "#cbbfa9",
+        primary: "rgb(var(--c-primary) / <alpha-value>)",
+        secondary: "rgb(var(--c-secondary) / <alpha-value>)",
+        accent: "rgb(var(--c-accent) / <alpha-value>)",
+        surface: "rgb(var(--c-surface) / <alpha-value>)",
+        "surface-field": "rgb(var(--c-surface-field) / <alpha-value>)",
+        line: "rgb(var(--c-line) / <alpha-value>)",
         gold: {
-          DEFAULT: "#c4a77d",
-          soft: "#d9c3a3",
+          DEFAULT: "rgb(var(--c-gold) / <alpha-value>)",
+          soft: "rgb(var(--c-gold-soft) / <alpha-value>)",
         },
+        // 金色面上的文字色：深色配色下金色变亮，需改用深色字保证对比度
+        "on-gold": "rgb(var(--c-on-gold) / <alpha-value>)",
         ink: {
-          DEFAULT: "#4a4438",
-          soft: "#6b6354",
-          faint: "#9a9080",
+          DEFAULT: "rgb(var(--c-ink) / <alpha-value>)",
+          soft: "rgb(var(--c-ink-soft) / <alpha-value>)",
+          faint: "rgb(var(--c-ink-faint) / <alpha-value>)",
         },
-        code: "#2d2d2d",
+        // 语义色：危险（删除类按钮）/ 成功（低优先级等），随配色自适应明暗
+        danger: "rgb(var(--c-danger) / <alpha-value>)",
+        success: "rgb(var(--c-success) / <alpha-value>)",
+        code: "rgb(var(--c-code) / <alpha-value>)",
       },
       boxShadow: {
-        soft: "0 4px 16px rgba(74,64,52,0.14)",
-        float: "0 14px 36px rgba(74,64,52,0.16)",
+        soft: "0 4px 16px rgb(var(--c-shadow) / 0.14)",
+        float: "0 14px 36px rgb(var(--c-shadow) / 0.16)",
       },
       transitionTimingFunction: {
         soft: "cubic-bezier(0.4,0,0.2,1)",

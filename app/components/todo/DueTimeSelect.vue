@@ -563,10 +563,10 @@ onBeforeUnmount(() => {
                   @keydown.esc.prevent="cancelGroupRename"
                   @click.stop
                 />
-                <button type="button" title="确定" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="submitGroupName">
+                <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="submitGroupName">
                   <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                 </button>
-                <button type="button" title="取消" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelGroupRename">
+                <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelGroupRename">
                   <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                 </button>
               </div>
@@ -598,10 +598,10 @@ onBeforeUnmount(() => {
                   @keydown.esc.prevent="cancelGroupRename"
                   @click.stop
                 />
-                <button type="button" title="确定" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="submitGroupName">
+                <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="submitGroupName">
                   <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                 </button>
-                <button type="button" title="取消" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelGroupRename">
+                <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelGroupRename">
                   <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                 </button>
               </li>
@@ -621,10 +621,10 @@ onBeforeUnmount(() => {
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" title="确定" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" title="取消" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -656,10 +656,10 @@ onBeforeUnmount(() => {
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" title="确定" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" title="取消" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -686,10 +686,10 @@ onBeforeUnmount(() => {
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" title="确定" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" title="取消" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -720,10 +720,10 @@ onBeforeUnmount(() => {
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" title="确定" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" title="取消" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -750,10 +750,10 @@ onBeforeUnmount(() => {
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" title="确定" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" title="取消" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -784,10 +784,10 @@ onBeforeUnmount(() => {
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" title="确定" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" title="取消" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -830,7 +830,7 @@ onBeforeUnmount(() => {
           <li v-if="modelValue">
             <button
               type="button"
-              class="w-full rounded-md px-2 py-1.5 text-left text-sm text-[rgba(176,92,92,1)] transition-colors hover:bg-[rgba(196,122,122,0.12)]"
+              class="w-full rounded-md px-2 py-1.5 text-left text-sm text-danger transition-colors hover:bg-danger/10"
               @click.stop="clearValue"
             >
               清除截止时间

@@ -78,7 +78,7 @@ onBeforeUnmount(() => {
         :key="i"
         type="button"
         class="flex w-full items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-left text-sm transition-colors duration-200 ease-soft"
-        :class="item.danger ? 'text-[rgba(176,92,92,1)] hover:bg-[rgba(176,92,92,0.12)]' : 'text-ink hover:bg-secondary'"
+        :class="item.danger ? 'text-danger hover:bg-danger/10' : 'text-ink hover:bg-secondary'"
         @click.stop="item.action(); close()"
       >
         {{ item.label }}

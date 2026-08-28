@@ -1,6 +1,7 @@
 import {getCurrentWindow} from '@tauri-apps/api/window';
 import {getCurrentWebview} from '@tauri-apps/api/webview';
 import type {Command} from '../Command';
+import {applyPopupPosition, savePopupLastPosition} from '~/composables/usePopupPosition';
 
 export class ToggleWindowCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {
@@ -10,8 +11,12 @@ export class ToggleWindowCommand implements Command {
         try {
             const visible = await win.isVisible();
             if (visible) {
+                // 隐藏前记录当前位置（含用户拖动过的新位置），供「上次位置」模式恢复
+                await savePopupLastPosition().catch(() => {});
                 await win.hide();
             } else {
+                // 按设置的弹出位置模式定位（光标处 / 上次位置 / 屏幕中央）后再显示
+                await applyPopupPosition().catch(() => {});
                 await win.show();
 
                 // 等待窗口/WebView2 完成显示后再聚焦，避免对未就绪的 webview

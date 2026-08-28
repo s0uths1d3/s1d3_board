@@ -208,7 +208,7 @@ onUnmounted(() => {
 <template>
   <div id="pinned-clip-root" class="mx-auto max-w-6xl p-4">
     <div class="rounded-2xl p-4">
-      <p v-if="errorMsg" class="mb-2 text-sm text-[rgba(176,92,92,1)]">{{ errorMsg }}</p>
+      <p v-if="errorMsg" class="mb-2 text-sm text-danger">{{ errorMsg }}</p>
       <p v-if="loading" class="mb-2 text-sm text-ink-faint">加载中…</p>
       <p v-if="!loading && clips.length === 0" class="mb-2 text-sm text-ink-faint">
         暂无常用剪贴。可在剪贴板列表项右键「添加到常用剪贴」。
@@ -310,7 +310,7 @@ onUnmounted(() => {
                     </svg>
                   </button>
                   <span class="flex-1"></span>
-                  <button type="button" class="btn-soft btn-circle p-1.5 text-[rgba(176,92,92,1)]" v-tip="'删除'" @click="requestDelete(item, $event)" @pointerdown.stop.prevent>
+                  <button type="button" class="btn-soft btn-circle p-1.5 text-danger" v-tip="'删除'" @click="requestDelete(item, $event)" @pointerdown.stop.prevent>
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14" /></svg>
                   </button>
                 </div>
