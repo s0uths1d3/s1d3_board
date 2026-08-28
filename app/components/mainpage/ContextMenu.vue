@@ -69,7 +69,7 @@ onBeforeUnmount(() => {
     <div
       v-if="visible"
       ref="menuRef"
-      class="fixed z-[100] min-w-40 rounded-2xl border border-accent bg-surface-field/95 p-1.5 shadow-float backdrop-blur"
+      class="fixed z-[99999] min-w-40 rounded-2xl border border-accent bg-surface-field/95 p-1.5 shadow-float backdrop-blur"
       :style="menuStyle"
       @contextmenu.prevent
     >
@@ -79,7 +79,7 @@ onBeforeUnmount(() => {
         type="button"
         class="flex w-full items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-left text-sm transition-colors duration-200 ease-soft"
         :class="item.danger ? 'text-[rgba(176,92,92,1)] hover:bg-[rgba(176,92,92,0.12)]' : 'text-ink hover:bg-secondary'"
-        @click="item.action(); close()"
+        @click.stop="item.action(); close()"
       >
         {{ item.label }}
       </button>

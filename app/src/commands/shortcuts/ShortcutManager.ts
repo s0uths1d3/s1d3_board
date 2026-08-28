@@ -35,7 +35,9 @@ export class ShortcutManager {
                 const repeatableKeys = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'];
                 if (e.repeat && !repeatableKeys.includes(pressedKey)) return;
 
-                const ctrl = key.includes('ctrl') || key.includes('command');
+                // 注意：'Control+X' 小写后是 'control+x'，不含子串 'ctrl'，
+                // 必须同时匹配 'ctrl' 与 'control'（以及 mac 的 'command'），否则 Ctrl+Enter 等键永远无法命中。
+                const ctrl = key.includes('ctrl') || key.includes('control') || key.includes('command');
                 const alt = key.includes('alt');
                 const shift = key.includes('shift');
 

@@ -16,7 +16,7 @@ import clipboardService from "~/src/db/dbService";
 import {isTauri} from "~/src/utils/env";
 import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
 import statsService from "~/src/statistics/statsService";
-import { seedMockStats, isStatsEmpty } from "~/src/statistics/mockData";
+import { seedMockStats } from "~/src/statistics/mockData";
 import { statsUnlocked } from "~/composables/useTabs";
 
 /** 剪贴板监听与全局快捷键只需在主窗口注册一次；
@@ -167,14 +167,12 @@ onMounted(async () => {
     });
   }
   // 统计 Tab 显示门槛判定：轻量查询（仅 COUNT/SUM 两列），满足后置位解锁（§7.9 / §14.8）。
-  // 未解锁且统计表为空（全新环境）时，生成演示数据以展示统计功能；之后重新判定。
+  // 未解锁时在后端直接导入演示数据（重建 daily_stat），以便验证统计功能；之后重新判定。
+  // 说明：导入逻辑（buildMockDays / seedMockStats）在后端数据库层执行，不依赖前端交互按钮。
   try {
     let unlocked = await statsService.isStatsUnlocked();
     if (!unlocked) {
-      const empty = await isStatsEmpty();
-      if (empty) {
-        await seedMockStats();
-      }
+      await seedMockStats(true);
       unlocked = await statsService.isStatsUnlocked();
     }
     if (unlocked) statsUnlocked.value = true;

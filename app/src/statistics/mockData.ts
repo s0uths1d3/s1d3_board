@@ -46,7 +46,7 @@ interface MockDay {
   row: Record<string, number>;
 }
 
-function buildMockDays(): MockDay[] {
+export function buildMockDays(): MockDay[] {
   const rand = mulberry32(20260826);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -93,6 +93,7 @@ function buildMockDays(): MockDay[] {
         todo_added: todoAdded,
         todo_completed: todoCompleted,
         todo_deleted: todoDeleted,
+        todo_chars: rint(rand, 200, 1200),
         note_added: noteAdded,
         note_deleted: noteDeleted,
         favorite_toggle: favToggle,
@@ -140,14 +141,21 @@ const MOCK_CLIP_TEXTS: string[] = [
 
 /**
  * 生成演示数据。
- * @returns true = 已生成；false = 已有统计数据（跳过，不覆盖）
+ * @param force 是否强制重建：true 时清空 daily_stat 后重新生成（用于手动添加测试数据验证统计功能）；
+ *              默认 false 保持幂等——已有真实统计数据则跳过，绝不覆盖。
+ * @returns true = 已生成；false = 跳过（非强制且已有数据）
  */
-export async function seedMockStats(): Promise<boolean> {
+export async function seedMockStats(force = false): Promise<boolean> {
   const db = await Database.load('sqlite:s1d3_board.db');
 
-  // 幂等：已有真实统计数据则跳过
-  const rows: any[] = await db.select('SELECT COUNT(*) AS cnt FROM daily_stat');
-  if ((rows?.[0]?.cnt ?? 0) > 0) return false;
+  // 幂等：已有真实统计数据则跳过（force 时强制重建）
+  if (!force) {
+    const rows: any[] = await db.select('SELECT COUNT(*) AS cnt FROM daily_stat');
+    if ((rows?.[0]?.cnt ?? 0) > 0) return false;
+  } else {
+    // 强制模式：清空统计表重建，确保演示数据完整可复现
+    await db.execute('DELETE FROM daily_stat');
+  }
 
   const days = buildMockDays();
 

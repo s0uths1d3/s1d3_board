@@ -246,6 +246,7 @@ CREATE TABLE IF NOT EXISTS daily_stat
     todo_added      INTEGER NOT NULL DEFAULT 0,  -- 待办新增数
     todo_completed  INTEGER NOT NULL DEFAULT 0,  -- 待办完成数
     todo_deleted    INTEGER NOT NULL DEFAULT 0,  -- 待办删除数
+    todo_chars      INTEGER NOT NULL DEFAULT 0,  -- 待办内容量（新建时累加标题+描述字符数）
     note_added      INTEGER NOT NULL DEFAULT 0,  -- 便签新增数
     note_deleted    INTEGER NOT NULL DEFAULT 0,  -- 便签删除数
     favorite_toggle INTEGER NOT NULL DEFAULT 0,  -- 收藏切换次数
@@ -262,6 +263,15 @@ CREATE TABLE IF NOT EXISTS daily_stat
     active_evening  INTEGER NOT NULL DEFAULT 0,  -- 晚间 18:00-22:59 操作次数
     active_night    INTEGER NOT NULL DEFAULT 0   -- 深夜 23:00-04:59 操作次数
 );
+                            "#
+                        },
+                        Migration {
+                            version: 7,
+                            description: "Add todo_chars column to daily_stat for todo content volume statistics",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 待办内容量：新建待办时累计标题+描述字符数（与 clip_chars 类似的"内容量"口径）
+ALTER TABLE daily_stat ADD COLUMN todo_chars INTEGER NOT NULL DEFAULT 0;
                             "#
                         }
                     ]

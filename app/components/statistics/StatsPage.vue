@@ -12,6 +12,7 @@ import {
   computeTags, computeUniqueTitle, computeTitleScores, tagsSpanEnough,
   CATEGORY_LABEL, type UserTag, type UserTagCategory,
 } from '~/src/statistics/userTags';
+import { buildMockDays } from '~/src/statistics/mockData';
 import DatePicker from '~/components/common/DatePicker.vue';
 import LazySection from '~/components/statistics/LazySection.vue';
 
@@ -113,6 +114,7 @@ const trendOptions: { key: string; name: string; fields: StatField[] }[] = [
   { key: 'usage', name: '时长', fields: ['usage_seconds'] },
   { key: 'shortcut', name: '快捷键', fields: ['shortcut_count'] },
   { key: 'todo', name: '待办', fields: ['todo_added', 'todo_completed'] },
+  { key: 'todo_chars', name: '待办内容量', fields: ['todo_chars'] },
   { key: 'note', name: '便签', fields: ['note_added'] },
 ];
 
@@ -229,6 +231,12 @@ const metricCards = computed(() => {
       icon: 'todo',
     },
     {
+      name: '待办内容量',
+      value: fmtNum(s.todo_chars ?? 0),
+      hint: '标题 + 描述字符数',
+      icon: 'todo_text',
+    },
+    {
       name: '便签新增',
       value: s.note_added ?? 0,
       hint: '新建便签',
@@ -338,6 +346,7 @@ const icons: Record<string, string> = {
   image: 'M4 16l4.586-4.586a2 2 0 0 1 2.828 0L16 16m-2-2 1.586-1.586a2 2 0 0 1 2.828 0L20 14m-6-6h.01M6 20h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z',
   paste: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2',
   todo: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4',
+  todo_text: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M7 13h6M7 17h4',
   note: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
   star: 'M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z',
   clock: 'M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
@@ -364,6 +373,84 @@ const tagsByCategory = computed(() => {
 
 /** 趋势图最大值（归一化柱高） */
 const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
+
+// ===== 编辑测试数据（§测试用：从 mock 数据加载初值，修改后写回 daily_stat）=====
+const editVisible = ref(false);
+const editDate = ref(toDateString(new Date()));
+const editFields = ref<{ key: string; label: string; value: number }[]>([]);
+
+/** 可编辑的统计字段（不含时段/tab 等冗余计数，聚焦业务量） */
+const EDIT_FIELD_DEFS: { key: StatField; label: string }[] = [
+  { key: 'clip_text', label: '剪贴文本' },
+  { key: 'clip_image', label: '剪贴图片' },
+  { key: 'clip_use', label: '粘贴使用' },
+  { key: 'clip_chars', label: '复制字符量' },
+  { key: 'todo_added', label: '待办新增' },
+  { key: 'todo_completed', label: '待办完成' },
+  { key: 'todo_deleted', label: '待办删除' },
+  { key: 'todo_chars', label: '待办内容量' },
+  { key: 'note_added', label: '便签新增' },
+  { key: 'note_deleted', label: '便签删除' },
+  { key: 'favorite_toggle', label: '收藏切换' },
+  { key: 'usage_seconds', label: '使用时长(秒)' },
+  { key: 'shortcut_count', label: '快捷键次数' },
+];
+
+const editSaving = ref(false);
+const editMsg = ref('');
+
+/** 打开编辑面板：初值取当日真实数据（无则全 0），并附带最近一条 mock 行供参考 */
+async function openEditPanel() {
+  editDate.value = toDateString(new Date());
+  editMsg.value = '';
+  editVisible.value = true;
+  try {
+    const today = await statsService.getDaily(editDate.value);
+    editFields.value = EDIT_FIELD_DEFS.map(d => ({
+      key: d.key,
+      label: d.label,
+      value: today[d.key] ?? 0,
+    }));
+  } catch {
+    editFields.value = EDIT_FIELD_DEFS.map(d => ({ key: d.key, label: d.label, value: 0 }));
+  }
+}
+
+/** 载入 mock 数据作为当前编辑初值（用 mock 序列中最近一天的各字段值） */
+async function loadMockValues() {
+  try {
+    const days = buildMockDays();
+    const sample = days[days.length - 1]?.row ?? {};
+    editFields.value = EDIT_FIELD_DEFS.map(d => ({
+      key: d.key,
+      label: d.label,
+      value: sample[d.key] ?? 0,
+    }));
+    editMsg.value = '已载入最近一天演示数据，可直接修改后保存';
+  } catch {
+    editMsg.value = '载入演示数据失败';
+  }
+}
+
+/** 保存：将编辑后的各字段写回 daily_stat（UPSERT 当日） */
+async function saveEditData() {
+  editSaving.value = true;
+  editMsg.value = '';
+  try {
+    const partial: Partial<Record<StatField, number>> = {};
+    for (const f of editFields.value) {
+      partial[f.key as StatField] = Number(f.value) || 0;
+    }
+    await statsService.setDaily(editDate.value, partial);
+    editMsg.value = `已保存 ${editDate.value} 的测试数据`;
+    // 刷新当前统计展示
+    await load({ skeleton: false });
+  } catch (e) {
+    editMsg.value = '保存失败：' + (e as Error).message;
+  } finally {
+    editSaving.value = false;
+  }
+}
 </script>
 
 <template>
@@ -382,6 +469,14 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
           {{ opt.name }}
         </button>
         <div class="ml-auto flex items-center gap-2 text-xs text-ink-faint">
+          <button
+            type="button"
+            class="btn-soft px-2.5 py-1 text-xs"
+            v-tip="'编辑当日统计测试数据（演示/调试用）'"
+            @click="openEditPanel"
+          >
+            测试数据
+          </button>
           <span v-if="range === 'custom'" class="flex items-center gap-1">
             <DatePicker v-model="customFrom" placeholder="开始日期" :max="customTo || undefined" />
             <span class="text-ink-faint">—</span>
@@ -645,5 +740,65 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         </LazySection>
       </template>
     </template>
+
+    <!-- ===== 测试数据编辑面板（演示/调试用）===== -->
+    <Teleport to="body">
+      <div
+        v-if="editVisible"
+        class="fixed inset-0 z-[99998] flex items-center justify-center bg-black/30 p-4"
+        @click.self="editVisible = false"
+      >
+        <div class="glass-card w-full max-w-lg rounded-2xl p-5 shadow-float">
+          <div class="mb-3 flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-ink">编辑当日统计测试数据</h3>
+            <button
+              type="button"
+              class="btn-soft flex h-7 w-7 items-center justify-center rounded-full p-0"
+              @click="editVisible = false"
+            >
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
+
+          <div class="mb-3 flex items-center gap-2">
+            <label class="text-xs text-ink-faint">日期</label>
+            <DatePicker v-model="editDate" placeholder="YYYY-MM-DD" />
+            <button
+              type="button"
+              class="btn-soft ml-auto px-2.5 py-1 text-xs"
+              @click="loadMockValues"
+            >
+              载入演示值
+            </button>
+          </div>
+
+          <div class="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
+            <label
+              v-for="f in editFields"
+              :key="f.key"
+              class="flex items-center justify-between gap-2 rounded-lg bg-surface-field px-2 py-1.5"
+            >
+              <span class="text-xs text-ink-soft">{{ f.label }}</span>
+              <input
+                v-model.number="f.value"
+                type="number"
+                min="0"
+                class="w-28 rounded-lg border border-accent bg-surface-field px-2 py-1 text-right text-sm text-ink tabular-nums outline-none focus:border-gold"
+              />
+            </label>
+          </div>
+
+          <div class="mt-4 flex items-center justify-between gap-3">
+            <span class="text-xs text-ink-faint">{{ editMsg }}</span>
+            <div class="flex gap-2">
+              <button type="button" class="btn-soft" @click="editVisible = false">取消</button>
+              <button type="button" class="btn-gold" :disabled="editSaving" @click="saveEditData">
+                {{ editSaving ? '保存中…' : '保存' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

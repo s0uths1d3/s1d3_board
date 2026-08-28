@@ -1,5 +1,9 @@
 <template>
-  <div class="glass-card group rounded-2xl p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float">
+  <div
+      class="glass-card todo-item group rounded-2xl p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
+      :class="selected ? '!border-gold ring-2 ring-gold/60 bg-gold/10 shadow-[0_0_22px_-2px_rgba(196,167,125,0.6)]' : ''"
+      @click="$emit('select')"
+  >
     <div class="p-0">
       <div class="flex items-start gap-3">
         <div class="pt-1">
@@ -185,16 +189,18 @@
       </div>
 
     </div>
-    <div v-if="isEditing" class="mt-4 rounded-xl bg-surface-field p-4">
-      <div class="space-y-3">
-        <div class="flex items-center gap-2">
-          <input
-              v-model="editTitle"
-              type="text"
-              class="min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-              placeholder="任务标题"
-              @keyup.enter="saveEdit"
-          />
+    <Transition name="edit-panel">
+      <div v-if="isEditing" class="mt-4 rounded-xl bg-surface-field p-4">
+        <div class="space-y-3">
+          <div class="flex items-center gap-2">
+            <input
+                v-model="editTitle"
+                :data-todo-edit-title="todo.id"
+                type="text"
+                class="min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                placeholder="任务标题"
+                @keyup.enter="onTitleEnterSave"
+            />
           <button
               type="button"
               title="保存"
@@ -222,13 +228,14 @@
             placeholder="任务描述（可选）"
             rows="2"
         ></textarea>
+        </div>
       </div>
-    </div>
+    </Transition>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import type {Todo} from "~/src/Entities";
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {formatDate} from "~/src/utils/formatDate";
@@ -239,6 +246,10 @@ const props = defineProps<{
   todo: Todo
   highlightString?: string
   highlight?: boolean
+  /** 是否被方向键选中（高亮提示） */
+  selected?: boolean
+  /** 编辑触发信号：Ctrl+Enter 递增，为当前选中项进入编辑态 */
+  editSignal?: number
 }>()
 
 const emit = defineEmits<{
@@ -248,11 +259,29 @@ const emit = defineEmits<{
   (e: 'priority-change', id: string, priority: Todo['priority']): void
   (e: 'category-change', id: string, category: string): void
   (e: 'category-delete', name: string, rect?: DOMRect): void
+  (e: 'select'): void
 }>()
 
 const isEditing = ref(false)
 const editTitle = ref('')
 const editDescription = ref('')
+
+/** Ctrl+Enter（editSignal 递增）：当前选中项进入编辑态并聚焦标题输入框；
+ *  已在编辑态则保存（与"Enter 保存"语义一致）。 */
+watch(() => props.editSignal, (signal, old) => {
+  if (signal === undefined || signal === old) return
+  if (!props.selected) return
+  if (isEditing.value) {
+    saveEdit()
+    return
+  }
+  startEditing()
+  nextTick(() => {
+    const input = document.querySelector(`[data-todo-edit-title="${props.todo.id}"]`) as HTMLInputElement | null
+    input?.focus()
+    input?.select()
+  })
+})
 
 const priorityLabels = {
   high: '高',
@@ -340,6 +369,13 @@ const saveEdit = () => {
   isEditing.value = false
 }
 
+/** 标题输入框按 Enter 保存；Ctrl+Enter（带修饰键）由全局快捷键系统统一处理，
+ *  避免 keyup 阶段重复触发 saveEdit 导致"展开后立刻收起"。 */
+const onTitleEnterSave = (e: KeyboardEvent) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+  saveEdit()
+}
+
 const cancelEdit = () => {
   isEditing.value = false
 }
@@ -372,3 +408,23 @@ const formatDueDate = computed(() => {
   return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`
 })
 </script>
+
+<style scoped>
+/* 编辑表单展开/收起动画：淡入 + 轻微下移，与点击编辑按钮展开效果一致 */
+.edit-panel-enter-active {
+  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.edit-panel-enter-from {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+}
+.edit-panel-leave-active {
+  transition: opacity 0.16s ease-in,
+    transform 0.16s cubic-bezier(0.4, 0, 1, 1);
+}
+.edit-panel-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.99);
+}
+</style>

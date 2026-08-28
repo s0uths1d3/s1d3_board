@@ -399,8 +399,9 @@ class ClipboardService {
             "INSERT INTO todo (id,title, description, completed, priority, category, created_at, updated_at, dueDate) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             [todo.id,todo.title, todo.description || '', todo.completed, todo.priority, todo.category || '', now, now, todo.dueDate || '']
         );
-        // 统计埋点（fire-and-forget）：新建待办 +1
-        void statsService.record({ todo_added: 1 });
+        // 统计埋点（fire-and-forget）：新建待办 +1，并累计任务标题+描述的字符数
+        const todoChars = (todo.title?.length ?? 0) + (todo.description?.length ?? 0);
+        void statsService.record({ todo_added: 1, todo_chars: todoChars });
     }
 
     public async updateTodo(todo: Todo): Promise<void> {

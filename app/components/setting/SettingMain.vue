@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, watch, onBeforeUnmount, nextTick } from 'vue';
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { updateShortcutKey, resetShortcut, resetAllShortcuts, toggleShortcutEnabled, setShortcutGroupEnabled, resetShortcutGroup } from "~/src/commands/shortcuts/InitShortcuts";
 import { formatShortcutForDisplay, parseKeyEvent } from "~/src/utils/shortcutFormat";
@@ -31,6 +31,8 @@ const schemeOptions = ['深色', '浅色'];
 const selectedScheme = ref('深色');
 /** 开机自启状态（系统级设置，使用 tauri autostart 插件，不存数据库） */
 const autoStartEnabled = ref(false);
+/** 初始化标志：onMounted 读取系统自启状态时跳过 watch 的 enable/disable 与提示逻辑 */
+let initializingAutoStart = false;
 /** 设置页即时反馈提示（toast） */
 const hint = ref('');
 let hintTimer: ReturnType<typeof setTimeout> | null = null;
@@ -60,8 +62,22 @@ watch(selectedScheme, async (val) => {
   await clipboardService.setKeyValue('color_scheme', val ?? '');
 });
 
+/** 切换提示窗口开关并给出即时反馈 */
+const toggleTooltip = () => {
+  tooltipEnabled.value = !tooltipEnabled.value;
+  showHint(tooltipEnabled.value ? '已开启提示窗口' : '已关闭提示窗口');
+};
+
+/** 切换搜索高亮开关并给出即时反馈 */
+const toggleSearchHighlight = () => {
+  searchHighlightEnabled.value = !searchHighlightEnabled.value;
+  showHint(searchHighlightEnabled.value ? '已开启搜索高亮' : '已关闭搜索高亮');
+};
+
 // 开机自启：切换时调用系统 autostart 插件（enable/disable）
 watch(autoStartEnabled, async (val) => {
+  // 初始化读取系统状态时跳过，避免每次进入设置页都误触发 enable/disable 和提示
+  if (initializingAutoStart) return;
   if (!isTauri()) return;
   try {
     if (val) {
@@ -222,14 +238,25 @@ function groupAllEnabled(group: { key: string; items: { enabled: boolean }[] }):
   return group.items.length > 0 && group.items.every(i => i.enabled);
 }
 
+/** 单项启用/禁用开关：切换后给出即时反馈 */
+function toggleShortcutWithHint(id: string) {
+  const item = shortcuts.value.find(s => s.id === id);
+  const next = !item?.enabled;
+  toggleShortcutEnabled(id);
+  showHint(next ? '已启用快捷键' : '已禁用快捷键');
+}
+
 /** 整组胶囊开关：点击在「全部启用 / 全部禁用」间切换 */
 async function toggleGroup(group: { key: string; items: { id: string; enabled: boolean }[] }) {
-  await setShortcutGroupEnabled(group.items.map(i => i.id), !groupAllEnabled(group));
+  const enable = !groupAllEnabled(group);
+  await setShortcutGroupEnabled(group.items.map(i => i.id), enable);
+  showHint(enable ? '已开启该组全部快捷键' : '已关闭该组全部快捷键');
 }
 
 /** 一键还原组内全部快捷键为默认（图标按钮） */
 async function resetGroup(group: { key: string; items: { id: string }[] }) {
   await resetShortcutGroup(group.items.map(i => i.id));
+  showHint('已还原该组快捷键为默认');
 }
 
 function startRecording(id: string) {
@@ -263,8 +290,10 @@ async function commitRecording(id: string, newKey: string) {
   const err = await updateShortcutKey(id, newKey);
   if (err) {
     errorMap.value[id] = err;
+    showHint('快捷键保存失败：' + err);
   } else {
     delete errorMap.value[id];
+    showHint('快捷键已保存');
   }
 }
 
@@ -272,8 +301,10 @@ async function resetOne(id: string) {
   const err = await resetShortcut(id);
   if (err) {
     errorMap.value[id] = err;
+    showHint('重置失败：' + err);
   } else {
     delete errorMap.value[id];
+    showHint('已重置为默认');
   }
 }
 
@@ -281,6 +312,7 @@ async function resetAll(scope?: 'global' | 'local') {
   cancelRecording();
   await resetAllShortcuts(scope);
   errorMap.value = {};
+  showHint('已全部重置为默认');
 }
 
 // 切换设置组时取消录制
@@ -311,13 +343,19 @@ onMounted(async () => {
   } catch (e) {
     // 忽略，使用默认第一项
   }
-  // 读取当前开机自启状态（仅桌面容器内可用）
+  // 读取当前开机自启状态（仅桌面容器内可用）；
+  // 用 initializingAutoStart 标记，避免触发 watch 误发 enable/disable 与提示。
+  // 注意：watch 默认异步（flush: 'pre'），必须 await nextTick() 等回调执行完再清除标记，
+  // 否则 watch 在下一 tick 运行时标记已为 false，仍会误发提示。
   if (isTauri()) {
+    initializingAutoStart = true;
     try {
       autoStartEnabled.value = await isEnabled();
     } catch (e) {
       console.error('读取开机自启状态失败:', e);
     }
+    await nextTick();
+    initializingAutoStart = false;
   }
 });
 </script>
@@ -357,7 +395,7 @@ onMounted(async () => {
                           class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
                           :class="item.enabled ? 'bg-gold' : 'bg-accent'"
                           v-tip="item.enabled ? '点击禁用' : '点击启用'"
-                          @click="toggleShortcutEnabled(item.id)"
+                          @click="toggleShortcutWithHint(item.id)"
                       >
                         <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
                               :class="item.enabled ? 'translate-x-[1.125rem]' : 'translate-x-0.5'"></span>
@@ -452,7 +490,7 @@ onMounted(async () => {
                           class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
                           :class="item.enabled ? 'bg-gold' : 'bg-accent'"
                           v-tip="item.enabled ? '点击禁用' : '点击启用'"
-                          @click="toggleShortcutEnabled(item.id)"
+                          @click="toggleShortcutWithHint(item.id)"
                       >
                         <span class="inline-block h-4 w-4 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
                               :class="item.enabled ? 'translate-x-[1.125rem]' : 'translate-x-0.5'"></span>
@@ -530,11 +568,13 @@ onMounted(async () => {
                   <input v-else-if="item.type === 'input' && item.label === 'API key'" type="text"
                          v-model="apiKey"
                          placeholder="输入 API key"
-                         class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
+                         class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
+                         @blur="showHint('已保存 API key')"/>
                   <input v-else-if="item.type === 'input' && item.label === '剪贴板最大存储数量'" type="text"
                          v-model="maxLimit"
                          placeholder="如 500"
-                         class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"/>
+                         class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
+                         @blur="showHint('已保存最大存储数量')"/>
                   <button
                       v-else-if="item.type === 'checkbox' && item.label === '开机自启'"
                       type="button" role="switch" :aria-checked="autoStartEnabled"
@@ -550,7 +590,7 @@ onMounted(async () => {
                       type="button" role="switch" :aria-checked="tooltipEnabled"
                       class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
                       :class="tooltipEnabled ? 'bg-gold' : 'bg-accent'"
-                      @click="tooltipEnabled = !tooltipEnabled"
+                      @click="toggleTooltip"
                   >
                     <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
                           :class="tooltipEnabled ? 'translate-x-5' : 'translate-x-0.5'"></span>
@@ -560,7 +600,7 @@ onMounted(async () => {
                       type="button" role="switch" :aria-checked="searchHighlightEnabled"
                       class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-300 ease-soft"
                       :class="searchHighlightEnabled ? 'bg-gold' : 'bg-accent'"
-                      @click="searchHighlightEnabled = !searchHighlightEnabled"
+                      @click="toggleSearchHighlight"
                   >
                     <span class="inline-block h-5 w-5 transform rounded-full bg-white shadow-soft transition-transform duration-300 ease-soft"
                           :class="searchHighlightEnabled ? 'translate-x-5' : 'translate-x-0.5'"></span>
@@ -581,7 +621,7 @@ onMounted(async () => {
                             type="button"
                             class="flex w-full items-center justify-between rounded-xl"
                             :class="selectedScheme === opt ? 'text-gold' : ''"
-                            @click="selectedScheme = opt"
+                            @click="selectedScheme = opt; showHint('已保存配色设置')"
                         >
                           <span>{{ opt }}</span>
                           <svg v-if="selectedScheme === opt" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

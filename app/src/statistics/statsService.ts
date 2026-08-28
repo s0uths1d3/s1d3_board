@@ -21,7 +21,7 @@ import { isTauri } from "~/src/utils/env";
 /** 统计维度字段（与 daily_stat 各列同名） */
 export type StatField =
   | 'clip_text' | 'clip_image' | 'clip_use' | 'clip_chars'
-  | 'todo_added' | 'todo_completed' | 'todo_deleted'
+  | 'todo_added' | 'todo_completed' | 'todo_deleted' | 'todo_chars'
   | 'note_added' | 'note_deleted' | 'favorite_toggle'
   | 'usage_seconds' | 'shortcut_count'
   | 'tab_clip' | 'tab_todo' | 'tab_note' | 'tab_pinned'
@@ -45,7 +45,7 @@ export const TREND_DOWNSAMPLE_DAYS = 92;
 /** 区间聚合默认查询的字段（§14.3 查询裁剪：不含动态扩展列） */
 const DEFAULT_RANGE_FIELDS: StatField[] = [
   'clip_text', 'clip_image', 'clip_use', 'clip_chars',
-  'todo_added', 'todo_completed', 'todo_deleted',
+  'todo_added', 'todo_completed', 'todo_deleted', 'todo_chars',
   'note_added', 'note_deleted', 'favorite_toggle',
   'usage_seconds', 'shortcut_count',
   'tab_clip', 'tab_todo', 'tab_note', 'tab_pinned', 'tab_setting', 'tab_statistics',
@@ -179,6 +179,27 @@ class StatsService {
         target[k] = (target[k] ?? 0) + (v ?? 0);
       }
     }
+  }
+
+  /**
+   * 测试用：直接覆盖某天的统计数据（UPSERT）。
+   * 供「编辑测试数据」面板使用——从 mock 数据加载初值、修改后写回 daily_stat，
+   * 便于手动构造数据验证统计页各种展示。
+   */
+  public async setDaily(date: string, partial: Partial<Record<StatField, number>>): Promise<void> {
+    await this.ensureDbInitialized();
+    const cols = Object.keys(partial);
+    if (cols.length === 0) return;
+    const vals = cols.map(c => partial[c as StatField] ?? 0);
+    const insertCols = ['stat_date', ...cols];
+    const placeholders = insertCols.map((_, i) => `$${i + 1}`).join(', ');
+    const setClause = cols.map(k => `${k} = excluded.${k}`).join(', ');
+    await this.db!.execute(
+      `INSERT INTO daily_stat (${insertCols.join(', ')})
+       VALUES (${placeholders})
+       ON CONFLICT(stat_date) DO UPDATE SET ${setClause}`,
+      [date, ...vals]
+    );
   }
 
   /** 3) 查询单日聚合 */

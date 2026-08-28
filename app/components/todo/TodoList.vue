@@ -46,7 +46,7 @@
                 v-model="searchQuery"
                 type="text"
                 placeholder="搜索任务..."
-                class="min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                class="todo-search-input min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             />
 
             <div class="dropdown dropdown-center dropdown-js" :class="{ 'dropdown-open': filterOpen }" @focusout="onFilterBlur">
@@ -163,19 +163,22 @@
         </div>
       </div>
 
-      <div class="space-y-3">
+      <div id="todoListContainer" class="space-y-3">
         <TodoItem
-            v-for="todo in filteredAndSortedTodos"
+            v-for="(todo, index) in filteredAndSortedTodos"
             :key="todo.id"
             :todo="todo"
             :highlight-string="searchHighlightEnabled ? searchQuery : ''"
             :highlight="searchHighlightEnabled && searchQuery.trim() !== ''"
+            :selected="index === selectedTodoIndex"
+            :edit-signal="editSignal"
             @toggle="toggleTodo"
             @update="updateTodo"
             @delete="deleteTodo"
             @priority-change="changePriority"
             @category-change="changeCategory"
             @category-delete="handleCategoryDelete"
+            @select="selectTodoIndex(index)"
         />
       </div>
 
@@ -218,6 +221,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from '@tauri
 import { playNotificationSound } from '~/src/utils/notifySound'
 import DeleteConfirm from '~/components/common/DeleteConfirm.vue'
 import { useNow } from '~/composables/useNow'
+import { todoList, selectedTodoIndex, editSignal, selectTodo } from '~/src/commands/local/todoStore'
 
 const todos = ref<Todo[]>([])
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -637,6 +641,9 @@ onMounted(async () => {
   // Ctrl+F：聚焦待办搜索框
   window.addEventListener('focus-search', onFocusSearch)
 
+  // Ctrl+Enter：进入选中待办的编辑态
+  window.addEventListener('todo:edit-request', onEditRequest)
+
   // 仅在 Tauri 桌面容器内定时从数据库刷新列表（数据同步用；逾期通知由精确定时器负责，不再轮询检查）
   if (isTauri()) {
     pollTimer = setInterval(() => {
@@ -653,7 +660,30 @@ onBeforeUnmount(() => {
   // 清理所有逾期通知定时器，避免组件卸载后误触发
   for (const id of [...overdueTimers.keys()]) clearOverdueTimer(id)
   window.removeEventListener('focus-search', onFocusSearch)
+  window.removeEventListener('todo:edit-request', onEditRequest)
 })
+
+/** 列表同步：过滤排序结果 → todoStore（供方向键选择/编辑使用），并修正越界选中 */
+watch(filteredAndSortedTodos, (list) => {
+  todoList.value = list
+  if (selectedTodoIndex.value >= list.length) {
+    selectedTodoIndex.value = Math.max(0, list.length - 1)
+  }
+  if (selectedTodoIndex.value < 0) {
+    selectedTodoIndex.value = 0
+  }
+}, { immediate: true })
+
+/** Ctrl+Enter：让当前选中的待办进入编辑态 */
+const onEditRequest = () => {
+  if (todoList.value.length === 0) return
+  editSignal.value += 1
+}
+
+/** 点击列表行：选中对应索引 */
+const selectTodoIndex = (index: number) => {
+  selectTodo(index)
+}
 
 /** Ctrl+F 聚焦待办搜索框 */
 const onFocusSearch = () => {
