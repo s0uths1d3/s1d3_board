@@ -78,14 +78,13 @@ const rowLevelInput = (e: Event, idx: number) => {
 <template>
   <UiDropdown
       align="center"
-      match-trigger-width
       :close-on-select="false"
       aria-label="优先级"
       panel-class="glass-card w-64 rounded-2xl p-2 shadow-float"
   >
     <template #trigger="{ open }">
       <label
-          class="flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
+          class="flex w-full cursor-pointer items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
           :class="open ? 'border-gold' : ''"
       >
         <span class="flex min-w-0 items-center gap-2">

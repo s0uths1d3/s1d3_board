@@ -108,7 +108,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import StickyNoteItem from "./StickyNoteItem.vue";
-import { useNoteColors } from "~/composables/useNoteColors";
+import { useNoteColors, resolveNoteColor } from "~/composables/useNoteColors";
 import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
@@ -215,7 +215,7 @@ const ctrlNIsCreateShortcut = computed(() => {
 })
 
 // ===== 新建便签：不弹窗，点击即创建（默认第一套配色），并直接进入编辑态 =====
-const { colors: noteColors, resolveNoteColor } = useNoteColors()
+const { colors: noteColors } = useNoteColors()
 
 /** 直接新建便签：写入数据库并插入瀑布流顶部，随后自动进入编辑 */
 const createNote = async () => {

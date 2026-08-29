@@ -64,7 +64,7 @@ watch(open, (v) => {
 <template>
   <UiDropdown
       v-model:open="open"
-      class="w-40"
+      class="w-auto max-w-[13rem]"
       align="start"
       :close-on-select="false"
       aria-label="分类"
@@ -72,7 +72,7 @@ watch(open, (v) => {
   >
     <template #trigger="{ open: isOpen }">
       <label
-          class="flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
+          class="flex w-full cursor-pointer items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
           :class="isOpen ? 'border-gold' : ''"
       >
         <span class="truncate" :class="modelValue ? 'text-ink' : 'text-ink-faint'">{{ modelValue || placeholder }}</span>

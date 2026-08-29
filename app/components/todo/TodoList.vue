@@ -51,7 +51,7 @@
 
             <UiDropdown align="center" aria-label="筛选" panel-class="glass-card menu w-32 rounded-2xl p-2">
               <template #trigger="{ open }">
-                <label class="btn-soft flex cursor-pointer items-center">
+                <label class="btn-soft flex shrink-0 cursor-pointer items-center">
                   {{ currentFilterLabel }}
                   <svg class="ml-1 h-4 w-4 transform transition-transform duration-200" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
@@ -84,7 +84,7 @@
             <!-- 新增任务：位于搜索框最右侧，点击下拉展开表单（与原先效果一致） -->
             <button
                 @click="toggleAddForm"
-                class="btn-gold ml-auto flex h-10 items-center gap-1.5 px-3"
+                class="btn-gold ml-auto flex h-10 shrink-0 items-center gap-1.5 px-3"
                 v-tip="showAddForm ? '收起' : '展开新增任务'"
             >
               <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -118,17 +118,17 @@
                   rows="2"
               ></textarea>
 
-              <!-- 控件 + 操作按钮 同一行：控件在左、按钮靠右；按钮采用纯图标形式 -->
-              <div class="flex flex-nowrap items-center justify-between gap-4">
-                <div class="flex flex-nowrap items-center gap-4 min-w-0">
+              <!-- 控件 + 操作按钮：响应式布局，窄窗口自动换行不裁切 -->
+              <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-2 min-w-0">
                   <div class="flex items-center gap-2">
                     <label class="whitespace-nowrap text-sm text-ink-faint">优先级</label>
-                    <PrioritySelect v-model="newTodo.priorityLevel" class="w-24" />
+                    <PrioritySelect v-model="newTodo.priorityLevel" />
                   </div>
 
                   <div class="flex items-center gap-2">
                     <label class="whitespace-nowrap text-sm text-ink-faint">截止日期</label>
-                    <DueTimeSelect v-model="newTodo.dueDate" placeholder="截止时间" class="w-36" />
+                    <DueTimeSelect v-model="newTodo.dueDate" placeholder="截止时间" />
                   </div>
 
                   <div class="flex items-center gap-2">
@@ -138,13 +138,12 @@
                         v-model:rules="newTodo.remindRules"
                         variant="field"
                         :has-due="!!newTodo.dueDate"
-                        class="w-32"
                     />
                   </div>
 
                   <div class="flex items-center gap-2">
                     <label class="whitespace-nowrap text-sm text-ink-faint">分类</label>
-                    <CategorySelect v-model="newTodo.category" placeholder="分类" class="w-28" @category-delete="handleCategoryDelete" />
+                    <CategorySelect v-model="newTodo.category" placeholder="分类" @category-delete="handleCategoryDelete" />
                   </div>
                 </div>
 

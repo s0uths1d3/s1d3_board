@@ -146,7 +146,7 @@
 <script setup lang="ts">
 import UiDropdown from '~/components/ui/UiDropdown.vue';
 import UiColorPicker from '~/components/ui/UiColorPicker.vue';
-import { useNoteColors, NOTE_COLOR_PRESETS, type NoteColor } from '~/composables/useNoteColors';
+import { useNoteColors, resolveNoteColor, NOTE_COLOR_PRESETS, type NoteColor } from '~/composables/useNoteColors';
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import type { Note } from '~/src/Entities';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
@@ -218,13 +218,13 @@ onBeforeUnmount(() => {
 })
 
 // ===== 配色：自定义名称 + 颜色（useNoteColors 统一管理，卡片背景由 hex 动态生成）=====
-const { colors: noteColors, resolveNoteColor, replaceColors } = useNoteColors()
+const { colors: noteColors, replaceColors } = useNoteColors()
 
 /** 卡片着色：低透明底 + 同色描边（旧名称存储自动解析为 hex） */
 const noteColorHex = computed(() => resolveNoteColor(props.note.color))
 const noteStyle = computed(() => ({
   backgroundColor: noteColorHex.value + '8c',
-  borderColor: selected.value ? 'rgb(var(--c-gold))' : noteColorHex.value + '80',
+  borderColor: props.selected ? 'rgb(var(--c-gold))' : noteColorHex.value + '80',
 }))
 
 // 管理器：本地草稿，完成后整表提交
