@@ -11,18 +11,23 @@
  * sync(todos)——策略为纯函数，每次全量重算后与现有定时器 diff，增删有序。
  */
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
+import { watch } from 'vue';
 import dbService from '~/src/db/dbService';
-import { isTauri } from '~/src/utils/env';
-import { playNotificationSound } from '~/src/utils/notifySound';
+import { isTauri } from '~/utils/env';
+import { playNotificationSound } from '~/utils/notifySound';
 import statsService, { type StatField } from '~/src/statistics/statsService';
 import { computeReminders, hasReminderKey, reminderText, type PlannedReminder, type ReminderStage } from '~/src/todo/reminderPolicy';
-import type { Todo } from '~/src/Entities';
+import type { Todo } from '~/src/entities';
 import { isTodoSmartRemindEnabled, useTodoSmartRemind } from '~/composables/useTodoSmartRemind';
 
 /** 已发记录持久化 key（key → 发送时刻毫秒） */
 const FIRED_LOG_KEY = 'todo_remind_fired';
 /** 已发记录保留时长：30 天前的条目启动时清理 */
 const FIRED_LOG_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** WebView 将 setTimeout 延迟存为 32 位有符号整数（约 24.86 天），超限溢出为立即执行 */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+/** 单条提醒查询失败的最大重试次数（指数退避），超过后放弃 */
+const MAX_FIRE_RETRIES = 5;
 
 interface ScheduledEntry {
   todoId: string;
@@ -36,6 +41,12 @@ class ReminderService {
   /** 已发记录（持久化，防重启重复轰炸） */
   private firedLog: Record<string, number> = {};
   private started = false;
+  /** start() 的初始化 Promise：sync 等到它完成后再执行，防止 firedLog 未加载完成时误补发 */
+  private readyPromise: Promise<void> | null = null;
+  /** 最近一次 sync 的待办列表（开关切换时重新同步用） */
+  private lastTodos: Todo[] = [];
+  /** 各提醒 key 的重试计数（handleFire 查询失败退避用） */
+  private retryCounts = new Map<string, number>();
   /** 补发阶段：start() 后的首个 sync 收集错过的提醒并合并汇总 */
   private inCatchUp = false;
   /** 补发阶段收集队列 */
@@ -43,12 +54,28 @@ class ReminderService {
   /** 权限是否已确认授予（避免每次发送都查询） */
   private permissionGranted = false;
 
-  async start(): Promise<void> {
-    if (this.started) return;
+  start(): Promise<void> {
+    if (!this.readyPromise) {
+      this.readyPromise = this.init().catch((e) => {
+        // 初始化失败允许下次 start 重试
+        this.readyPromise = null;
+        this.started = false;
+        throw e;
+      });
+    }
+    return this.readyPromise;
+  }
+
+  private async init(): Promise<void> {
     this.started = true;
     this.inCatchUp = true;
     // 触发全局开关的持久化懒加载（默认开启；此前手动关过则此处读回 false）
-    useTodoSmartRemind();
+    const { smartRemindEnabled } = useTodoSmartRemind();
+    // 全局开关切换时立即重新同步（关闭拆掉已排程的提前提醒，开启恢复排程），
+    // 不必等下一次 TodoList 轮询兜底
+    watch(smartRemindEnabled, () => {
+      if (this.started && this.lastTodos.length > 0) void this.sync(this.lastTodos);
+    });
     // 加载已发记录并清理 30 天前的旧条目
     try {
       const raw = await dbService.getKeyValue(FIRED_LOG_KEY);
@@ -79,11 +106,17 @@ class ReminderService {
     this.started = false;
     this.inCatchUp = false;
     this.catchUpQueue = [];
+    this.lastTodos = [];
+    this.retryCounts.clear();
   }
 
   /** 全量同步：对每条待办重算提醒计划，与当前定时器 diff 后增删 */
-  sync(todos: Todo[]): void {
+  async sync(todos: Todo[]): Promise<void> {
     if (!this.started) return;
+    // 等 firedLog 加载完成后再 diff：否则重启瞬间会把已补发过的提醒当成 fresh 再次补发
+    await this.readyPromise;
+    if (!this.started) return;
+    this.lastTodos = todos;
     const now = Date.now();
     const desired = new Map<string, { todo: Todo; item: PlannedReminder }>();
 
@@ -108,9 +141,7 @@ class ReminderService {
     for (const [key, { todo, item }] of desired) {
       if (this.timers.has(key) || this.firedLog[key]) continue;
       if (item.stage !== 'due' && !isTodoSmartRemindEnabled()) continue;
-      const delay = Math.max(0, item.fireAt - now);
-      const timer = setTimeout(() => void this.handleFire(key, todo.id, item.stage), delay);
-      this.timers.set(key, { todoId: todo.id, stage: item.stage, timer });
+      this.scheduleTimer(key, todo.id, item.stage, item.fireAt);
     }
 
     // 补发阶段结束：本轮收集的 missed 统一汇总发送
@@ -118,6 +149,23 @@ class ReminderService {
       this.inCatchUp = false;
       this.flushCatchUp();
     }
+  }
+
+  /**
+   * 挂载单个提醒定时器（分段）：
+   * WebView 将 setTimeout 延迟存为 32 位有符号整数，超过 MAX_TIMEOUT_MS（约 24.86 天）
+   * 会溢出为"立即触发"——表现为远期任务创建当下就误报"已到期"，且真提醒被 firedLog 永久吞掉。
+   * 因此对超远期的 fireAt 先排一段上限延迟，到点后若仍未到触发时刻则续排剩余时长。
+   */
+  private scheduleTimer(key: string, todoId: string, stage: ReminderStage, fireAt: number): void {
+    const remaining = fireAt - Date.now();
+    if (remaining > MAX_TIMEOUT_MS) {
+      const timer = setTimeout(() => this.scheduleTimer(key, todoId, stage, fireAt), MAX_TIMEOUT_MS);
+      this.timers.set(key, { todoId, stage, timer });
+      return;
+    }
+    const timer = setTimeout(() => void this.handleFire(key, todoId, stage), Math.max(0, remaining));
+    this.timers.set(key, { todoId, stage, timer });
   }
 
   /** missed 处理：补发阶段入队列；平时标记已发、静默跳过（防反复进入 missed 集合） */
@@ -157,11 +205,21 @@ class ReminderService {
     try {
       todo = await dbService.fetchSingleTodo(todoId);
     } catch {
-      // 查询失败：稍后重试（未写标记，不会丢提醒）
-      const retry = setTimeout(() => void this.handleFire(key, todoId, stage), 5000);
+      // 查询失败：指数退避重试（未写标记，不会丢提醒）；连续失败达到上限后放弃，
+      // 避免数据库持久故障时每个提醒都常驻一个永久重试定时器
+      const retries = (this.retryCounts.get(key) ?? 0) + 1;
+      if (retries > MAX_FIRE_RETRIES) {
+        this.retryCounts.delete(key);
+        console.error(`[reminder] 提醒 ${key} 连续 ${MAX_FIRE_RETRIES} 次查询失败，放弃本次触发`);
+        return;
+      }
+      this.retryCounts.set(key, retries);
+      const backoff = 5000 * 2 ** (retries - 1);
+      const retry = setTimeout(() => void this.handleFire(key, todoId, stage), backoff);
       this.timers.set(key, { todoId, stage, timer: retry });
       return;
     }
+    this.retryCounts.delete(key);
     if (!todo || todo.completed === 1 || !todo.dueDate) return;
     // 复核 key 仍有效（截止时间/闹钟规则未被改删）：
     // - 智能与到期阶段：key 前缀必须匹配当前截止时间（改期 → 丢弃，sync 重排新 key）

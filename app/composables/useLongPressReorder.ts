@@ -15,7 +15,7 @@ import { onBeforeUnmount } from 'vue'
  * 内层按钮的 @click 失效。
  */
 interface ReorderOptions {
-  /** 长按触发时长（ms），默认 700 */
+  /** 长按触发时长（ms），默认 500 */
   holdMs?: number
   /** 容器选择器：在该容器内查找排序项 */
   container: string

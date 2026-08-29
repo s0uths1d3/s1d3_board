@@ -1,4 +1,3 @@
-use std::thread::sleep;
 use std::time::Duration;
 use tauri::Manager;
 use tauri_plugin_sql::{Migration, MigrationKind};
@@ -7,7 +6,6 @@ use tauri_plugin_sql::{Migration, MigrationKind};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -305,6 +303,48 @@ UPDATE todo SET priority_level = CASE priority WHEN 'low' THEN 0 WHEN 'medium' T
 -- 自定义提醒闹钟列表（JSON）：[{id,kind:'percent'|'offset'|'at',value}]
 ALTER TABLE todo ADD COLUMN remind_rules TEXT;
                             "#
+                        },
+                        Migration {
+                            version: 11,
+                            description: "Drop write-only FTS index and triggers (search uses LIKE; FTS only added write overhead)",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 全文索引自创建以来从未被任何查询使用（前端搜索走 LIKE），
+-- 每次剪贴板写入却要维护 1-3 次索引写，属于纯开销；删除触发器与索引表。
+DROP TRIGGER IF EXISTS clipboard_after_insert;
+DROP TRIGGER IF EXISTS clipboard_after_update;
+DROP TRIGGER IF EXISTS clipboard_after_delete;
+DROP TABLE IF EXISTS clipboard_fts;
+                            "#
+                        },
+                        Migration {
+                            version: 12,
+                            description: "Add updated_at index for main clipboard list ordering",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 主列表与裁剪查询均按 updated_at 排序（ORDER BY updated_at DESC/ASC），
+-- 原 idx_timestamp 建在 created_at 上用不上，补齐对应索引。
+CREATE INDEX IF NOT EXISTS idx_clip_updated ON clipboard (updated_at DESC);
+                            "#
+                        },
+                        Migration {
+                            version: 13,
+                            description: "Drop unused pinned_clip sort_order index (sorting uses pinned_at/created_at)",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- sort_order 恒为 0，实际排序用 pinned_at/created_at，该索引无任何查询可用。
+DROP INDEX IF EXISTS idx_pinned_sort;
+                            "#
+                        },
+                        Migration {
+                            version: 14,
+                            description: "Fix color_scheme seed default to 'system' and correct its description",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- v1 误将 color_scheme 播种为 'light'（description 是复制的"最大保存数量"），
+-- 与代码中"跟随系统（system）"的文档化默认值冲突，导致跟随系统永不生效；一次性纠正。
+UPDATE settings SET value = 'system', description = '配色模式' WHERE key = 'color_scheme' AND value = 'light';
+                            "#
                         }
                     ]
                 )
@@ -320,25 +360,21 @@ ALTER TABLE todo ADD COLUMN remind_rules TEXT;
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![close_app,paste])
+        .invoke_handler(tauri::generate_handler![paste])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-#[tauri::command]
-fn close_app(window: tauri::Window) {
-    window.close().unwrap();
-}
-
-#[tauri::command]
-fn paste(_window: tauri::Window) {
+/// 在阻塞线程中模拟 Ctrl/Cmd+V；任何失败都以 Result 返回前端，而非 panic 整个进程。
+fn paste_blocking() -> Result<(), String> {
     use enigo::{
         Direction::{Click, Press, Release},
         Enigo, Key, Keyboard, Settings,
     };
 
-    sleep(Duration::from_millis(300));
-    let mut enigo = Enigo::new(&Settings::default()).unwrap();
+    // 等待前端完成"写系统剪贴板 → 隐藏窗口 → 焦点落回目标应用"后，再发送粘贴键
+    std::thread::sleep(Duration::from_millis(300));
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| format!("初始化输入模拟失败: {e}"))?;
 
     // 跨平台粘贴：macOS 使用 Command(meta)+V，其余使用 Ctrl+V
     #[cfg(target_os = "macos")]
@@ -346,7 +382,17 @@ fn paste(_window: tauri::Window) {
     #[cfg(not(target_os = "macos"))]
     let modifier = Key::Control;
 
-    enigo.key(modifier, Press).unwrap();
-    enigo.key(Key::Unicode('v'), Click).unwrap();
-    enigo.key(modifier, Release).unwrap();
+    enigo.key(modifier, Press).map_err(|e| format!("按下修饰键失败: {e}"))?;
+    enigo.key(Key::Unicode('v'), Click).map_err(|e| format!("发送 V 键失败: {e}"))?;
+    enigo.key(modifier, Release).map_err(|e| format!("释放修饰键失败: {e}"))?;
+    Ok(())
+}
+
+/// async 命令在 Tauri 的异步线程池执行（而非主线程），配合 spawn_blocking
+/// 保证 300ms 等待不阻塞 UI 事件循环；失败信息可被前端 invoke 的 catch 捕获。
+#[tauri::command]
+async fn paste() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(paste_blocking)
+        .await
+        .map_err(|e| format!("粘贴任务执行失败: {e}"))?
 }

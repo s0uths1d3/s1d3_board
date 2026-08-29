@@ -80,9 +80,12 @@ jobs:
       - name: Determine release tag
         id: tag
         shell: bash
+        env:
+          # 通过 env 传入输入值，避免未校验的输入直接内插进 shell（script injection 面）
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "name=${DISPATCH_TAG}" >> "$GITHUB_OUTPUT"
           else
             echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi

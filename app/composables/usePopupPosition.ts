@@ -1,7 +1,7 @@
 import { ref } from 'vue';
 import { getCurrentWindow, cursorPosition, currentMonitor, availableMonitors, PhysicalPosition } from '@tauri-apps/api/window';
 import dbService from '~/src/db/dbService';
-import { isTauri } from '~/src/utils/env';
+import { isTauri } from '~/utils/env';
 
 /** 主窗口弹出位置模式 */
 export type PopupPositionMode = 'cursor' | 'last' | 'center';

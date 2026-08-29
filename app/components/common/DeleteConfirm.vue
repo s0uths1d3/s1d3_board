@@ -90,6 +90,9 @@ watch(
         keyHandler = null
       }
     },
+    // immediate：允许以 visible=true 挂载（此时 watch 也会注册键盘监听并计算定位），
+    // 否则初始即打开时确认框落到文档流默认位置且键盘无响应
+    { immediate: true },
 )
 
 onBeforeUnmount(() => {

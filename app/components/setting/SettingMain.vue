@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, onBeforeUnmount, nextTick } from 'vue';
-import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
-import { updateShortcutKey, resetShortcut, resetAllShortcuts, toggleShortcutEnabled, setShortcutGroupEnabled, resetShortcutGroup } from "~/src/commands/shortcuts/InitShortcuts";
-import { formatShortcutForDisplay, parseKeyEvent } from "~/src/utils/shortcutFormat";
-import { getOsTypeFromNavigator } from "~/src/utils/SystemOS";
-import clipboardService from '~/src/db/dbService';
+import {
+  shortcuts, updateShortcutKey, resetShortcut, resetAllShortcuts,
+  toggleShortcutEnabled, setShortcutGroupEnabled, resetShortcutGroup,
+} from "~/src/commands/shortcuts/InitShortcuts";
+import { formatShortcutForDisplay, parseKeyEvent } from "~/utils/shortcutFormat";
+import { getOsTypeFromNavigator } from "~/utils/systemOS";
+import dbService from '~/src/db/dbService';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
-import { isTauri } from '~/src/utils/env';
+import { isTauri } from '~/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
 import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
 import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
-import { useTodoSmartRemind } from '~/composables/useTodoSmartRemind';
+import { useTodoSmartRemind, setTodoSmartRemindEnabled } from '~/composables/useTodoSmartRemind';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
 import { navRows, reorderTab, persistNavConfig, setTabEnabled, statsUnlocked } from '~/composables/useTabs';
 import { useLongPressReorder } from '~/composables/useLongPressReorder';
@@ -56,7 +58,7 @@ const showHint = (msg: string) => {
 /** 是否开启悬停提示窗口（tooltip），与主窗口共享同一状态 */
 const { tooltipEnabled } = useTooltipEnabled();
 watch(tooltipEnabled, async (val) => {
-  await clipboardService.setKeyValue('tooltip_enabled', val ? '1' : '0');
+  await dbService.setKeyValue('tooltip_enabled', val ? '1' : '0');
 });
 
 // ===== 窗口弹出位置（快捷键唤出主窗口时的落点） =====
@@ -74,17 +76,37 @@ function selectPopupPosition(v: string) {
 }
 /** 是否开启搜索高亮，与所有搜索框共享同一状态 */
 const { searchHighlightEnabled } = useSearchHighlight();
-/** 待办智能提醒（提前 30/10/5 分钟 + 自定义提醒）；关闭后仅保留到期时刻通知 */
+/** 待办智能提醒（提前 30/10/5 分钟 + 自定义提醒）；关闭后仅保留到期时刻通知。
+ *  必须走 setTodoSmartRemindEnabled 持久化：直接改共享 ref 不会写库，重启后设置回滚。 */
 const { smartRemindEnabled } = useTodoSmartRemind();
+async function onSmartRemindToggle(val: boolean) {
+  await setTodoSmartRemindEnabled(val);
+  showHint(val ? '已开启智能提醒' : '已关闭智能提醒，仅保留到期通知');
+}
 watch(searchHighlightEnabled, async (val) => {
-  await clipboardService.setKeyValue('search_highlight_enabled', val ? '1' : '0');
+  await dbService.setKeyValue('search_highlight_enabled', val ? '1' : '0');
 });
-// 实时保存：任意设置项变化即写入数据库
+// 实时保存：文本输入加 400ms 防抖——API key / 最大数量是逐字符输入，
+// 每键一次 INSERT...ON CONFLICT 写库纯属浪费；停止输入后统一落库一次。
+const pendingWrites = new Map<string, ReturnType<typeof setTimeout>>();
+function debouncePersist(key: string, write: () => Promise<void>, delay = 400) {
+  const t = pendingWrites.get(key);
+  if (t) clearTimeout(t);
+  pendingWrites.set(key, setTimeout(() => {
+    pendingWrites.delete(key);
+    void write();
+  }, delay));
+}
+onBeforeUnmount(() => {
+  // 卸载时把未落库的输入立即写库，避免最后一段输入丢失
+  for (const t of pendingWrites.values()) clearTimeout(t);
+  pendingWrites.clear();
+});
 watch(apiKey, async (val) => {
-  await clipboardService.setKeyValue('api_key', val ?? '');
+  debouncePersist('api_key', () => dbService.setKeyValue('api_key', val ?? ''));
 });
 watch(maxLimit, async (val) => {
-  await clipboardService.setKeyValue('max_save_count', val ?? '');
+  debouncePersist('max_save_count', () => dbService.setKeyValue('max_save_count', val ?? ''));
 });
 
 // 提示窗口 / 搜索高亮的切换提示已在模板 @change 中内联处理
@@ -121,8 +143,8 @@ async function confirmClearDatabase() {
   clearing.value = true;
   clearMsg.value = '';
   try {
-    await clipboardService.clearDatabase();
-    clearMsg.value = '已清空剪贴板、便签与待办数据';
+    await dbService.clearDatabase();
+    clearMsg.value = '已清空剪贴板、便签与待办数据（常用剪贴与统计数据保留）';
     // 触发剪贴板列表刷新（若在其他页已挂载）
     try {
       const { fetchData } = await import('~/src/commands/local/clipboardStore');
@@ -209,7 +231,7 @@ const settings: SettingGroup[] = [
 const activeSetting = ref(settings[0]);
 // 持久化当前选中的设置分类，下次进入设置默认停在该分类
 watch(activeSetting, async (val) => {
-  await clipboardService.setKeyValue('setting_active_tab', val?.title ?? '');
+  await dbService.setKeyValue('setting_active_tab', val?.title ?? '');
 });
 
 // ===== 设置左侧分类 + 导航配置列表 长按拖拽排序 =====
@@ -232,7 +254,7 @@ const settingOrder = ref<string[]>(settings.map(s => s.title));
 /** 加载已保存的分类顺序 */
 async function loadSettingOrder() {
   try {
-    const raw = await clipboardService.getKeyValue(SETTING_GROUP_ORDER_KEY);
+    const raw = await dbService.getKeyValue(SETTING_GROUP_ORDER_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
@@ -260,7 +282,7 @@ const settingReorder = useLongPressReorder({
     settingOrder.value = order;
   },
   onDrop: () => {
-    void clipboardService.setKeyValue(SETTING_GROUP_ORDER_KEY, JSON.stringify(settingOrder.value));
+    void dbService.setKeyValue(SETTING_GROUP_ORDER_KEY, JSON.stringify(settingOrder.value));
   },
   onStateChange: (k) => { settingGroupDragging.value = k; },
 });
@@ -421,12 +443,12 @@ onBeforeUnmount(() => {
 
 onMounted(async () => {
   osType.value = getOsTypeFromNavigator();
-  maxLimit.value = await clipboardService.getKeyValue('max_save_count');
-  apiKey.value = await clipboardService.getKeyValue('api_key');
+  maxLimit.value = await dbService.getKeyValue('max_save_count');
+  apiKey.value = await dbService.getKeyValue('api_key');
   // 配色的读取/应用/持久化由 useColorScheme 统一负责，这里无需处理
   // 恢复上次选中的设置分类（快捷键 / Api设置 / 通用）
   try {
-    const savedTab = await clipboardService.getKeyValue('setting_active_tab');
+    const savedTab = await dbService.getKeyValue('setting_active_tab');
     if (savedTab) {
       const found = settings.find(s => s.title === savedTab);
       if (found) activeSetting.value = found;
@@ -486,46 +508,15 @@ onMounted(async () => {
                 <li class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
                   {{ group.title }}
                 </li>
-                <li v-for="item in group.items" :key="item.id"
-                    class="flex flex-col gap-1 border-b border-accent/50 p-4 last:border-b-0">
-                  <div class="flex items-center justify-between gap-4">
-                    <div class="flex items-center gap-3">
-                      <!-- 独立启用/禁用开关 -->
-                      <UiToggleSwitch
-                          size="sm"
-                          :model-value="item.enabled"
-                          tip-on="点击禁用" tip-off="点击启用"
-                          :label="item.label"
-                          @change="toggleShortcutWithHint(item.id)"
-                      />
-                      <div class="text-ink" :class="{ 'opacity-50': !item.enabled }">{{ item.label }}</div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <button
-                          type="button"
-                          class="w-56 rounded-xl border border-accent bg-surface-field px-3 py-2 text-center font-mono text-sm font-semibold text-ink transition-all duration-300 ease-soft hover:border-gold focus:outline-none"
-                          :class="recordingId === item.id ? 'border-gold ring-1 ring-gold/60 animate-pulse' : ''"
-                          @click="startRecording(item.id)"
-                      >
-                        {{ recordingId === item.id ? '按下新快捷键… (Esc 取消)' : item.display }}
-                      </button>
-                      <button
-                          v-if="item.isModified"
-                          type="button"
-                          class="btn-soft p-2"
-                          v-tip="'重置为默认'"
-                          @click="resetOne(item.id)"
-                      >
-                        <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                          <path d="M3 3v5h5" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  <div v-if="errorMap[item.id]" class="text-xs text-danger">
-                    {{ errorMap[item.id] }}
-                  </div>
+                <li v-for="item in group.items" :key="item.id">
+                  <ShortcutRow
+                      :item="item"
+                      :recording="recordingId === item.id"
+                      :error="errorMap[item.id]"
+                      @toggle="toggleShortcutWithHint(item.id)"
+                      @record="startRecording(item.id)"
+                      @reset="resetOne(item.id)"
+                  />
                 </li>
               </ul>
               <div v-if="group.hasModified" class="mt-2 flex justify-end">
@@ -576,45 +567,15 @@ onMounted(async () => {
                 </div>
               </div>
               <ul v-show="!collapsed[cg.key]">
-                <li v-for="item in cg.items" :key="item.id"
-                    class="flex flex-col gap-1 border-b border-accent/50 p-4 last:border-b-0">
-                  <div class="flex items-center justify-between gap-4">
-                    <div class="flex items-center gap-3">
-                      <UiToggleSwitch
-                          size="sm"
-                          :model-value="item.enabled"
-                          tip-on="点击禁用" tip-off="点击启用"
-                          :label="item.label"
-                          @change="toggleShortcutWithHint(item.id)"
-                      />
-                      <div class="text-ink" :class="{ 'opacity-50': !item.enabled }">{{ item.label }}</div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <button
-                          type="button"
-                          class="w-56 rounded-xl border border-accent bg-surface-field px-3 py-2 text-center font-mono text-sm font-semibold text-ink transition-all duration-300 ease-soft hover:border-gold focus:outline-none"
-                          :class="recordingId === item.id ? 'border-gold ring-1 ring-gold/60 animate-pulse' : ''"
-                          @click="startRecording(item.id)"
-                      >
-                        {{ recordingId === item.id ? '按下新快捷键… (Esc 取消)' : item.display }}
-                      </button>
-                      <button
-                          v-if="item.isModified"
-                          type="button"
-                          class="btn-soft p-2"
-                          v-tip="'重置为默认'"
-                          @click="resetOne(item.id)"
-                      >
-                        <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                          <path d="M3 3v5h5" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  <div v-if="errorMap[item.id]" class="text-xs text-danger">
-                    {{ errorMap[item.id] }}
-                  </div>
+                <li v-for="item in cg.items" :key="item.id">
+                  <ShortcutRow
+                      :item="item"
+                      :recording="recordingId === item.id"
+                      :error="errorMap[item.id]"
+                      @toggle="toggleShortcutWithHint(item.id)"
+                      @record="startRecording(item.id)"
+                      @reset="resetOne(item.id)"
+                  />
                 </li>
               </ul>
             </div>
@@ -657,17 +618,18 @@ onMounted(async () => {
                       </button>
                     </div>
                   </template>
-                  <input v-else-if="item.type === 'input' && item.label === 'API key'" type="text"
-                         v-model="apiKey"
-                         placeholder="输入 API key"
-                         class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
-                         @blur="showHint('已保存 API key')"/>
-                  <input v-else-if="item.type === 'input' && item.label === '剪贴板最大存储数量'" type="text"
-                         v-model="maxLimit"
-                         placeholder="如 500"
-                         class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
-                         @blur="showHint('已保存最大存储数量')"/>
-                  <UiToggleSwitch
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'API key'"
+                      v-model="apiKey"
+                      placeholder="输入 API key"
+                      @save="showHint('已保存 API key')"
+                  />
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === '剪贴板最大存储数量'"
+                      v-model="maxLimit"
+                      placeholder="如 500"
+                      @save="showHint('已保存最大存储数量')"
+                  />                  <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === '开机自启'"
                       v-model="autoStartEnabled"
                       label="开机自启"
@@ -688,10 +650,10 @@ onMounted(async () => {
                   />
                   <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === '待办智能提醒'"
-                      v-model="smartRemindEnabled"
+                      :model-value="smartRemindEnabled"
                       tip-on="关闭后仅保留到期时刻通知" tip-off="开启后按任务长短智能提前提醒"
                       label="待办智能提醒"
-                      @change="showHint(smartRemindEnabled ? '已开启智能提醒' : '已关闭智能提醒，仅保留到期通知')"
+                      @change="onSmartRemindToggle"
                   />
                   <!-- 窗口弹出位置：三选一分段控件（跟随系统风格，选中金色高亮） -->
                   <UiSegmented

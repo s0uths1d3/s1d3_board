@@ -1,6 +1,6 @@
 import { ref } from 'vue';
 import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
-import { isTauri } from '~/src/utils/env';
+import { isTauri } from '~/utils/env';
 
 /** 主窗口置顶状态（模块级单例，TitleBar 按钮与快捷键命令共享，图标自动同步） */
 const alwaysOnTop = ref(false);

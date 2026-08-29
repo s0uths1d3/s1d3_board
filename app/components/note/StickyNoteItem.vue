@@ -147,12 +147,12 @@
 import UiDropdown from '~/components/ui/UiDropdown.vue';
 import UiColorPicker from '~/components/ui/UiColorPicker.vue';
 import { useNoteColors, resolveNoteColor, NOTE_COLOR_PRESETS, type NoteColor } from '~/composables/useNoteColors';
-import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
-import type { Note } from '~/src/Entities';
+import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
+import type { Note } from '~/src/entities';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
-import {formatDate} from "~/src/utils/formatDate";
+import {formatDate} from "~/utils/formatDate";
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
-import { formatShortcutForDisplay } from "~/src/utils/shortcutFormat";
+import { formatShortcutForDisplay, matchesKeyId } from "~/utils/shortcutFormat";
 
 const props = defineProps<{
   note: Note
@@ -203,15 +203,21 @@ const saveShortcut = computed(() => {
 const ctrlEnterIsSaveShortcut = computed(() => {
   const s = shortcuts.value.find(x => x.id === 'save_note')
   if (!s || !s.enabled) return false
-  const k = s.key.toLowerCase().replace(/\s+/g, '')
-  return k === 'control+enter' || k === 'enter'
+  return matchesKeyId(s.key, 'control+enter') || matchesKeyId(s.key, 'enter')
 })
 
-/** 响应 SaveNoteCommand 派发的保存事件（仅在编辑态保存当前便签） */
+/** 响应 ContextEditCommand 派发的保存事件（仅在编辑态保存当前便签）。
+ *  监听随编辑态挂载/卸载：此前每张渲染的卡片都向 window 挂一个监听（首屏 40 个） */
 const onSaveNote = () => {
   if (props.editing) saveAndClose()
 }
-onMounted(() => window.addEventListener('save-note', onSaveNote))
+watch(() => props.editing, (editing) => {
+  if (editing) {
+    window.addEventListener('save-note', onSaveNote)
+  } else {
+    window.removeEventListener('save-note', onSaveNote)
+  }
+}, { immediate: true })
 onBeforeUnmount(() => {
   window.removeEventListener('save-note', onSaveNote)
   if (saveAnimTimer) clearTimeout(saveAnimTimer)
@@ -269,7 +275,7 @@ const saveAndClose = () => {
 }
 
 /** Ctrl+Enter 直接保存（textarea 级兜底）：仅当保存快捷键就是 Ctrl+Enter 时生效；
- *  阻止冒泡避免与快捷键系统 SaveNoteCommand 双重触发；若用户自定义成其他键则交还快捷键系统 */
+ *  阻止冒泡避免与快捷键系统 ContextEditCommand 双重触发；若用户自定义成其他键则交还快捷键系统 */
 const onCtrlEnterSave = (e: KeyboardEvent) => {
   if (!ctrlEnterIsSaveShortcut.value) return
   e.preventDefault()

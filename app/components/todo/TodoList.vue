@@ -223,8 +223,8 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import TodoItem from './Todoitem.vue'
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
-import type {Todo, ReminderRule} from '~/src/Entities'
-import {isTauri} from "~/src/utils/env"
+import type {Todo, ReminderRule} from '~/src/entities'
+import {isTauri} from "~/utils/env"
 import statsService from "~/src/statistics/statsService"
 import DueTimeSelect from '~/components/todo/DueTimeSelect.vue'
 import CategorySelect from '~/components/todo/CategorySelect.vue'
@@ -235,12 +235,19 @@ import { useCategories } from "~/composables/useCategories"
 import { useTodoPriorities } from "~/composables/useTodoPriorities"
 import { useDueDateMemory } from "~/composables/useDueDateMemory"
 import reminderService from '~/src/todo/reminderService'
+import { isTodoOverdue } from '~/src/todo/overdue'
 import DeleteConfirm from '~/components/common/DeleteConfirm.vue'
 import { useNow } from '~/composables/useNow'
 import { todoList, selectedTodoIndex, editSignal, selectTodo } from '~/src/commands/local/todoStore'
 
 const todos = ref<Todo[]>([])
 let pollTimer: ReturnType<typeof setInterval> | null = null
+/** 轮询请求去重：上一轮未完成时跳过，避免 DB 慢时请求堆积 */
+let fetching = false
+/** 写库进行中计数：>0 时轮询跳过，防止拿旧数据覆盖乐观更新（竞态根源） */
+let pendingWrites = 0
+/** 上次抓取的列表签名（id:updated_at:completed）：无变化时不整表替换，避免全列表重渲染 */
+let lastSignature = ''
 
 const showAddForm = ref(false)
 const newTodo = ref({
@@ -249,7 +256,7 @@ const newTodo = ref({
   priorityLevel: 127,
   category: '其他',
   dueDate: '',
-  remindMode: 'smart' as Todo['remindMode'],
+  remindMode: 'smart' as 'smart' | 'off' | 'custom',
   remindRules: [] as ReminderRule[]
 })
 
@@ -288,12 +295,17 @@ const sortOptions = [
 /** 筛选按钮显示的中文标签：value→label 映射（避免点击后显示英文 value） */
 const currentFilterLabel = computed(() => filters.find(f => f.value === currentFilter.value)?.label ?? currentFilter.value)
 
+/** 当前等级系统中的最高档位（"高优先级"筛选口径，随用户自定义档位自适应） */
+const highLevel = computed(() => {
+  const ls = priorityLevels.value.map(l => l.level)
+  return ls.length > 0 ? Math.max(...ls) : 255
+})
+
 // 提醒调度：统一由 reminderService 负责（智能提前提醒 30/10/5 分钟、自定义提醒、到期通知）。
 // 服务挂载在主窗口（app.vue 启动），切换 Tab 卸载本组件不影响定时器；
 // 本组件只负责在数据变化后把最新列表同步给服务。
 
 // 计算属性
-const pendingCount = computed(() => todos.value.filter(t => !t.completed).length)
 const completedCount = computed(() => todos.value.filter(t => t.completed).length)
 const completionRate = computed(() => {
   if (todos.value.length === 0) return 0
@@ -308,9 +320,8 @@ const onTimeRate = computed(() => {
   return Math.round((onTime / finishedWithDue.length) * 100)
 })
 
-/** 判断任务是否已逾期：有截止时间且早于当前时间。 */
-const isOverdueTodo = (todo: Todo) =>
-    !!todo.dueDate && new Date(todo.dueDate).getTime() <= now.value
+/** 判断任务是否已逾期：有截止时间且早于当前时间（共享实现，见 app/src/todo/overdue.ts）。 */
+const isOverdueTodo = (todo: Todo) => isTodoOverdue(todo, now.value)
 
 const filteredAndSortedTodos = computed(() => {
   let filtered = todos.value
@@ -336,7 +347,9 @@ const filteredAndSortedTodos = computed(() => {
   } else if (currentFilter.value === 'completed') {
     filtered = filtered.filter(t => t.completed)
   } else if (currentFilter.value === 'high') {
-    filtered = filtered.filter(t => (t.priorityLevel ?? 127) >= 128)
+    // "高优先级"跟随用户自定义档位：取等级系统中的最高档，
+    // 不再硬编码 128（用户只配置 0-100 档位时原写法永远为空）
+    filtered = filtered.filter(t => (t.priorityLevel ?? 127) === highLevel.value)
   }
 
   return [...filtered].sort((a, b) => {
@@ -381,6 +394,23 @@ const toggleAddForm = () => {
   }
 }
 
+/**
+ * 统一 DB 写入包装：失败时 console.error 并返回 false（不产生 unhandled rejection），
+ * 写库期间 pendingWrites > 0 使轮询跳过，避免旧数据覆盖乐观更新。
+ */
+async function withDbWrite(fn: () => Promise<void>): Promise<boolean> {
+  pendingWrites++
+  try {
+    await fn()
+    return true
+  } catch (error) {
+    console.error('[todo] 数据库写入失败:', error)
+    return false
+  } finally {
+    pendingWrites--
+  }
+}
+
 const addTodo = async () => {
   if (!newTodo.value.title.trim()) return
 
@@ -399,8 +429,10 @@ const addTodo = async () => {
     updated_at: String(nowMs)
   }
 
-  await clipboardService.insertTodo(todo)
+  const ok = await withDbWrite(() => clipboardService.insertTodo(todo))
+  if (!ok) return
   todos.value.unshift(todo)
+  lastSignature = '' // 本地新增后强制下一轮轮询重建签名
   void reminderService.sync(todos.value)
   resetForm()
 
@@ -422,10 +454,18 @@ const resetForm = () => {
 const toggleTodo = async (id: string) => {
   const todo = todos.value.find(t => t.id === id)
   if (todo) {
+    const prevCompleted = todo.completed
+    const prevUpdatedAt = todo.updated_at
     const completing = todo.completed === 0
-    todo.completed = todo.completed === 0 ? 1 : 0
+    todo.completed = completing ? 1 : 0
     todo.updated_at = String(Date.now())
-    await clipboardService.updateTodo(todo)
+    const ok = await withDbWrite(() => clipboardService.updateTodo(todo))
+    if (!ok) {
+      // 写库失败：回滚乐观更新，保证 UI 与数据库一致
+      todo.completed = prevCompleted
+      todo.updated_at = prevUpdatedAt
+      return
+    }
     // 完成状态变化影响提醒计划，同步给调度服务（完成 → 撤销其全部提醒）
     void reminderService.sync(todos.value)
     // 统计埋点（fire-and-forget）：仅"切换为完成"时 +1
@@ -437,7 +477,8 @@ const updateTodo = async (id: string, updates: Partial<Todo>) => {
   const todo = todos.value.find(t => t.id === id)
   if (todo) {
     Object.assign(todo, updates, { updated_at: String(Date.now()) })
-    await clipboardService.updateTodo(todo)
+    const ok = await withDbWrite(() => clipboardService.updateTodo(todo))
+    if (!ok) return
     // 截止时间/提醒设置/完成状态可能变化，同步给调度服务重排
     void reminderService.sync(todos.value)
   }
@@ -454,11 +495,13 @@ const deleteTodo = (id: string, rect?: DOMRect) => {
 
 /** 确认后真正执行待办删除 */
 async function executeTodoDelete(id: string) {
-  await clipboardService.deleteTodo(id)
+  const ok = await withDbWrite(() => clipboardService.deleteTodo(id))
+  if (!ok) return
   const index = todos.value.findIndex(t => t.id === id)
   if (index > -1) {
     todos.value.splice(index, 1)
   }
+  lastSignature = ''
   void reminderService.sync(todos.value)
 }
 
@@ -468,7 +511,7 @@ const changePriorityLevel = async (id: string, level: number) => {
   if (todo) {
     todo.priorityLevel = level
     todo.updated_at = String(Date.now())
-    await clipboardService.updateTodo(todo)
+    await withDbWrite(() => clipboardService.updateTodo(todo))
   }
 }
 
@@ -484,7 +527,7 @@ watch(priorityLevels, async (levels) => {
     }
   }
   if (changed.length > 0) {
-    await Promise.all(changed.map(t => clipboardService.updateTodo(t)))
+    await withDbWrite(async () => { await Promise.all(changed.map(t => clipboardService.updateTodo(t))) })
   }
 })
 
@@ -493,12 +536,12 @@ const changeCategory = async (id: string, category: string) => {
   if (todo) {
     todo.category = category
     todo.updated_at = String(Date.now())
-    await clipboardService.updateTodo(todo)
+    await withDbWrite(() => clipboardService.updateTodo(todo))
   }
 }
 
 /** 提醒设置（智能 / 多闹钟规则 / 不提醒）：持久化后同步调度服务重排 */
-const changeReminder = async (id: string, mode: Todo['remindMode'], rules: ReminderRule[]) => {
+const changeReminder = async (id: string, mode?: Todo['remindMode'], rules?: ReminderRule[]) => {
   await updateTodo(id, {
     remindMode: mode || 'smart',
     remindRules: rules || [],
@@ -507,7 +550,7 @@ const changeReminder = async (id: string, mode: Todo['remindMode'], rules: Remin
 }
 
 /** 分类列表（含用户增删后的状态） */
-const { categories, removeCategory } = useCategories()
+const { categories, addCategory, removeCategory } = useCategories()
 
 // ===== 删除确认（DeleteConfirm 内联组件，样式/操作与便签一致）=====
 const deleteConfirmVisible = ref(false)
@@ -550,12 +593,17 @@ const onDeleteCancel = () => {
 async function executeCategoryDelete(name: string) {
   const ok = await removeCategory(name)
   if (!ok) return
-  const fallback = categories.value[0] ?? '其他'
+  // 回退分类取剩余的第一个；分类被删光时回退到「其他」并补回列表，
+  // 避免待办被赋成一个 CategorySelect 里选不回的悬空分类
+  let fallback = categories.value[0] ?? '其他'
+  if (!categories.value.includes(fallback)) {
+    await addCategory(fallback)
+  }
   for (const todo of todos.value) {
     if (todo.category === name) {
       todo.category = fallback
-      todo.updated_at = new Date().toString()
-      await clipboardService.updateTodo(todo)
+      todo.updated_at = String(Date.now())
+      await withDbWrite(() => clipboardService.updateTodo(todo))
     }
   }
   if (newTodo.value.category === name) newTodo.value.category = fallback
@@ -571,16 +619,26 @@ const setSort = (sort: string) => {
 
 // 筛选/排序下拉：UiDropdown 统一管理开关（点击开/关、外部点击与 Escape 收起、选择后自动收起）
 
-const fetchTodos = async () => {
+const fetchTodos = async (opts?: { force?: boolean }) => {
+  // 上一轮未完成不重叠；写库进行中跳过本轮（防止拿旧数据覆盖乐观更新造成复选框回跳/竞态）
+  if (fetching) return
+  if (!opts?.force && pendingWrites > 0) return
+  fetching = true
   try {
     // 确保调度服务已启动（幂等；正常由 app.vue 更早启动，此处兜底覆盖"直达待办 Tab"的场景）
     await reminderService.start()
     const fetchedTodos = await clipboardService.fetchTodos({ value: { searchContent: '' } });
+    // 签名比对：无变化时不整表替换（避免全列表重渲染 + 全量提醒重算的空转）
+    const signature = fetchedTodos.map(t => `${t.id}:${t.updated_at}:${t.completed}`).join(',')
+    if (signature === lastSignature) return
+    lastSignature = signature
     todos.value = fetchedTodos;
     // 把最新列表同步给调度服务（内部按计划 diff，仅增删变化的定时器；首个 sync 处于补发阶段）
     void reminderService.sync(todos.value)
   } catch (error) {
     console.error("Failed to fetch todos:", error);
+  } finally {
+    fetching = false
   }
 }
 
@@ -594,19 +652,28 @@ onMounted(async () => {
   // Ctrl+Enter：进入选中待办的编辑态
   window.addEventListener('todo:edit-request', onEditRequest)
 
-  // 仅在 Tauri 桌面容器内定时从数据库刷新列表（数据同步用；提醒由调度服务的精确定时器负责）
+  // 仅在 Tauri 桌面容器内定时从数据库刷新列表（数据同步用；提醒由调度服务的精确定时器负责）。
+  // 3s 粒度 + in-flight 去重 + 签名跳过 + 写库期间挂起；窗口隐藏（托盘驻留）时暂停轮询。
   if (isTauri()) {
     pollTimer = setInterval(() => {
-      void fetchTodos()
-    }, 1000)
+      if (!document.hidden) void fetchTodos()
+    }, 3000)
+    // 窗口重新可见时立即刷新一次
+    document.addEventListener('visibilitychange', onVisibilityChange)
   }
 })
+
+/** 窗口从隐藏恢复可见：立即拉取一次，弥补暂停期间的空窗 */
+const onVisibilityChange = () => {
+  if (!document.hidden) void fetchTodos()
+}
 
 onBeforeUnmount(() => {
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
   }
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   // 提醒定时器由主窗口的 reminderService 持有，切 Tab 卸载本组件不影响提醒
   window.removeEventListener('focus-search', onFocusSearch)
   window.removeEventListener('todo:edit-request', onEditRequest)

@@ -15,7 +15,8 @@
  * - 改期（dueDate/remindAt 变化）会生成全新的 key，已发过的旧 key 不会
  *   阻止新截止时间的提醒重新武装。
  */
-import type { Todo, ReminderRule } from '../Entities';
+import type { Todo, ReminderRule } from '../entities';
+import { parseLocalDateTime } from '~/utils/datetime';
 
 /** 提醒阶段：p30/p10/p5 = 截止前 30/10/5 分钟（智能），custom = 自定义闹钟规则，due = 到期时刻 */
 export type ReminderStage = 'p30' | 'p10' | 'p5' | 'custom' | 'due';
@@ -38,10 +39,9 @@ export interface ReminderPlan {
 /** 距现在不足该毫秒数的阶段视为"立即触发"而丢弃，避免临期轰炸 */
 const IMMEDIATE_GRACE_MS = 2 * 60 * 1000;
 
-/** 解析本地 ISO（YYYY-MM-DDTHH:mm）字符串，非法返回 null */
+/** 解析本地日期时间字符串（统一走 utils/datetime），非法返回 null */
 function parseLocalISO(s?: string): number | null {
-  if (!s) return null;
-  const t = new Date(s).getTime();
+  const t = parseLocalDateTime(s);
   return Number.isFinite(t) ? t : null;
 }
 
@@ -83,8 +83,10 @@ export function computeReminders(todo: Todo, nowMs: number): ReminderPlan {
     const key = `${todo.id}|${todo.dueDate || ''}|${keySuffix}`;
     const item: PlannedReminder = { key, stage, fireAt };
     if (fireAt <= nowMs) {
-      // 已错过：仅在截止前仍有意义（补发价值），已过期直接忽略（到期通知不补历史）
-      if (fireAt < dueMs) plan.missed.push(item);
+      // 已错过：智能/到期阶段仅在截止前仍有补发价值（截止后补发已无意义）；
+      // 自定义闹钟（custom）是用户显式指定的时刻，即便晚于截止时间也要补发，
+      // 否则"截止 18:00、明天 9:00 提醒我"这类规则会在触发瞬间被静默吞掉。
+      if (fireAt < dueMs || stage === 'custom') plan.missed.push(item);
     } else if (fireAt - nowMs > IMMEDIATE_GRACE_MS || stage === 'due') {
       plan.active.push(item);
     }
@@ -115,8 +117,7 @@ export function computeReminders(todo: Todo, nowMs: number): ReminderPlan {
   return plan;
 }
 
-/** 计算单条闹钟规则的触发时刻；无法计算（缺截止/非法值/时刻解析失败）返回 null */
-function computeRuleFireAt(rule: ReminderRule, todo: Todo, nowMs: number, dueMs: number): number | null {
+/** 计算单条闹钟规则的触发时刻；无法计算（缺截止/非法值/时刻解析失败）返回 null */function computeRuleFireAt(rule: ReminderRule, todo: Todo, nowMs: number, dueMs: number): number | null {
   switch (rule.kind) {
     case 'percent': {
       // 按百分比：剩余时长降到该比例的时刻（提前 runway 的 value%）
@@ -138,4 +139,17 @@ function computeRuleFireAt(rule: ReminderRule, todo: Todo, nowMs: number, dueMs:
 export function hasReminderKey(todo: Todo, key: string, nowMs: number): boolean {
   const plan = computeReminders(todo, nowMs);
   return plan.active.some(i => i.key === key) || plan.missed.some(i => i.key === key);
+}
+
+/**
+ * 智能分档的可读描述（与 computeReminders 的分档逻辑同源）。
+ * 供 Todoitem 悬停提示使用：此前分档阈值在策略与提示两处各写一份，策略一改提示即漂移。
+ */
+export function describeSmartPlan(todo: Todo): string {
+  const dueMs = parseLocalISO(todo.dueDate);
+  if (!dueMs) return '';
+  const runway = runwayMs(todo, Date.now(), dueMs);
+  return runway >= 60 * 60 * 1000
+    ? '截止前 30 / 10 分钟各提醒一次'
+    : '截止前 5 分钟提醒一次';
 }

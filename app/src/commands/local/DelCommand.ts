@@ -1,9 +1,5 @@
 import type { Command } from '../Command';
-import { ref } from 'vue';
-import type {ClipboardData} from "~/src/Entities";
 import { activeTab } from '~/composables/useTabs';
-
-export const deleteTarget = ref<ClipboardData | null>(null);
 
 export class DelCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {

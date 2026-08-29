@@ -2,7 +2,7 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
-import { isTauri } from '~/src/utils/env';
+import { isTauri } from '~/utils/env';
 
 const imgSrc = ref('');
 const scale = ref(1);
@@ -20,7 +20,7 @@ let unlisten: (() => void) | null = null;
 let keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
 /** 当前可切换的图片列表（base64）及序号 */
-let images: string[] = [];
+const images = ref<string[]>([]);
 const currentIndex = ref(0);
 /** 本窗口 label（防多查看器事件串扰） */
 let myLabel = '';
@@ -95,9 +95,9 @@ function onImageDblClick() {
 /* ---------------- 图片切换 ---------------- */
 
 function showImage(newIndex: number) {
-  if (!images.length) return;
-  currentIndex.value = (newIndex + images.length) % images.length;
-  const img = images[currentIndex.value];
+  if (!images.value.length) return;
+  currentIndex.value = (newIndex + images.value.length) % images.value.length;
+  const img = images.value[currentIndex.value];
   if (img) imgSrc.value = img;
   applyFit();
 }
@@ -118,9 +118,9 @@ function applyPayload(payload: unknown) {
   if (typeof p === 'object' && p.label && p.label !== myLabel) return;
 
   if (typeof p === 'object' && Array.isArray(p.images)) {
-    images = p.images;
-    currentIndex.value = Math.min(Math.max(0, p.index ?? 0), Math.max(0, images.length - 1));
-    const img = images[currentIndex.value];
+    images.value = p.images;
+    currentIndex.value = Math.min(Math.max(0, p.index ?? 0), Math.max(0, images.value.length - 1));
+    const img = images.value[currentIndex.value];
     if (img) {
       imgSrc.value = img;
       loading.value = false;
@@ -128,7 +128,7 @@ function applyPayload(payload: unknown) {
     }
   } else if (typeof p === 'string') {
     // 兼容旧格式：单张 base64
-    images = [p];
+    images.value = [p];
     currentIndex.value = 0;
     imgSrc.value = p;
     loading.value = false;

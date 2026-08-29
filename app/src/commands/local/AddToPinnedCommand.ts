@@ -20,14 +20,20 @@ export class AddToPinnedCommand implements Command {
         const content = item.content;
         const type = (item.type ?? 'text') as 'text' | 'image';
 
-        // 去重：已添加则忽略
-        const exists = await clipboardService.isPinnedContentExist(content, type);
-        if (exists) {
-            await emit('add-to-pinned:result', { status: 'exists' });
-            return;
-        }
+        try {
+            // 去重：已添加则忽略
+            const exists = await clipboardService.isPinnedContentExist(content, type);
+            if (exists) {
+                await emit('add-to-pinned:result', { status: 'exists' });
+                return;
+            }
 
-        await clipboardService.insertPinnedClip(content, type, item.name ?? '', item.source ?? '');
-        await emit('add-to-pinned:result', { status: 'added' });
+            await clipboardService.insertPinnedClip(content, type, '', item.source ?? '');
+            await emit('add-to-pinned:result', { status: 'added' });
+        } catch (e) {
+            // DB 异常经 result 事件上报为失败，主窗口可见，不再成为 unhandled rejection
+            console.error('添加常用剪贴失败:', e);
+            await emit('add-to-pinned:result', { status: 'error' }).catch(() => {});
+        }
     }
 }

@@ -1,10 +1,10 @@
 import { ref, nextTick } from 'vue';
-import type { Todo } from '~/src/Entities';
+import type { Todo } from '~/src/entities';
 
 /**
  * 待办列表共享状态（与剪贴板 clipboardStore 同模式）
  *
- * TodoList.vue（渲染/列表）与本地命令（方向键选择、Ctrl+Enter 编辑、Enter 保存）
+ * TodoList.vue（渲染/列表）与本地命令（方向键选择、Ctrl+Enter 编辑）
  * 统一读写这里的状态，保证「列表内容 / 选中项 / 编辑触发」始终一致。
  */
 
@@ -16,16 +16,6 @@ export const selectedTodoIndex = ref(0);
 
 /** 编辑触发信号：Ctrl+Enter 递增，TodoItem 监听后对选中项进入编辑态 */
 export const editSignal = ref(0);
-
-/** 当前选中项 */
-export function getSelectedTodo(): Todo | undefined {
-  return todoList.value[selectedTodoIndex.value];
-}
-
-/** 当前选中索引 */
-export function getSelectedTodoIndex(): number {
-  return selectedTodoIndex.value;
-}
 
 /** 点击列表行选中指定索引并滚动到可见位置 */
 export function selectTodo(index: number) {

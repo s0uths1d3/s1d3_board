@@ -1,5 +1,5 @@
 import { ref, nextTick } from 'vue';
-import type { ClipboardData } from '~/src/Entities';
+import type { ClipboardData } from '~/src/entities';
 import clipboardService from '~/src/db/dbService';
 
 /**

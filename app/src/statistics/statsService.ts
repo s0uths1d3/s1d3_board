@@ -1,6 +1,7 @@
 import Database from "@tauri-apps/plugin-sql";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isTauri } from "~/src/utils/env";
+import { isTauri } from "~/utils/env";
+import { toDateString } from "~/utils/datetime";
 
 /**
  * 统计服务（单例）
@@ -52,14 +53,6 @@ const DEFAULT_RANGE_FIELDS: StatField[] = [
   'active_dawn', 'active_day', 'active_evening', 'active_night',
 ];
 
-/** 本地时区 YYYY-MM-DD */
-function toDateString(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 /** 两个 YYYY-MM-DD 之间的天数差（含端点），如 08-01~08-15 = 15 天 */
 export function daySpan(from: string, to: string): number {
   const f = new Date(`${from}T00:00:00`);
@@ -100,6 +93,12 @@ class StatsService {
     }
   }
 
+  /** 供统计相关模块复用同一数据库连接，避免各模块重复 Database.load（多持连接） */
+  public async getRawDb(): Promise<Database> {
+    await this.ensureDbInitialized();
+    return this.db!;
+  }
+
   /** 本地时区今天（YYYY-MM-DD） */
   private today(): string {
     return toDateString(new Date());
@@ -109,6 +108,7 @@ class StatsService {
    * 1) 当日累加（核心写入口，fire-and-forget）
    * 仅写入内存累加器，不立即落库——把「事件级」写库降到「窗口级」（§14.1）。
    * 趣味时段列（active_*）按当前小时自动累加，埋点无需感知时段。
+   * 传入 key 按白名单过滤：误传未知字段名时静默丢弃，而非拼进 SQL 造成非法语句。
    */
   public async record(partial: Partial<Record<StatField, number>>): Promise<void> {
     try {
@@ -126,6 +126,7 @@ class StatsService {
 
       const acc = this.pending.get(date) ?? {};
       for (const [k, v] of Object.entries(partial)) {
+        if (!DEFAULT_RANGE_FIELDS.includes(k as StatField)) continue;
         acc[k as StatField] = (acc[k as StatField] ?? 0) + (v ?? 0);
       }
       acc[bucket] = (acc[bucket] ?? 0) + 1;
@@ -174,7 +175,8 @@ class StatsService {
   /** 把 pending 中落在 [from, to] 区间内的增量合并到聚合结果（§14.7，纯内存加法） */
   private mergePending(target: Record<string, number>, from?: string, to?: string): void {
     for (const [date, acc] of this.pending) {
-      if (from && (date < from || date > to)) continue;
+      if (from && date < from) continue;
+      if (to && date > to) continue;
       for (const [k, v] of Object.entries(acc)) {
         target[k] = (target[k] ?? 0) + (v ?? 0);
       }

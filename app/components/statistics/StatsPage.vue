@@ -6,15 +6,18 @@
  * - 核心指标卡片 / Tab 访问分布 / 趣味数据 / 每日趋势（§7.3-7.6）
  * - 性能：聚合结果用 shallowRef；趋势超 92 天自动按月降采样（§14.4）；组件卸载清理定时器与监听（§14.5）
  */
-import { ref, shallowRef, computed, watch, onMounted, nextTick } from 'vue';
+import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import statsService, { daySpan, TREND_DOWNSAMPLE_DAYS, type StatsSummary, type StatField } from '~/src/statistics/statsService';
 import {
   computeTags, computeUniqueTitle, computeTitleScores, tagsSpanEnough,
   CATEGORY_LABEL, type UserTag, type UserTagCategory,
 } from '~/src/statistics/userTags';
-import { buildMockDays } from '~/src/statistics/mockData';
+import { toDateString } from '~/utils/datetime';
 import DatePicker from '~/components/common/DatePicker.vue';
 import LazySection from '~/components/statistics/LazySection.vue';
+
+/** 测试数据面板仅开发环境可用（生产不渲染入口，也不打包 mock 引用） */
+const isDev = import.meta.dev;
 
 type RangeKey = 'day' | 'week' | 'month' | 'year' | 'custom';
 
@@ -25,14 +28,6 @@ const rangeOptions: { key: RangeKey; name: string }[] = [
   { key: 'year', name: '年度' },
   { key: 'custom', name: '自定义' },
 ];
-
-/** 本地时区 YYYY-MM-DD */
-function toDateString(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
 
 const range = ref<RangeKey>('month');
 const customFrom = ref('');
@@ -99,6 +94,8 @@ function shiftRange(delta: number) {
 
 // ===== 数据（§14.5：聚合结果用 shallowRef，避免大对象深层响应）=====
 const loading = ref(false);
+/** 查询失败标记：与"暂无数据"空态区分，可重试 */
+const loadError = ref(false);
 const stats = shallowRef<StatsSummary>({});
 /** 当前趋势字段组合 */
 const trendFields = ref<StatField[]>(['clip_text', 'clip_image', 'clip_use']);
@@ -135,6 +132,7 @@ async function load(opts?: { skeleton?: boolean }) {
   // 首次进入 Tab（或需要整页骨架）时显示整页加载态；
   // 切换日期范围时不隐藏首屏内容，仅重置下方流式区块（lazyKey++）重放流式加载。
   const showFullSkeleton = opts?.skeleton ?? true;
+  loadError.value = false;
   if (showFullSkeleton) {
     loading.value = true;
   } else {
@@ -160,6 +158,8 @@ async function load(opts?: { skeleton?: boolean }) {
       kingClip.value = null;
     }
   } catch (e) {
+    // 查询失败显式标记：不与"暂无统计数据"空态混淆
+    loadError.value = true;
     console.error('统计页加载失败:', e);
   } finally {
     loading.value = false;
@@ -174,9 +174,23 @@ async function switchTrend(opt: { key: string; name: string; fields: StatField[]
 }
 
 // rangeDates 已涵盖 range 切换与自定义日期输入变化（§14.8：仅进入统计 Tab 才查询）
-// 切换日期范围：不显示整页骨架，首屏原地更新，下方流式区块重放"骨架→滚动加载"
+// 切换日期范围：不显示整页骨架，首屏原地更新，下方流式区块重放"骨架→滚动加载"。
+// 加 150ms trailing 防抖：自定义区间下 DatePicker 分别写入 from/to，一次选择会触发两次变化，
+// 合并为一次加载（配合 userTags 的 buildCtx 短缓存，避免连续全量重查）。
+let loadDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 watch(rangeDates, () => {
-  void load({ skeleton: false });
+  if (loadDebounceTimer) clearTimeout(loadDebounceTimer);
+  loadDebounceTimer = setTimeout(() => {
+    loadDebounceTimer = null;
+    void load({ skeleton: false });
+  }, 150);
+});
+
+onBeforeUnmount(() => {
+  if (loadDebounceTimer) {
+    clearTimeout(loadDebounceTimer);
+    loadDebounceTimer = null;
+  }
 });
 
 onMounted(async () => {
@@ -286,7 +300,7 @@ const typingChars = computed(() => {
   return chars > 0 ? `${(chars / 10000).toFixed(1)} 万字` : '0 字';
 });
 
-/** 最长连续使用天数（基于趋势序列的日期集合） */
+/** 最长连续使用天数（基于趋势序列的日期集合）；月降采样时单位为"月" */
 const longestStreak = computed(() => {
   const dates = series.value.map(r => r.stat_date);
   if (dates.length === 0) return 0;
@@ -308,6 +322,11 @@ const longestStreak = computed(() => {
   }
   return best;
 });
+
+/** 展示文案：降采样视图统计的是"连续活跃月"，单位不能仍写"天" */
+const longestStreakLabel = computed(() =>
+  isDownsampled.value ? `${longestStreak.value} 个月` : `${longestStreak.value} 天`
+);
 
 /** 活跃时段分布（4 段条形，最高高亮，§7.5） */
 const periodDist = computed(() => {
@@ -402,6 +421,7 @@ const editMsg = ref('');
 
 /** 打开编辑面板：初值取当日真实数据（无则全 0），并附带最近一条 mock 行供参考 */
 async function openEditPanel() {
+  if (!import.meta.dev) return;
   editDate.value = toDateString(new Date());
   editMsg.value = '';
   editVisible.value = true;
@@ -417,9 +437,11 @@ async function openEditPanel() {
   }
 }
 
-/** 载入 mock 数据作为当前编辑初值（用 mock 序列中最近一天的各字段值） */
+/** 载入 mock 数据作为当前编辑初值（用 mock 序列中最近一天的各字段值）。
+ *  mockData 改为 dev-only 动态导入，生产构建不打包演示数据生成器。 */
 async function loadMockValues() {
   try {
+    const { buildMockDays } = await import('~/src/statistics/mockData');
     const days = buildMockDays();
     const sample = days[days.length - 1]?.row ?? {};
     editFields.value = EDIT_FIELD_DEFS.map(d => ({
@@ -471,6 +493,7 @@ async function saveEditData() {
         </button>
         <div class="ml-auto flex items-center gap-2 text-xs text-ink-faint">
           <button
+            v-if="isDev"
             type="button"
             class="btn-soft px-2.5 py-1 text-xs"
             v-tip="'编辑当日统计测试数据（演示/调试用）'"
@@ -525,8 +548,17 @@ async function saveEditData() {
     </div>
 
     <template v-else>
+      <!-- 查询失败态（与"暂无数据"空态区分，提供重试入口） -->
+      <div v-if="loadError" class="glass-card rounded-2xl p-12 text-center">
+        <p class="text-lg text-ink">统计数据加载失败</p>
+        <p class="mt-1 text-sm text-ink-faint">请检查数据库是否可用后重试</p>
+        <button type="button" class="btn-soft mt-4 px-4 py-1.5 text-sm" @click="load({ skeleton: true })">
+          重试
+        </button>
+      </div>
+
       <!-- ===== 空态（§7.7）===== -->
-      <div v-if="!hasData" class="glass-card rounded-2xl p-12 text-center">
+      <div v-else-if="!hasData" class="glass-card rounded-2xl p-12 text-center">
         <div class="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-gold/15">
           <svg class="h-8 w-8 text-gold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
                stroke-linecap="round" stroke-linejoin="round">
@@ -638,9 +670,9 @@ async function saveEditData() {
           <div class="glass-card rounded-2xl p-4">
             <div class="text-xs uppercase tracking-wide text-ink-faint">最长连续使用</div>
             <div class="mt-1 text-2xl font-semibold text-ink tabular-nums">
-              {{ longestStreak }} 天
+              {{ longestStreakLabel }}
             </div>
-            <div class="mt-1 text-xs text-ink-faint">所选范围内连续活跃记录</div>
+            <div class="mt-1 text-xs text-ink-faint">{{ isDownsampled ? '所选范围内连续活跃月份' : '所选范围内连续活跃记录' }}</div>
           </div>
 
           <!-- 时长换算 -->

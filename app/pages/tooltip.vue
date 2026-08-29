@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { getCurrentWindow, currentMonitor, PhysicalPosition, LogicalSize } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
-import { isTauri } from '~/src/utils/env';
+import { isTauri } from '~/utils/env';
 
 interface TooltipPayload {
   /** 文本模式内容（逐行带行号）；图片模式下为空 */
@@ -50,6 +50,15 @@ const lines = computed(() => {
     .map((l) => l.length ? l : ' ');
 });
 
+/** 实际渲染的行数上限：万行级剪贴内容若全部渲染会创建 2 万+ DOM 节点（容器可滚动但 DOM 不裁剪） */
+const MAX_RENDER_LINES = 400;
+const renderedLines = computed(() => {
+  const ls = lines.value;
+  return ls.length > MAX_RENDER_LINES ? ls.slice(0, MAX_RENDER_LINES) : ls;
+});
+/** 行数被截断时在元信息区给出提示 */
+const hiddenLineCount = computed(() => Math.max(0, lineCount.value - MAX_RENDER_LINES));
+
 /** 尺寸基准（px）：以美观、紧凑、明显小于主窗口(854x480) 为基础 */
 const MIN_WIDTH = 280;
 const MIN_HEIGHT = 48;
@@ -78,10 +87,13 @@ async function clampToScreen(
     const h = size.height;
 
     const monitor = await currentMonitor();
-    const originX = monitor ? monitor.position.x : 0;
-    const originY = monitor ? monitor.position.y : 0;
-    const screenW = monitor ? monitor.size.width : window.screen.width;
-    const screenH = monitor ? monitor.size.height : window.screen.height;
+    // monitor 获取失败时直接返回原坐标：window.screen 是 CSS 像素而 monitor.size 是物理像素，
+    // 混用会导致 DPR≠1 时贴边计算错误
+    if (!monitor) return { x: anchorX, y: anchorY };
+    const originX = monitor.position.x;
+    const originY = monitor.position.y;
+    const screenW = monitor.size.width;
+    const screenH = monitor.size.height;
 
     const right = originX + screenW;
     const bottom = originY + screenH;
@@ -154,7 +166,12 @@ async function fitWindowToContent() {
   } catch { /* 尺寸调整失败不影响显示 */ }
 }
 
+/** 并发令牌：快速跨项 hover 时多次 async 调用会在 await 处交错，
+ *  用自增 id 校验，过期的调用不再落窗口位置/尺寸，避免内容与尺寸来自两次调用混合 */
+let showRequestId = 0;
+
 async function showTooltip(payload: TooltipPayload) {
+  const requestId = ++showRequestId;
   // 按模式重置内容：文本模式用 text，图片模式用 image+meta
   text.value = payload.text ?? '';
   image.value = payload.image ?? '';
@@ -166,8 +183,10 @@ async function showTooltip(payload: TooltipPayload) {
   if (!isTauri()) return;
 
   await fitWindowToContent();
+  if (requestId !== showRequestId) return;
 
   const { x, y } = await clampToScreen(payload.x, payload.y, payload.top, payload.bottom);
+  if (requestId !== showRequestId) return;
   await getCurrentWindow()
     .setPosition(new PhysicalPosition(x, y))
     .catch(() => {});
@@ -249,6 +268,9 @@ onBeforeUnmount(() => {
     document.removeEventListener('mouseup', docMouseUpHandler);
     docMouseUpHandler = null;
   }
+  // 卸载时必须复位主窗口的激活标志：否则 __tooltipActive 卡在 true，
+  // 主窗口"失焦自动隐藏"从此永久失效（窗口被单例重置逻辑关闭等路径不经过 hideTooltip）
+  emit('tooltip:active', null).catch(() => {});
 });
 </script>
 
@@ -266,15 +288,16 @@ onBeforeUnmount(() => {
             class="tooltip-image"
         />
       </div>
-      <!-- 文本模式：逐行带行号 -->
+      <!-- 文本模式：逐行带行号（超大内容仅渲染前 MAX_RENDER_LINES 行，剩余在元信息区提示） -->
       <div v-else class="tooltip-lines">
-        <div v-for="(line, i) in lines" :key="i" class="tooltip-line-row">
+        <div v-for="(line, i) in renderedLines" :key="i" class="tooltip-line-row">
           <span class="tooltip-line-num">{{ i + 1 }}</span>
           <span class="tooltip-line">{{ line }}</span>
         </div>
       </div>
       <!-- 元信息：单行，固定在 tooltip 底部（图片/文本共用） -->
-      <div v-if="meta" class="tooltip-meta">{{ meta }}</div>
+      <div v-if="hiddenLineCount > 0" class="tooltip-meta">内容过长，已省略其后 {{ hiddenLineCount }} 行</div>
+      <div v-else-if="meta" class="tooltip-meta">{{ meta }}</div>
     </div>
   </main>
 </template>

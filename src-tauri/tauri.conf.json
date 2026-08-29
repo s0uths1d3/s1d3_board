@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "S1d3Board",
   "build": {
-    "frontendDist": "../dist",
+    "frontendDist": "../.output/public",
     "devUrl": "http://localhost:12912",
-    "beforeDevCommand": "npm run dev -- --port 12912",
+    "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run generate"
   },
   "app": {
@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
   "bundle": {

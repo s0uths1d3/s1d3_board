@@ -4,7 +4,7 @@ import {Image} from '@tauri-apps/api/image';
 import {resolveResource} from '@tauri-apps/api/path';
 import {WebviewWindow} from '@tauri-apps/api/webviewWindow';
 import {getCurrentWindow} from "@tauri-apps/api/window";
-import {isTauri} from "~/src/utils/env";
+import {isTauri} from "~/utils/env";
 
 export default defineNuxtPlugin(async (nuxtApp) => {
     // 托盘图标 / 窗口 API 仅存在于 Tauri 桌面容器内，

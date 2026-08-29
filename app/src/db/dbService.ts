@@ -1,6 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from 'tauri-plugin-clipboard-api';
-import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip } from "../Entities";
+import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip } from "../entities";
 import statsService from "~/src/statistics/statsService";
 
 /** 优先级数值收敛：整数 0-255（越界/非法回退 127 中档） */
@@ -32,7 +32,7 @@ function stringifyRemindRules(rules?: ReminderRule[]): string {
  */
 function mapTodoRemindRules(row: Todo): Todo {
     const rules: ReminderRule[] = [];
-    const raw = (row as unknown as { remind_rules?: string }).remind_rules;
+    const raw = row.remind_rules;
     if (raw) {
         try {
             const parsed: unknown = JSON.parse(raw);
@@ -56,17 +56,22 @@ function mapTodoRemindRules(row: Todo): Todo {
 }
 
 
-class ClipboardService {
-    private static instance: ClipboardService;
+/** LIKE 通配符转义：搜索词中的 % _ \ 按字面匹配（配合 ESCAPE '\'） */
+function escapeLike(input: string): string {
+    return input.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+class DatabaseService {
+    private static instance: DatabaseService;
     private db: Database | undefined;
 
     private constructor() {}
 
-    public static getInstance(): ClipboardService {
-        if (!ClipboardService.instance) {
-            ClipboardService.instance = new ClipboardService();
+    public static getInstance(): DatabaseService {
+        if (!DatabaseService.instance) {
+            DatabaseService.instance = new DatabaseService();
         }
-        return ClipboardService.instance;
+        return DatabaseService.instance;
     }
 
     private async initDatabase() {
@@ -90,24 +95,22 @@ class ClipboardService {
             { table: 'daily_stat', column: 'todo_reminded', ddl: 'ALTER TABLE daily_stat ADD COLUMN todo_reminded INTEGER NOT NULL DEFAULT 0' },
             { table: 'daily_stat', column: 'todo_chars', ddl: 'ALTER TABLE daily_stat ADD COLUMN todo_chars INTEGER NOT NULL DEFAULT 0' },
         ];
+        let addedPriorityLevel = false;
         for (const { table, column, ddl } of wanted) {
             try {
                 const cols = await this.db!.select<{ name: string }[]>(`PRAGMA table_info(${table})`);
                 if (Array.isArray(cols) && !cols.some(c => c.name === column)) {
                     await this.db!.execute(ddl);
                     console.info(`[db] 补齐列 ${table}.${column}`);
+                    // 记录"本次实际执行的补列"，供补列后的数据回填判断使用
+                    if (table === 'todo' && column === 'priority_level') {
+                        addedPriorityLevel = true;
+                    }
                 }
             } catch (e) {
                 // 单列补齐失败（如表尚未创建）不影响其余列与其余功能
                 console.warn(`[db] 检查/补齐列 ${table}.${column} 失败:`, e);
             }
-        }
-        let addedPriorityLevel = false;
-        if (wanted.some(w => w.column === 'priority_level')) {
-            try {
-                const cols = await this.db!.select<{ name: string }[]>("PRAGMA table_info(todo)");
-                addedPriorityLevel = Array.isArray(cols) && !cols.some(c => c.name === 'priority_level');
-            } catch { addedPriorityLevel = false; }
         }
         if (addedPriorityLevel) {
             // 刚补建 priority_level 时回填存量数据：旧三档文本 → 0/127/255（WHERE 保证幂等）
@@ -133,7 +136,11 @@ class ClipboardService {
 
         // 文本更新
         await onTextUpdate(async (newText) => {
-            await this.saveClipboard(newText, 'text');
+            try {
+                await this.saveClipboard(newText, 'text');
+            } catch (err) {
+                console.error('保存剪贴板文本失败:', err);
+            }
         });
 
         // 图片更新：onImageUpdate 在某些平台/格式下回传的是文件路径而非 base64，
@@ -162,42 +169,36 @@ class ClipboardService {
 
     /**
      * 写入一条剪贴板记录（文本或图片）。
-     * - 同类型 + 同内容已存在则仅递增使用次数；否则插入新行。
+     * - 使用 INSERT ... ON CONFLICT(content) 单语句 upsert：并发监听回调同时到达时
+     *   不会撞 content UNIQUE 约束（此前的"先查后插"存在竞态，第二条会抛错丢事件）；
+     * - 新插入时额外做统计埋点与按上限裁剪。
      */
     private async saveClipboard(content: string, type: 'text' | 'image'): Promise<void> {
         const now = Math.floor(Date.now());
+        // 先查一次用于区分"新插入 / 计数递增"（统计与裁剪只应发生在新插入时）；
+        // 写入本身用 ON CONFLICT 单语句 upsert，即使并发事件在查询后插入也不会撞 UNIQUE 丢事件。
         const existingRecord: ClipboardData[] = await this.db!.select(
-            "SELECT id FROM clipboard WHERE content = $1 AND type = $2",
-            [content, type]
+            "SELECT id FROM clipboard WHERE content = $1",
+            [content]
         );
+        const isNew = existingRecord.length === 0;
 
-        if (existingRecord.length === 0) {
-            const result = await this.db!.execute(
-                "INSERT INTO clipboard (content, category, type, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) ",
-                [content, 'T', type, now, now]
-            );
-            console.log(`New ${type} record inserted:`, result);
-            // 统计埋点（fire-and-forget）：插入新文本/图片剪贴 +1；文本额外累加字符量（图片 base64 不计入"打字量"）
-            if (type === 'text') {
-                void statsService.record({ clip_text: 1, clip_chars: content.length });
-            } else {
-                void statsService.record({ clip_image: 1 });
-            }
-            // 插入新记录后按「剪贴板最大存储数量」裁剪最旧记录
-            await this.trimClipboard();
+        const result = await this.db!.execute(
+            "INSERT INTO clipboard (content, category, type, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) " +
+            "ON CONFLICT(content) DO UPDATE SET count = count + 1, updated_at = $5",
+            [content, 'T', type, now, now]
+        );
+        console.log(`Clipboard ${type} saved (upsert):`, result);
+        if (!isNew) return;
+
+        // 统计埋点（fire-and-forget）：新插入文本/图片剪贴 +1；文本额外累加字符量（图片 base64 不计入"打字量"）
+        if (type === 'text') {
+            void statsService.record({ clip_text: 1, clip_chars: content.length });
         } else {
-            const record = existingRecord[0];
-            if (record && record.id !== undefined) {
-                const result = await this.db!.execute(
-                    "UPDATE clipboard SET count = count + 1, updated_at = $2 WHERE id = $1",
-                    [record.id, now]
-                );
-                console.log(`Count incremented (${type}):`, result);
-            } else {
-                console.error("Existing record is missing an ID:", existingRecord);
-                throw new Error("Existing record is missing an ID");
-            }
+            void statsService.record({ clip_image: 1 });
         }
+        // 新记录插入后按「剪贴板最大存储数量」裁剪最旧记录
+        await this.trimClipboard();
     }
 
 
@@ -250,30 +251,33 @@ class ClipboardService {
         } else if (type === 'text') {
             conds.push("type = 'text'");
         } else if (content) {
-            // 默认（全部）：图片不参与文本搜索，仅在文本中匹配
+            // 默认（全部）：图片不参与文本搜索，仅在文本中匹配；
+            // 搜索词转义 % _ \，保证按字面匹配
             paramIdx += 1;
-            conds.push(`content LIKE $${paramIdx} AND type = 'text'`);
-            params.push(`%${content}%`);
+            conds.push(`content LIKE $${paramIdx} ESCAPE '\\' AND type = 'text'`);
+            params.push(`%${escapeLike(content)}%`);
         }
 
         const whereSql = conds.length ? `WHERE ${conds.join(' AND ')}` : 'WHERE 1=1';
 
         // 查询上限随「剪贴板最大存储数量」（max_save_count）动态调整；
-        // 收藏列表仍保持 100 条上限；未设置时回退默认值。
+        // 收藏列表仍保持 100 条上限；未设置时回退默认值。上限钳制到 1 万，
+        // 防止极端配置一次性把全表（含图片 base64）拉进内存。
         let limit = favorite === 1 ? 100 : 500;
         const maxRaw = await this.getKeyValue('max_save_count');
         const parsed = parseInt(maxRaw ?? '', 10);
         if (parsed > 0) {
-            limit = favorite === 1 ? Math.min(parsed, 100) : parsed;
+            limit = favorite === 1 ? Math.min(parsed, 100) : Math.min(parsed, 10000);
         }
 
         const sql = `SELECT * FROM clipboard ${whereSql} ORDER BY updated_at DESC LIMIT ${limit}`;
         return await this.db!.select(sql, params) as ClipboardData[];
     }
 
-    public async fetchClipboardSingleData(id: number): Promise<ClipboardData> {
-        const data =  await this.db!.select("SELECT * FROM clipboard WHERE id = $1", [id]) as ClipboardData[]
-        return data[0] as ClipboardData
+    public async fetchClipboardSingleData(id: number): Promise<ClipboardData | undefined> {
+        await this.ensureDbInitialized();
+        const data = await this.db!.select("SELECT * FROM clipboard WHERE id = $1", [id]) as ClipboardData[]
+        return data[0]
     }
 
     public async updateFavorite(id: number, value: number): Promise<void> {
@@ -367,7 +371,7 @@ class ClipboardService {
         const now = Math.floor(Date.now());
         await this.db!.execute(
             "UPDATE pinned_clip SET pinned_at = $2, updated_at = $3 WHERE id = $1",
-            [id, pinned ? `${now}` : '', now]
+            [id, pinned ? now : '', now]
         );
     }
 
@@ -378,7 +382,8 @@ class ClipboardService {
     }
 
     /**
-     * 清空所有业务数据（剪贴板 / 便签 / 待办），保留配置表（settings、shortcut_binding）。
+     * 清空业务数据（剪贴板 / 便签 / 待办），保留配置表（settings、shortcut_binding）
+     * 以及常用剪贴（pinned_clip）与统计数据（daily_stat）。
      * 同时重置各表的自增主键计数。
      */
     public async clearDatabase(): Promise<void> {
@@ -389,11 +394,6 @@ class ClipboardService {
         await this.db!.execute(
             "DELETE FROM sqlite_sequence WHERE name IN ('clipboard', 'note', 'todo')"
         );
-    }
-
-    public  async  getShortcutSetting():Promise<any> {
-        await this.ensureDbInitialized();
-        return  await this.db!.select("SELECT * FROM settings WHERE type = $1", ['shortcut']);
     }
 
     /**
@@ -481,14 +481,15 @@ class ClipboardService {
         const content: string = filter.value.searchContent;
 
         return await this.db!.select(
-            "SELECT * FROM note WHERE content LIKE $1 ORDER BY updated_at DESC LIMIT 500",
-            [`%${content}%`]
+            "SELECT * FROM note WHERE content LIKE $1 ESCAPE '\\' ORDER BY updated_at DESC LIMIT 500",
+            [`%${escapeLike(content)}%`]
         ) as Note[];
     }
 
-    public async fetchSingleNote(noteId: string): Promise<Note> {
+    public async fetchSingleNote(noteId: string): Promise<Note | undefined> {
+        await this.ensureDbInitialized();
         const data = await this.db!.select("SELECT * FROM note WHERE id = $1", [noteId]) as Note[];
-        return data[0] as Note;
+        return data[0];
     }
 
 
@@ -528,20 +529,21 @@ class ClipboardService {
         const content: string = filter.value.searchContent;
 
         const rows = await this.db!.select(
-            "SELECT * FROM todo WHERE title LIKE $1 ORDER BY updated_at DESC LIMIT 500",
-            [`%${content}%`]
+            "SELECT * FROM todo WHERE title LIKE $1 ESCAPE '\\' ORDER BY updated_at DESC LIMIT 500",
+            [`%${escapeLike(content)}%`]
         ) as Todo[];
         return rows.map(mapTodoRemindRules);
     }
 
-    public async fetchSingleTodo(todoId: string): Promise<Todo> {
+    public async fetchSingleTodo(todoId: string): Promise<Todo | undefined> {
+        await this.ensureDbInitialized();
         const data = await this.db!.select("SELECT * FROM todo WHERE id = $1", [todoId]) as Todo[];
-        return data[0] ? mapTodoRemindRules(data[0]) : data[0];
+        return data[0] ? mapTodoRemindRules(data[0]) : undefined;
     }
 
 
 }
 
-const clipboardService = ClipboardService.getInstance();
+const clipboardService = DatabaseService.getInstance();
 
 export default clipboardService

@@ -3,7 +3,12 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-05-15',
   devtools: { enabled: true },
   ssr: false,
-  devServer: { host: process.env.TAURI_DEV_HOST || 'localhost' },
+  // Tauri devUrl 固定指向 http://localhost:12912（见 tauri.conf.json），
+  // 端口必须一致且不可漂移，因此 strictPort 开启、端口统一由 TAURI_DEV_PORT 提供。
+  devServer: {
+    host: process.env.TAURI_DEV_HOST || 'localhost',
+    port: Number(process.env.TAURI_DEV_PORT) || 12912,
+  },
   modules: ['@nuxtjs/tailwindcss'],
   css: ['~/assets/css/main.css'],
   vite: {
@@ -14,18 +19,7 @@ export default defineNuxtConfig({
     // https://v2.tauri.org.cn/reference/environment-variables/
     envPrefix: ['VITE_', 'TAURI_'],
     server: {
-      // Tauri requires a consistent port
-      strictPort: false,
+      strictPort: true,
     }
-  },
-  nitro: {
-    output: {
-      publicDir: '../.output/public'
-    }
-  },
-  plugins:[
-      '~/plugins/vTip.ts',
-      '~/plugins/init.ts',
-      '~/plugins/disableWebviewDefaults.client.ts'
-  ]
+  }
 })

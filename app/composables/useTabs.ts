@@ -11,6 +11,8 @@ const activeTabRef = ref<TabKey>('clip')
 export const activeTab = activeTabRef
 
 export function setActiveTab(key: TabKey) {
+  // 同值守卫：反复点击当前 Tab 不应计入统计（注释语义与行为一致，避免 tab_x 虚高）
+  if (activeTabRef.value === key) return
   activeTabRef.value = key
   // 统计埋点（fire-and-forget，§5.6）：仅在真正切换时 +1
   void statsService.record({ [`tab_${key}`]: 1 } as Partial<Record<StatField, number>>)
@@ -150,9 +152,18 @@ export function toggleTabEnabled(key: TabKey) {
   if (row) setTabEnabled(key, !row.enabled)
 }
 
+/** 确保内存中有顺序数据：全新安装（无持久化配置）时 tabOrder 为空，
+ *  不初始化会导致拖拽/上移/下移在空数组上 indexOf === -1 直接失效 */
+function ensureOrder(): TabKey[] {
+  if (tabOrder.value.length === 0) {
+    tabOrder.value = tabItems.map(t => t.key)
+  }
+  return tabOrder.value
+}
+
 /** 调整 tab 顺序：dir=-1 上移，dir=1 下移 */
 export function moveTab(key: TabKey, dir: -1 | 1) {
-  const order = [...tabOrder.value]
+  const order = [...ensureOrder()]
   const i = order.indexOf(key)
   const j = i + dir
   if (i < 0 || j < 0 || j >= order.length) return
@@ -166,7 +177,7 @@ export function moveTab(key: TabKey, dir: -1 | 1) {
 
 /** 拖拽排序：把 fromKey 移动到 toKey 位置（仅更新内存，配合 persistNavConfig 持久化） */
 export function reorderTab(fromKey: TabKey, toKey: TabKey) {
-  const order = [...tabOrder.value]
+  const order = [...ensureOrder()]
   const from = order.indexOf(fromKey)
   const to = order.indexOf(toKey)
   if (from < 0 || to < 0 || from === to) return

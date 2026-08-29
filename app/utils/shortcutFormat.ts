@@ -1,4 +1,4 @@
-import { getOsTypeFromNavigator } from './SystemOS';
+import { getOsTypeFromNavigator } from './systemOS';
 
 /**
  * 快捷键格式化与解析工具
@@ -38,6 +38,24 @@ const KEY_DISPLAY: Record<string, string> = {
 /** 判断当前是否 macOS */
 export function isMacOS(): boolean {
   return getOsTypeFromNavigator() === 'Darwin';
+}
+
+/**
+ * 归一化快捷键字符串用于比较：小写、去空格，并把修饰键别名折叠到同一占位符。
+ * `CommandOrControl`/`Command`/`Cmd`/`Control`/`Ctrl` 均映射为 `mod`——
+ * 否则冲突检测中 `Control+F`（录制产物）与 `CommandOrControl+F`（默认值）判为不同，
+ * 造成同键双重注册/跨 scope 冲突漏检。
+ */
+export function normalizeShortcutKey(key: string): string {
+  let k = key.toLowerCase().replace(/\s+/g, '');
+  k = k.replace(/commandorcontrol/g, 'mod');
+  k = k.replace(/command|control|ctrl|cmd/g, 'mod');
+  return k;
+}
+
+/** 判断配置键名是否等于目标组合（归一化后比较），替代散落的 `k === 'control+n' || k === 'n'` 式判断 */
+export function matchesKeyId(configKey: string, target: string): boolean {
+  return normalizeShortcutKey(configKey) === normalizeShortcutKey(target);
 }
 
 /**

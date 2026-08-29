@@ -156,6 +156,8 @@ function positionPanel() {
   } else {
     top = rect.top - panelHeight - 4
     up = true
+    // 视口上下空间均不足时钳制上边界，避免面板顶出屏幕外
+    if (top < MARGIN) top = MARGIN
   }
 
   panelStyle.value = {
@@ -422,14 +424,12 @@ const customGroupOptions = (groupId: string) =>
     .filter(v => !isNaN(new Date(v).getTime()))
     .map(v => ({ value: v, label: labelOf(v) }))
 
-const fmtDateTimeLocal = (d: Date) =>
-  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-
-/** DatePicker 的最小日期：今天（YYYY-MM-DD 形式） */
-const todayStr = computed(() => {
+/** DatePicker 的最小日期：今天（YYYY-MM-DD 形式）。
+ *  普通函数（而非无依赖 computed）：无响应式依赖的 computed 只求值一次，跨天运行后 min 停留旧日期 */
+const todayStr = () => {
   const d = new Date()
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-})
+}
 
 let initializingCustom = false
 
@@ -438,7 +438,7 @@ let initializingCustom = false
 const openCustom = () => {
   open.value = false
   initializingCustom = true
-  const base = props.modelValue || fmtDateTimeLocal(new Date())
+  const base = props.modelValue || toISO(new Date())
   customValue.value = base
   customPickerOpen.value = true
   nextTick(() => { initializingCustom = false })
@@ -521,7 +521,7 @@ onBeforeUnmount(() => {
         v-model="customValue"
         v-model:open="customPickerOpen"
         mode="datetime"
-        :min="todayStr"
+        :min="todayStr()"
         :hide-trigger="true"
         :live-emit="false"
         style="position: absolute; inset: 0; opacity: 0; pointer-events: none;"

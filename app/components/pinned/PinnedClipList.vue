@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import clipboardService from '~/src/db/dbService';
-import type { PinnedClip } from '~/src/Entities';
-import { formatDate } from '~/src/utils/formatDate';
-import { findNearestInDirection } from '~/src/utils/focusNavigation';
+import type { PinnedClip } from '~/src/entities';
+import { formatDate } from '~/utils/formatDate';
+import { findNearestInDirection } from '~/utils/focusNavigation';
 import DeleteConfirm from '~/components/common/DeleteConfirm.vue';
 
 /** 常用剪贴管理页：最多 10 条，瀑布流卡片，左滑删除 / 右滑置顶，时间倒序（置顶优先） */
@@ -45,6 +45,8 @@ function showHint(msg: string) {
 
 async function load() {
   loading.value = true;
+  // 先清空错误：此前失败文案从不重置，首次失败后错误提示会与正常列表同时显示
+  errorMsg.value = '';
   try {
     clips.value = await clipboardService.fetchPinnedClips();
     // 修正选中索引，避免列表刷新后越界
@@ -72,9 +74,14 @@ async function saveEdit() {
   const target = clips.value.find((c) => c.id === editingId.value);
   if (!target) return;
   const content = target.type === 'text' ? editingContent.value : target.content;
-  await clipboardService.updatePinnedClip(target.id, content, editingName.value.trim(), target.type);
-  editingId.value = null;
-  await load();
+  try {
+    await clipboardService.updatePinnedClip(target.id, content, editingName.value.trim(), target.type);
+    editingId.value = null;
+    await load();
+  } catch (e) {
+    console.error('保存常用剪贴失败:', e);
+    showHint('保存失败，请重试');
+  }
 }
 
 function cancelEdit() {
@@ -83,7 +90,13 @@ function cancelEdit() {
 
 /** 删除常用剪贴项 */
 async function removeClip(id: number) {
-  await clipboardService.deletePinnedClip(id);
+  try {
+    await clipboardService.deletePinnedClip(id);
+  } catch (e) {
+    console.error('删除常用剪贴失败:', e);
+    showHint('删除失败，请重试');
+    return;
+  }
   // 删除后修正选中索引
   if (selectedIndex.value >= clips.value.length - 1) {
     selectedIndex.value = Math.max(0, clips.value.length - 2);
@@ -125,8 +138,13 @@ function cancelDelete() {
 
 /** 置顶/取消置顶 */
 async function togglePin(item: PinnedClip) {
-  await clipboardService.pinPinnedClip(item.id, !item.pinned_at);
-  await load();
+  try {
+    await clipboardService.pinPinnedClip(item.id, !item.pinned_at);
+    await load();
+  } catch (e) {
+    console.error('置顶操作失败:', e);
+    showHint('置顶操作失败，请重试');
+  }
 }
 
 /** 把选中卡片滚动到可见区域 */

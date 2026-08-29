@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import type {ClipboardData} from '~/src/Entities';
-import {formatDate} from "~/src/utils/formatDate";
+import type {ClipboardData} from '~/src/entities';
+import {formatDate} from "~/utils/formatDate";
 import {
-  dataLength, getSelectedRowId, getSelectedRowIndex,
+  getSelectedRowIndex,
   selectedRowIndex,
   selectRow
-} from '~/src/commands/local/TargetMovementCommand';
+} from '~/src/commands/local/clipboardStore';
 import { data, filter, fetchData, getSelectedItem, moveSelection } from '~/src/commands/local/clipboardStore';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
-import {isTauri} from "~/src/utils/env";
+import {isTauri} from "~/utils/env";
 import clipboardService from "~/src/db/dbService";
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -49,7 +49,6 @@ watch(activeTab, () => {
   }
   hoveringClip = false;
   hoveringTooltip = false;
-  tooltip.value.visible = false;
   // 同步关闭独立 tooltip 窗口
   emit('tooltip:hide').catch(() => {});
 })
@@ -76,9 +75,11 @@ watch(activeTab, (newTab, oldTab) => {
   });
 });
 
-// 切换到剪贴板 tab 时自动聚焦搜索框（支持 Ctrl+←/→ 与点击标题栏）
+// 切换到剪贴板 tab 时自动聚焦搜索框（支持 Ctrl+←/→ 与点击标题栏），并立即刷新一次列表
 watch(activeTab, (tab) => {
   if (tab === 'clip') {
+    // 非 clip tab 期间轮询暂停，切回时补一次拉取
+    void fetchData();
     // 立即尝试一次聚焦（DOM 挂载后），并在页面切换动画（page-curtain）结束后再补一次，
     // 避免动画期间焦点被重置导致无法输入
     nextTick(() => searchInput.value?.focus());
@@ -94,13 +95,6 @@ const onFocusSearch = () => {
 };
 onMounted(() => window.addEventListener('focus-search', onFocusSearch));
 onBeforeUnmount(() => window.removeEventListener('focus-search', onFocusSearch));
-
-const tooltip = ref({
-  visible: false,
-  text: '',
-  x: 0,
-  y: 0,
-});
 
 /** tooltip 独立窗口单例 label */
 let tooltipLabel: string | null = null;
@@ -186,7 +180,10 @@ async function openTooltipWindow() {
     // 窗口已就绪：用最新 payload 实时计算物理坐标后补发（不依赖之前的竞态 emit）
     if (latestTooltipPayload) {
       const coords = await toPhysicalCoords(latestTooltipPayload.x, latestTooltipPayload.y);
-      await emit('tooltip:show', { ...latestTooltipPayload, x: coords.x, y: coords.y });
+      const topPt = await toPhysicalCoords(latestTooltipPayload.x, latestTooltipPayload.top);
+      const bottomPt = await toPhysicalCoords(latestTooltipPayload.x, latestTooltipPayload.bottom);
+      // 与"复用已有窗口"路径保持一致：一并携带 top/bottom，tooltip 侧避让行为统一
+      await emit('tooltip:show', { ...latestTooltipPayload, x: coords.x, y: coords.y, top: topPt.y, bottom: bottomPt.y });
     }
     unReady();
   });
@@ -274,7 +271,9 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
       && (textEl.scrollHeight > textEl.clientHeight || textEl.scrollWidth > textEl.clientWidth);
     const isMultiLine = text.split('\n').length > 2;
     if (!isOverflow && !isMultiLine) {
-      tooltip.value.visible = false;
+      // 从"有 tooltip 的项"移到"无需 tooltip 的项"：上方已清掉挂起的隐藏计时器，
+      // 必须重新排程隐藏，否则旧 tooltip 窗口会一直残留显示上一项的内容
+      scheduleHideTooltip();
       return;
     }
     payload = {
@@ -287,12 +286,6 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
     };
   }
 
-  tooltip.value = {
-    visible: true,
-    text: payload.text ?? '',
-    x: payload.x,
-    y: payload.y,
-  };
   if (isTauri()) {
     // 缓存 viewport 坐标（供窗口 ready 后实时换算物理坐标），由 openTooltipWindow 的
     // ready 握手统一补发 tooltip:show，避免竞态导致的间歇不显示
@@ -309,7 +302,6 @@ function scheduleHideTooltip() {
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = setTimeout(() => {
     if (!hoveringClip && !hoveringTooltip) {
-      tooltip.value.visible = false;
       emit('tooltip:hide').catch(() => {});
     }
   }, 200);
@@ -320,11 +312,11 @@ function hideTooltip() {
   scheduleHideTooltip();
 }
 
-function handelFilter() {
+function handleFilter() {
   filter.value.favorite = filter.value.favorite === 1 ? 0 : 1
 }
 
-function handelTypeFilter() {
+function handleTypeFilter() {
   filter.value.type = filter.value.type === 'image' ? 'all' : 'image'
 }
 
@@ -332,9 +324,14 @@ onMounted(async () => {
   console.log('mounting...')
 
   // 全局快捷键已在 app.vue 统一注册；列表项的本地 keydown 仍绑定在 <ul> 上
-  // 仅在 Tauri 桌面容器内启用轮询（Web 端无数据，避免空转）
+  // 仅在 Tauri 桌面容器内启用轮询（Web 端无数据，避免空转）。
+  // 仅在窗口可见且处于剪贴板 Tab 时轮询：托盘驻留/其他 Tab 期间不做每秒查询
   if (isTauri()) {
-    updateInterval = setInterval(fetchData, 1000);
+    updateInterval = setInterval(() => {
+      if (document.hidden) return;
+      if (activeTab.value !== 'clip') return;
+      void fetchData();
+    }, 1000);
   }
   if (searchInput.value) {
     searchInput.value.focus();
@@ -355,32 +352,41 @@ onMounted(async () => {
       }
     });
     unlistenTooltipHover = [u1, u2, u3];
+    // 命令结果与查看器关闭事件：同样保存取消函数，组件卸载时统一清理（此前泄漏）
+    const u4 = await listen('add-to-pinned:result', onAddToPinnedResult);
+    const u5 = await listen('favorite:result', onFavoriteResult);
+    const u6 = await listen('image-viewer:closed', onImageViewerClosed);
+    unlistenCommandResults = [u4, u5, u6];
   }
-  // Ctrl+U 添加为常用剪贴版的结果提示（命令层通过事件上报，避免与组件耦合）
-  listen('add-to-pinned:result', (ev) => {
-    const status = (ev.payload as { status?: string })?.status;
-    if (status === 'added') showPinnedHint('已添加到常用剪贴版');
-    else if (status === 'exists') showPinnedHint('该内容已在常用剪贴版中');
-    else if (status === 'none') showPinnedHint('请先在剪贴板中选择一项');
-  });
-  // Ctrl+L 收藏/取消收藏的结果提示
-  listen('favorite:result', (ev) => {
-    const fav = (ev.payload as { favorite?: boolean })?.favorite;
-    showPinnedHint(fav ? '已收藏' : '已取消收藏');
-  });
   // Delete 键请求删除：弹出内联删除确认框（DeleteConfirm 组件，与便签一致）
   window.addEventListener('delete-request', onDeleteRequest);
-  // 图片查看器已关闭：焦点回归列表（用户主动关闭查看器）
-  listen('image-viewer:closed', () => {
-    refocusList();
-  });
 });
+
+/** 命令结果事件的监听取消函数（onBeforeUnmount 统一清理） */
+let unlistenCommandResults: Array<() => void> = [];
+
+function onAddToPinnedResult(ev: unknown) {
+  const status = (ev as { payload?: { status?: string } })?.payload?.status;
+  if (status === 'added') showPinnedHint('已添加到常用剪贴板');
+  else if (status === 'exists') showPinnedHint('该内容已在常用剪贴板中');
+  else if (status === 'none') showPinnedHint('请先在剪贴板中选择一项');
+  else if (status === 'error') showPinnedHint('添加常用剪贴板失败');
+}
+
+function onFavoriteResult(ev: unknown) {
+  const fav = (ev as { payload?: { favorite?: boolean } })?.payload?.favorite;
+  showPinnedHint(fav ? '已收藏' : '已取消收藏');
+}
+
+function onImageViewerClosed() {
+  refocusList();
+}
 
 // 注意：不要在主窗口 onFocusChanged 中调用 refocusList！
 // refocusList 内部的 setFocus() 会再次触发 onFocusChanged(focused=true)，
 // 形成"获得焦点 → 强制聚焦 → 再获得焦点"的无限循环，导致主窗口持续抢焦点，
 // 用户无法切到其他窗口/最小化主窗口。
-// 焦点恢复已由 delete-confirm:yes/no/closed 与 image-viewer:closed 事件可靠触发。
+// 焦点恢复由 image-viewer:closed 事件与删除确认框的确认/取消路径触发。
 
 function onTooltipHoverEnter() {
   hoveringTooltip = true;
@@ -393,14 +399,16 @@ function onTooltipHoverEnter() {
 
 async function onTooltipHoverLeave() {
   hoveringTooltip = false;
-  // 鼠标离开 tooltip 回到主窗口侧：主动把焦点交还主窗口。
-  // 否则主窗口仍记录为失焦（之前操作 tooltip 时 tooltip 获焦），
-  // 后续 tooltip 关闭的补隐藏逻辑会误判主窗口失焦而一起隐藏。
-  // 鼠标在主窗口内时，主窗口应保持显示。
+  // 鼠标离开 tooltip 时，仅当指针确实回到了主窗口内容上（CSS :hover 命中）才把焦点交还主窗口。
+  // 若鼠标已移到其它应用窗口，无条件 setFocus 会把系统焦点从用户当前应用抢回。
+  // 恢复焦点的原因：主窗口若记录为失焦，tooltip 关闭后的补隐藏逻辑会误判而连带隐藏。
   if (isTauri()) {
-    const win = getCurrentWindow();
-    if (await win.isVisible().catch(() => false)) {
-      await win.setFocus().catch(() => {});
+    const pointerInMainWindow = document.documentElement.matches(':hover');
+    if (pointerInMainWindow) {
+      const win = getCurrentWindow();
+      if (await win.isVisible().catch(() => false)) {
+        await win.setFocus().catch(() => {});
+      }
     }
   }
   // 离开 tooltip：延迟隐藏，给鼠标移回 clip 项留出过渡时间
@@ -425,10 +433,12 @@ async function resetTooltipSingleton() {
     }
     tooltipLabel = null;
   }
+  // 关闭单例的同时复位激活标志：否则 __tooltipActive 卡在 true，
+  // 主窗口"失焦自动隐藏"此后永久失效（tooltip.vue 卸载事件丢失时的兜底）
+  (window as any).__tooltipActive = false;
   latestTooltipPayload = null;
   hoveringClip = false;
   hoveringTooltip = false;
-  tooltip.value.visible = false;
 }
 
 function onMainWindowShown() {
@@ -441,6 +451,8 @@ onBeforeUnmount(async () => {
   window.removeEventListener('window-shown', onMainWindowShown);
   unlistenTooltipHover.forEach((u) => u());
   unlistenTooltipHover = [];
+  unlistenCommandResults.forEach((u) => u());
+  unlistenCommandResults = [];
   window.removeEventListener('delete-request', onDeleteRequest);
   if (updateInterval) {
     clearInterval(updateInterval);
@@ -450,46 +462,52 @@ onBeforeUnmount(async () => {
 
 async function favorite(id: number, value: number) {
   value = value === 0 ? 1 : 0;
-  await clipboardService.updateFavorite(id, value)
-  showPinnedHint(value === 1 ? '已收藏' : '已取消收藏');
+  try {
+    await clipboardService.updateFavorite(id, value)
+    showPinnedHint(value === 1 ? '已收藏' : '已取消收藏');
+  } catch (e) {
+    // DB 失败时星标 UI 不会因此错位（列表刷新后以数据库为准），给出可见反馈
+    console.error('更新收藏状态失败:', e);
+    showPinnedHint('收藏操作失败');
+  }
 }
 
-// ===== 右键菜单：添加到常用剪贴版 =====
+// ===== 右键菜单：添加到常用剪贴板 =====
 const ctxMenuVisible = ref(false);
 const ctxMenuX = ref(0);
 const ctxMenuY = ref(0);
 const ctxMenuItems = ref<{ label: string; danger?: boolean; action: () => void }[]>([]);
-/** 添加到常用剪贴版的即时反馈提示 */
+/** 添加到常用剪贴板的即时反馈提示 */
 const pinnedHint = ref('');
 let pinnedHintTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** 右键列表项：显示「添加到常用剪贴版」菜单 */
+/** 右键列表项：显示「添加到常用剪贴板」菜单 */
 function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
   e.preventDefault();
   selectRow(index);
   ctxMenuX.value = e.clientX;
   ctxMenuY.value = e.clientY;
   ctxMenuItems.value = [
-    { label: '添加到常用剪贴版', action: () => addToPinned(item) },
+    { label: '添加到常用剪贴板', action: () => addToPinned(item) },
   ];
   ctxMenuVisible.value = true;
 }
 
-/** 把当前剪贴项（文本/图片）添加到常用剪贴版列表末尾 */
+/** 把当前剪贴项（文本/图片）添加到常用剪贴板列表末尾 */
 async function addToPinned(item: ClipboardData) {
   if (!item?.content) return;
   try {
     const type = (item.type ?? 'text') as 'text' | 'image';
     const exists = await clipboardService.isPinnedContentExist(item.content, type);
     if (exists) {
-      showPinnedHint('该内容已在常用剪贴版中');
+      showPinnedHint('该内容已在常用剪贴板中');
       return;
     }
     await clipboardService.insertPinnedClip(item.content, type, '', item.source);
-    showPinnedHint('已添加到常用剪贴版');
+    showPinnedHint('已添加到常用剪贴板');
   } catch (e) {
-    console.error('添加常用剪贴版失败:', e);
-    showPinnedHint('添加常用剪贴版失败');
+    console.error('添加常用剪贴板失败:', e);
+    showPinnedHint('添加常用剪贴板失败');
   }
 }
 
@@ -524,9 +542,15 @@ async function confirmDelete() {
   deleteConfirmTarget.value = null;
   deleteConfirmAnchor.value = null;
   if (target) {
-    await clipboardService.deleteClipboardData(target.id);
-    await fetchData();
-    showPinnedHint('已删除');
+    try {
+      await clipboardService.deleteClipboardData(target.id);
+      await fetchData();
+      showPinnedHint('已删除');
+    } catch (e) {
+      // 失败不再静默：此前确认框已关、无任何提示、列表也不刷新
+      console.error('删除失败:', e);
+      showPinnedHint('删除失败，请重试');
+    }
   }
   refocusList();
 }
@@ -585,10 +609,10 @@ function refocusList() {
       }
     };
 
-    // 多重延时补偿：删除窗口完全销毁、webview 状态稳定后再聚焦
-    setTimeout(() => restoreFocus(), 120);
+    // 聚焦补偿：立即一次 + 一次延时重试（等子窗口销毁、webview 状态稳定）。
+    // 此前固定 3 次延时聚焦，每次都触发多次 IPC 并连带 window-shown 流程。
+    restoreFocus();
     setTimeout(() => restoreFocus(), 320);
-    setTimeout(() => restoreFocus(), 600);
 
     // 列表滚动到选中项
     setTimeout(() => {
@@ -602,10 +626,8 @@ function refocusList() {
 
 function getFirstTwoLines(input: string): string {
   const lines = input.split('\n');
-  if (lines.length === 0) {
-    return '';
-  }
-  if ( lines.length === 1) {
+  // split 至少返回一个元素，length === 0 不可达
+  if (lines.length === 1) {
     return lines[0] as string;
   }
   return lines[0] + '\n' + lines[1];
@@ -616,8 +638,9 @@ function handleDragStart(item: ClipboardData, event: DragEvent) {
 }
 
 function handleDragEnd(item: ClipboardData, event: DragEvent) {
-  if (event.dataTransfer?.dropEffect === 'copy')
-    clipboardService.increaseUseCount(item.id)
+  if (event.dataTransfer?.dropEffect === 'copy') {
+    clipboardService.increaseUseCount(item.id).catch(() => { /* 计数失败不影响交互 */ });
+  }
 }
 
 /** 唯一的图片查看器窗口 label（窗口关闭后置 null，复用单例） */
@@ -636,8 +659,15 @@ async function openImageViewer(item: ClipboardData) {
   if (item.type !== 'image' || !isTauri()) return;
 
   const images = data.value.filter((i: ClipboardData) => i.type === 'image');
-  const index = Math.max(0, images.findIndex((i) => i.id === item.id));
-  latestImagePayload = { images: images.map((i) => i.content), index };
+  const index = images.findIndex((i) => i.id === item.id);
+  // 找不到目标图片时直接返回：此前 Math.max(0, -1) 会静默显示第 0 张错误图片
+  if (index < 0) return;
+  // 仅随事件携带当前图附近的少量 base64，避免整列表图片 base64 一次性 IPC 序列化传输
+  // （图片多且大时内存与延迟都会明显恶化）；查看器在窗口内仍可前后切换
+  const NEIGHBORS = 10;
+  const start = Math.max(0, index - NEIGHBORS);
+  const nearby = images.slice(start, index + NEIGHBORS + 1).map((i) => i.content);
+  latestImagePayload = { images: nearby, index: index - start };
 
   // 复用已存在的查看器窗口，直接切换图片
   if (viewerLabel) {
@@ -728,14 +758,14 @@ async function openImageViewer(item: ClipboardData) {
                       v-model="highlightContent"
                       type="text"
                       placeholder="输入以搜索 · ↑/↓ 选择 · Enter 粘贴"
-                      class="w-full bg-transparent text-ink placeholder:text-ink-faint focus:outline-none"
+                      class="list-search-input w-full bg-transparent text-ink placeholder:text-ink-faint focus:outline-none"
                   />
                   <button
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
                       :class="filter.favorite === 1 ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
                       v-tip="filter.favorite === 1 ? '仅显示收藏（点击取消）' : '仅显示收藏'"
-                      @click="handelFilter"
+                      @click="handleFilter"
                   >
                     <svg class="h-4 w-4" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
                       <path d="M253.488042 1024c-16.9 0-33.2875-5.1125-47.6125-15.3625-26.625-18.425-39.425-49.6625-34.3125-81.925l40.9625-251.9c1.5375-10.2375-1.5375-20.475-8.7-27.65L28.213042 466.4375c-22.0125-22.525-29.1875-55.3-19.45-84.9875 9.725-29.7 35.325-51.2 66.05-55.8125l237.575-36.35c10.75-1.5375 19.4625-8.1875 24.0625-17.925L441.388042 48.125c13.825-29.7 42.5-48.125 75.2625-48.125s61.4375 18.4375 75.2625 48.125l104.45 223.2375c4.6125 9.725 13.825 16.375 24.0625 17.925L958.000542 325.625a82.355 82.355 0 0 1 66.05 55.8125c10.2375 29.7 2.5625 62.4625-19.45 84.9875l-175.625 180.7375c-7.1625 7.175-10.2375 17.925-8.7 27.65l40.9625 251.9c5.125 31.75-8.1875 63.4875-34.3 81.925-26.1125 18.4375-59.9 20.4875-88.0625 4.6125l-206.85-114.6875c-9.725-5.1125-20.9875-5.1125-30.7125 0l-207.3625 115.2c-12.8125 6.65-26.6375 10.2375-40.4625 10.2375zM516.650542 51.2c-12.8 0-23.55 7.1625-29.1875 18.4375L383.525542 292.875c-11.775 25.0875-35.325 43.0125-62.975 47.1l-237.575 36.35c-12.2875 2.05-21.5 9.7375-25.6 21.5-4.1 11.775-1.025 24.0625 7.665 32.775L240.688042 611.325c18.4375 18.95 26.625 45.5625 22.525 71.675L222.250542 934.9125c-2.05 12.8 3.075 24.575 13.3125 31.7775 10.2375 7.175 23.0375 7.6875 33.7875 1.5375l207.3625-115.2c25.0875-13.825 55.3-13.825 80.3875 0l207.3625 115.2c10.75 6.1375 23.55 5.625 33.8-1.5375 10.2375-7.1625 15.3625-18.95 13.3125-31.7375L770.625542 683.0125c-4.1-26.1125 4.1-52.7375 22.525-71.675l175.625-180.7375c8.7-8.7 11.2625-20.9875 7.675-32.775-4.0875-11.775-13.3125-19.9625-25.6-21.5l-237.5625-36.35c-27.65-4.0875-51.2-22.0125-62.975-47.1L545.838042 69.6375c-5.625-11.2625-16.375-18.4375-29.1875-18.4375z m0 0" fill="currentColor"></path>
@@ -746,7 +776,7 @@ async function openImageViewer(item: ClipboardData) {
                       class="btn-soft btn-circle p-0 ml-1"
                       :class="filter.type === 'image' ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
                       v-tip="filter.type === 'image' ? '仅显示图片（点击取消）' : '仅显示图片'"
-                      @click="handelTypeFilter"
+                      @click="handleTypeFilter"
                   >
                     <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
@@ -853,7 +883,7 @@ async function openImageViewer(item: ClipboardData) {
                 </li>
               </ul>
 
-              <!-- 添加到常用剪贴版的即时反馈 -->
+              <!-- 添加到常用剪贴板的即时反馈 -->
               <div
                   v-if="pinnedHint"
                   class="pointer-events-none fixed left-1/2 top-20 z-[90] -translate-x-1/2 rounded-full border border-accent bg-surface-field/95 px-4 py-2 text-sm text-ink shadow-float backdrop-blur"
@@ -882,7 +912,7 @@ async function openImageViewer(item: ClipboardData) {
             <!-- 便签 -->
             <StickyNote v-else-if="activeTab === 'note'" />
 
-            <!-- 常用剪贴版 -->
+            <!-- 常用剪贴板 -->
             <PinnedClipList v-else-if="activeTab === 'pinned'" />
 
             <!-- 设置 -->

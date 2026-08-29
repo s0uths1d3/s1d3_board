@@ -1,7 +1,7 @@
 import { writeText, writeImageBase64 } from 'tauri-plugin-clipboard-api';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { isTauri } from '~/src/utils/env';
+import { isTauri } from '~/utils/env';
 
 /**
  * 将指定内容粘贴到唤起剪贴板窗口前的目标输入框。

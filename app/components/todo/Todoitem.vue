@@ -262,13 +262,15 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import type {Todo} from "~/src/Entities";
+import type {Todo} from "~/src/entities";
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import ReminderPicker from "~/components/todo/ReminderPicker.vue";
-import type { ReminderRule } from "~/src/Entities";
-import {formatDate} from "~/src/utils/formatDate";
+import type { ReminderRule } from "~/src/entities";
+import {formatDate} from "~/utils/formatDate";
 import { useNow } from "~/composables/useNow";
 import { useTodoPriorities } from "~/composables/useTodoPriorities";
+import { describeSmartPlan } from "~/src/todo/reminderPolicy";
+import { isTodoOverdue } from "~/src/todo/overdue";
 
 
 const props = defineProps<{
@@ -287,7 +289,7 @@ const emit = defineEmits<{
   (e: 'delete', id: string, rect?: DOMRect): void
   (e: 'priority-level-change', id: string, level: number): void
   (e: 'category-change', id: string, category: string): void
-  (e: 'reminder-change', id: string, mode: Todo['remindMode'], remindAt?: string): void
+  (e: 'reminder-change', id: string, mode: Todo['remindMode'], rules?: ReminderRule[]): void
   (e: 'category-delete', name: string, rect?: DOMRect): void
   (e: 'select'): void
 }>()
@@ -338,7 +340,7 @@ const chooseCategory = (category: string, close: () => void) => {
   close()
 }
 
-/** 新增分类并立即应用到当前待办，成功后收起面板 */
+/** 新增分类并立即应用到当前待办，成功后收起面板；失败（重名）保留输入便于改名重试 */
 const addNewCategory = async (close: () => void) => {
   const name = newCategory.value.trim()
   if (!name) return
@@ -346,8 +348,8 @@ const addNewCategory = async (close: () => void) => {
   if (ok) {
     emit('category-change', props.todo.id, name)
     close()
+    newCategory.value = ''
   }
-  newCategory.value = ''
 }
 
 /** 删除分类：交由父组件弹确认窗口并持久化（附带触发位置，用于确认窗口就近定位） */
@@ -363,22 +365,10 @@ const currentMode = computed<'smart' | 'off' | 'custom'>(() => props.todo.remind
 const rulesList = computed<ReminderRule[]>(() => props.todo.remindRules ?? [])
 /** 逾期/已完成的待办不再提供提醒设置 */
 const reminderDisabled = computed(() => props.todo.completed === 1 || (isOverdue.value && !visualCompleted.value))
-/** 自定义闹钟生效时铃铛金色高亮 */
-const reminderActive = computed(() => currentMode.value === 'custom' && rulesList.value.length > 0)
-
-/** 智能策略摘要：与 reminderPolicy 的分档口径一致（创建距截止 ≥1h → 30/10 分钟，否则 5 分钟） */
+/** 智能策略摘要：直接消费 reminderPolicy 的分档实现，策略调整时提示自动跟随 */
 const smartHint = computed(() => {
-  const due = props.todo.dueDate ? new Date(props.todo.dueDate).getTime() : NaN
-  if (!Number.isFinite(due)) return '未设截止时间'
-  const created = Number(props.todo.created_at)
-  const base = Number.isFinite(created) && created > 0 ? created : Date.now()
-  return due - base >= 60 * 60 * 1000 ? '提前 30/10 分钟' : '提前 5 分钟'
-})
-
-const reminderTip = computed(() => {
-  if (currentMode.value === 'off') return '提醒：已关闭（点击开启）'
-  if (currentMode.value === 'custom') return `提醒：${rulesList.value.length} 个自定义闹钟（点击修改）`
-  return `提醒：智能（${smartHint.value}）`
+  if (!props.todo.dueDate) return '未设截止时间'
+  return describeSmartPlan(props.todo) || '未设截止时间'
 })
 
 function onReminderMode(mode: 'smart' | 'off' | 'custom') {
@@ -427,13 +417,8 @@ const deleteTodo = (e?: MouseEvent) => {
   emit('delete', props.todo.id, btn?.getBoundingClientRect())
 }
 
-/** 是否已过截止时间：有 dueDate 且解析有效，且早于当前时间。 */
-const isOverdue = computed(() => {
-  if (!props.todo.dueDate) return false
-  const due = new Date(props.todo.dueDate)
-  if (isNaN(due.getTime())) return false
-  return due.getTime() <= now.value
-})
+/** 是否已过截止时间：共享实现（含非法日期串守卫），见 app/src/todo/overdue.ts。 */
+const isOverdue = computed(() => isTodoOverdue(props.todo, now.value))
 
 /** 视觉完成态：数据库已完成即为完成（含"逾期完成"：已完成但已过截止时间）。 */
 const visualCompleted = computed(() => props.todo.completed === 1)

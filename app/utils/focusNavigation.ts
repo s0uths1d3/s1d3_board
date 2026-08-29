@@ -53,3 +53,15 @@ export function findNearestInDirection(
   }
   return best
 }
+
+/**
+ * 判断事件目标（或当前焦点元素）是否位于可编辑元素内。
+ * 供快捷键系统做编辑态守卫：编辑中不拦截 Enter/Delete/方向键等原生行为、不执行命令，
+ * 避免便签换行被吞、编辑框里误触发粘贴等问题。
+ */
+export function isEditingField(target?: EventTarget | null): boolean {
+  const el = (target ?? (typeof document !== 'undefined' ? document.activeElement : null)) as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
+}

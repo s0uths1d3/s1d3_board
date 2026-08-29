@@ -114,6 +114,16 @@ function syncView() {
 
 const viewTitle = computed(() => `${view.value.year} 年 ${view.value.month + 1} 月`);
 
+/** 上/下月提示文案：用 Date 进制滚动计算，避免一月/十二月显示 "0 月"/"13 月" 且年份不联动 */
+const prevMonthLabel = computed(() => {
+  const d = new Date(view.value.year, view.value.month - 1, 1);
+  return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月`;
+});
+const nextMonthLabel = computed(() => {
+  const d = new Date(view.value.year, view.value.month + 1, 1);
+  return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月`;
+});
+
 /** 月份切换方向（供滑动动画使用：1=向后，-1=向前） */
 const slideDir = ref<1 | -1>(1);
 
@@ -137,7 +147,8 @@ const cells = computed<Date[]>(() => {
 
 const weekHeaders = ['一', '二', '三', '四', '五', '六', '日'];
 
-const todayStr = fmtDate(new Date());
+/** 今日日期（computed）：跨天运行后"今日"描边仍指向正确日期 */
+const todayStr = computed(() => fmtDate(new Date()));
 
 function isInView(d: Date): boolean {
   return d.getFullYear() === view.value.year && d.getMonth() === view.value.month;
@@ -155,7 +166,7 @@ function isSelected(d: Date): boolean {
 }
 
 function isToday(d: Date): boolean {
-  return fmtDate(d) === todayStr;
+  return fmtDate(d) === todayStr.value;
 }
 
 // ===== 时间（datetime 模式）=====
@@ -362,7 +373,7 @@ const clearable = computed(() => hasValue.value);
           <div class="mb-2 flex items-center justify-between">
             <button
               type="button" class="btn-soft flex h-7 w-7 items-center justify-center p-0"
-              v-tip="`${view.year} 年 ${view.month} 月`"
+              v-tip="prevMonthLabel"
               @click="shiftMonth(-1)"
             >
               <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -372,7 +383,7 @@ const clearable = computed(() => hasValue.value);
             <span class="text-sm font-semibold text-ink tabular-nums">{{ viewTitle }}</span>
             <button
               type="button" class="btn-soft flex h-7 w-7 items-center justify-center p-0"
-              v-tip="`${view.year} 年 ${view.month + 2} 月`"
+              v-tip="nextMonthLabel"
               @click="shiftMonth(1)"
             >
               <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

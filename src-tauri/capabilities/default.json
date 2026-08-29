@@ -5,7 +5,6 @@
   "windows": [
     "main",
     "image-viewer-*",
-    "delete-confirm-*",
     "tooltip-*"
   ],
   "permissions": [
@@ -51,9 +50,6 @@
     "core:window:allow-scale-factor",
     "core:window:allow-current-monitor",
     "core:webview:allow-set-webview-focus",
-    "core:webview:allow-internal-toggle-devtools",
-    "fs:write-all",
-    "fs:read-all",
     "notification:default"
   ]
 }

@@ -12,7 +12,7 @@
 import { computed } from 'vue'
 import UiDropdown from '~/components/ui/UiDropdown.vue'
 import UiSegmented from '~/components/ui/UiSegmented.vue'
-import type { ReminderRule } from '~/src/Entities'
+import type { ReminderRule } from '~/src/entities'
 
 const props = withDefaults(defineProps<{
   /** 提醒模式（v-model:mode） */
@@ -72,6 +72,17 @@ function addRule() {
   const rules = [...props.rules, { id: newRuleId(), kind: 'offset' as const, value: 30 }]
   emit('update:rules', rules)
   if (props.mode !== 'custom') emit('update:mode', 'custom')
+}
+
+/**
+ * 数值规则输入钳制（与 reminderPolicy 的合法性校验同口径）：
+ * percent 1-99、offset 1-10080。此前只钳下限，手输 500 也会提交，
+ * 策略端对越界值直接判非法 → 规则永不触发。
+ */
+function clampRuleValue(kind: ReminderRule['kind'], raw: string): number {
+  const n = Math.round(Number(raw) || 1)
+  const max = kind === 'percent' ? 99 : 10080
+  return Math.min(max, Math.max(1, n))
 }
 
 function updateRule(idx: number, patch: Partial<ReminderRule>) {
@@ -183,7 +194,7 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
                   :max="rule.kind === 'percent' ? 99 : 10080"
                   :value="rule.value"
                   class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs tabular-nums text-ink focus:border-gold focus:outline-none"
-                  @change="updateRule(idx, { value: Math.max(1, Math.round(Number(($event.target as HTMLInputElement).value) || 1)) })"
+                  @change="updateRule(idx, { value: clampRuleValue(rule.kind, ($event.target as HTMLInputElement).value) })"
               />
               <span class="shrink-0 text-xs text-ink-faint">{{ rule.kind === 'percent' ? '%' : '分钟' }}</span>
             </template>

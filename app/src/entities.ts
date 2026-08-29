@@ -51,6 +51,8 @@ export interface Todo {
     remindMode?: 'smart' | 'off' | 'custom';
     /** 自定义提醒规则列表（remindMode === 'custom' 时生效；DB 中为 JSON 文本列） */
     remindRules?: ReminderRule[];
+    /** DB 原始 JSON 文本列（remind_rules）：dbService 读取时解析折算为 remindRules，无需强转桥接 */
+    remind_rules?: string;
     /** 旧版单一自定义提醒时刻（legacy 列；读取时自动折算为一条 at 规则） */
     remindAt?: string;
 }

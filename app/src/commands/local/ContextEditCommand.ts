@@ -7,7 +7,7 @@ import { activeTab } from '~/composables/useTabs';
  * - 待办页：对当前选中的待办项进入编辑态（派发 todo:edit-request 事件）
  * 其余标签页无对应编辑态，忽略。
  */
-export class SaveNoteCommand implements Command {
+export class ContextEditCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {
         if (event?.state !== 'Pressed') return;
         if (activeTab.value === 'note') {

@@ -1,6 +1,7 @@
 import { register, unregister, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
 import type { ShortcutConfig } from './ShortcutConfig';
 import statsService from "~/src/statistics/statsService";
+import { isEditingField } from "~/utils/focusNavigation";
 
 export class ShortcutManager {
     private localHandlers: (() => void)[] = [];
@@ -22,7 +23,12 @@ export class ShortcutManager {
             await register(config.key, async (event) => {
                 // 统计埋点（fire-and-forget）：全局快捷键命中 +1
                 void statsService.record({ shortcut_count: 1 });
-                await config.command.execute(event);
+                try {
+                    await config.command.execute(event);
+                } catch (e) {
+                    // 命令异常不再成为 unhandled rejection；也不影响后续按键
+                    console.error(`[Shortcut Command Failed] ${config.id}:`, e);
+                }
             });
             console.log(`[Global Shortcut Registered] ${config.key}`);
         } else if (config.scope === 'local') {
@@ -46,6 +52,28 @@ export class ShortcutManager {
                 // 用户自定义的带修饰键配置（如 Alt+←/→）不受影响。
                 const isSwitchTab = config.id === 'switch_prev_tab' || config.id === 'switch_next_tab';
                 const effectiveCtrl = isSwitchTab && !ctrl && !alt && !shift ? true : ctrl;
+
+                // —— 编辑态守卫（在匹配前拦截，但不误伤"命令面板"式搜索框）——
+                const target = e.target as HTMLElement | null;
+                const cls = target?.classList;
+                const inSearchSurface = !!cls && (cls.contains('todo-search-input') || cls.contains('list-search-input'));
+                if (isEditingField(e.target)) {
+                    const hasCmdModifier = e.ctrlKey || e.metaKey || e.altKey;
+                    if (hasCmdModifier || pressedKey === 'escape') {
+                        // 带修饰键（Ctrl+←/→ 切标签、Ctrl+Enter 保存、Ctrl+L 收藏等）与 Esc：
+                        // 不参与文本编辑，放行继续匹配——否则主页面默认聚焦在搜索框里，
+                        // Ctrl+←/→ 切换标签等快捷键会全部失效。
+                    } else if (inSearchSurface) {
+                        // 搜索框是"命令面板"：无修饰的方向键/Enter 放行（列表选择、Enter 粘贴）；
+                        // Delete/Backspace 保持原生删字，不劫持文本编辑
+                        if (pressedKey === 'delete' || pressedKey === 'backspace') return;
+                    } else {
+                        // 其余可编辑元素（便签 textarea、常用剪贴编辑框等）：
+                        // 无修饰键的原生文本键（Enter 换行、删字、移动光标、输入）不触发命令，
+                        // 避免便签无法换行、编辑框里误触发"隐藏窗口+模拟粘贴"
+                        return;
+                    }
+                }
 
                 // 精确匹配修饰键：配置了某修饰键必须按下，未配置则不许按下。
                 // 避免如 Ctrl+Enter 同时命中「Enter 粘贴」（无修饰键）导致双重触发。
@@ -73,7 +101,12 @@ export class ShortcutManager {
                     e.stopImmediatePropagation();
                     // 统计埋点（fire-and-forget）：局部快捷键命中 +1
                     void statsService.record({ shortcut_count: 1 });
-                    await config.command.execute({state: 'Pressed'});
+                    try {
+                        await config.command.execute({state: 'Pressed'});
+                    } catch (err) {
+                        // 命令异常不再成为 unhandled rejection
+                        console.error(`[Shortcut Command Failed] ${config.id}:`, err);
+                    }
                 } else if (pressedKey === 'arrowup' || pressedKey === 'arrowdown') {
                     // 方向键即使未命中命令也阻止默认滚动，避免页面随方向键滚动
                     e.preventDefault();
@@ -85,7 +118,9 @@ export class ShortcutManager {
         }
     }
 
-    async registerAll(configs: ShortcutConfig[]) {
+    /** 注册全部快捷键，返回注册失败的项（供调用方判定"保存成功但键已失效"并回滚） */
+    async registerAll(configs: ShortcutConfig[]): Promise<ShortcutConfig[]> {
+        const failed: ShortcutConfig[] = [];
         // Ctrl+←/→ 切换标签页优先注册：先注册的监听器先执行，
         // 配合命中后的 stopImmediatePropagation 实现最高优先级。
         const priorityIds = new Set(['switch_prev_tab', 'switch_next_tab']);
@@ -97,9 +132,11 @@ export class ShortcutManager {
             try {
                 await this.register(config);
             } catch (e) {
+                failed.push(config);
                 console.error(`[Shortcut Register Failed] ${config.key}:`, e);
             }
         }
+        return failed;
     }
 
     /** 注销所有全局快捷键 */

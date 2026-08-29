@@ -1,4 +1,4 @@
-import type { StatsSummary, DailyStatRow } from './statsService';
+import type { StatsSummary } from './statsService';
 import { daySpan } from './statsService';
 import statsService from './statsService';
 
@@ -271,7 +271,8 @@ export const USER_TAG_RULES: UserTagRule[] = [
   { id: 'clip_guard', name: '剪贴板守卫', category: 'feature', priority: 9,
     condition: (c) => c.tabs > 0 && (c.stats.tab_clip ?? 0) / c.tabs > 0.5 },
   { id: 'procrastinator', name: '拖更选手', category: 'feature', priority: 10,
-    condition: (c) => c.todoCompleteRate < 0.2 },
+    // 前置 todo_added > 0：从未使用待办的用户完成率为 0，不该被打上"拖更"标签
+    condition: (c) => (c.stats.todo_added ?? 0) > 0 && c.todoCompleteRate < 0.2 },
 
   // ----- ⑤ 粘性画像（相对 · 上限 2）-----
   { id: 'regular', name: '常客', category: 'stickiness', priority: 1,
@@ -330,14 +331,36 @@ export const USER_TITLE_RULES: UserTitleRule[] = [
 
 // ===== 纯函数计算 =====
 
+/** buildCtx 结果短缓存：同一区间内 computeTags/computeUniqueTitle/computeTitleScores
+ *  各自调用 buildCtx 会重复执行 3 组相同的区间查询（实测一次加载 11 次 SQL），
+ *  这里做 in-flight 去重 + 短 TTL 复用（区间聚合输入不变时结果一致） */
+/** 预处理上下文（派生相对量由 buildContext 在调用方补全） */
+interface CtxBase {
+  stats: StatsSummary;
+  days: number;
+  spanDays: number;
+  earliestDate: string | null;
+}
+const ctxCache = new Map<string, { promise: Promise<CtxBase>; expires: number }>();
+const CTX_CACHE_TTL_MS = 2000;
+
 /** 预处理查询：区间聚合 + 活跃天数 + 最早日期（全部为只读查询） */
-async function buildCtx(from: string, to: string): Promise<TagContext> {
-  const [stats, days, earliestDate] = await Promise.all([
-    statsService.getStatsRange(from, to),
-    statsService.getActiveDays(from, to),
-    statsService.getEarliestDate(),
-  ]);
-  return { stats, days, spanDays: daySpan(from, to), earliestDate };
+function buildCtx(from: string, to: string): Promise<CtxBase> {
+  const key = `${from}|${to}`;
+  const hit = ctxCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.promise;
+  const promise = (async (): Promise<CtxBase> => {
+    const [stats, days, earliestDate] = await Promise.all([
+      statsService.getStatsRange(from, to),
+      statsService.getActiveDays(from, to),
+      statsService.getEarliestDate(),
+    ]);
+    return { stats, days, spanDays: daySpan(from, to), earliestDate };
+  })();
+  ctxCache.set(key, { promise, expires: Date.now() + CTX_CACHE_TTL_MS });
+  // 失败不留缓存，下次调用重查
+  promise.catch(() => ctxCache.delete(key));
+  return promise;
 }
 
 /**
@@ -388,8 +411,10 @@ export async function computeUniqueTitle(from: string, to: string): Promise<User
     .filter(x => x.score >= 1.0)
     .sort((a, b) => b.score - a.score);
 
-  if (scored.length === 0) return DEFAULT_TITLE;
-  return { id: scored[0].rule.id, name: scored[0].rule.name, category: 'time' as UserTagCategory };
+  const best = scored[0];
+  if (!best) return DEFAULT_TITLE;
+  // category 仅供小标签分组渲染使用；大标签在 StatsPage 中单独展示，不消费该字段
+  return { id: best.rule.id, name: best.rule.name, category: 'time' as UserTagCategory };
 }
 
 /** 供 StatsPage 展示大标签时参考的评分明细（点击大标签可查看） */
@@ -402,6 +427,3 @@ export async function computeTitleScores(from: string, to: string): Promise<{ na
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
 }
-
-/** 导出辅助量类型，供 StatsPage 计算趣味数据（复制之王等）复用 */
-export type { DailyStatRow };

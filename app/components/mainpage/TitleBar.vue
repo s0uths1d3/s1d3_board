@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isTauri } from "~/src/utils/env";
+import { isTauri } from "~/utils/env";
 import { activeTab, setActiveTab, getVisibleTabItems, reorderTab, persistNavConfig, type TabKey } from "~/composables/useTabs";
 import { computed, ref, onMounted, onBeforeUnmount } from "vue";
 import { useLongPressReorder } from "~/composables/useLongPressReorder";

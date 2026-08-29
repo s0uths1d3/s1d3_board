@@ -1,7 +1,7 @@
 <template>
   <div class="flex h-screen flex-col overflow-hidden rounded-2xl">
-    <!-- 图片查看器/删除确认/tooltip 等子窗口不渲染主窗口的自定义 TitleBar -->
-    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/delete-confirm' && route.path !== '/tooltip'" />
+    <!-- 图片查看器/tooltip 等子窗口不渲染主窗口的自定义 TitleBar -->
+    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/tooltip'" />
     <main id="app-main" class="flex-1 overflow-y-auto">
       <NuxtPage />
     </main>
@@ -13,11 +13,10 @@
 import TitleBar from "~/components/mainpage/TitleBar.vue";
 import {initShortcuts, unregisterAllShortcuts} from "~/src/commands/shortcuts/InitShortcuts";
 import clipboardService from "~/src/db/dbService";
-import {isTauri} from "~/src/utils/env";
+import {isTauri} from "~/utils/env";
 import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
 import statsService from "~/src/statistics/statsService";
 import reminderService from "~/src/todo/reminderService";
-import { seedMockStats } from "~/src/statistics/mockData";
 import { statsUnlocked } from "~/composables/useTabs";
 import { savePopupLastPosition } from "~/composables/usePopupPosition";
 
@@ -29,8 +28,6 @@ function isMainWindow(): boolean {
 
 /** 失焦自动隐藏的延迟计时器（避免与子窗口焦点切换竞争） */
 let hideOnBlurTimer: ReturnType<typeof setTimeout> | null = null;
-/** 主窗口是否处于聚焦状态（供 tooltip 停用时判断是否需要补隐藏） */
-let mainFocused = true;
 
 /**
  * 执行主窗口失焦自动隐藏：检查各类豁免条件后隐藏主窗口并清理子窗口。
@@ -81,21 +78,15 @@ async function tryHideMainWindow() {
     }
     if (viewerVisible) return; // 仅跳过主窗口隐藏，不影响其它子窗口与 tooltip 逻辑
 
-    // 主窗口隐藏前，关闭所有子窗口：
-    // - 图片查看器：close（随主窗口一起关闭）
-    // - 删除确认：close（随主窗口一起关闭）
-    // - tooltip 悬停窗口：同样 close（而非 hide）。原因：父窗口隐藏时独立 WebView 子窗口
-    //   会被系统挂起、事件通道失效；若仅 hide 保留单例，主窗口重新显示后 emit('tooltip:show')
-    //   会发往失效窗口、tooltip 无法再出现（需刷新才恢复）。close 后单例自然失效，
-    //   下次 hover 走 openTooltipWindow 的 new WebviewWindow 重建鲜活窗口即可正常工作。
+    // 主窗口隐藏前，关闭所有可见子窗口（查看器/tooltip 等）：
+    // tooltip 悬停窗口 close 而非 hide——父窗口隐藏时独立 WebView 子窗口
+    // 会被系统挂起、事件通道失效；若仅 hide 保留单例，主窗口重新显示后 emit('tooltip:show')
+    // 会发往失效窗口、tooltip 无法再出现（需刷新才恢复）。close 后单例自然失效，
+    // 下次 hover 走 openTooltipWindow 的 new WebviewWindow 重建鲜活窗口即可正常工作。
     for (const w of windows) {
       try {
         if (w.label === 'main') continue;
-        if (w.label.startsWith('tooltip-')) {
-          if (await w.isVisible()) await w.close();
-        } else if (await w.isVisible()) {
-          await w.close();
-        }
+        if (await w.isVisible()) await w.close();
       } catch { /* 忽略单窗关闭失败 */ }
     }
 
@@ -112,7 +103,6 @@ async function setupAutoHideOnBlur() {
   if (!isTauri() || !isMainWindow()) return;
 
   getCurrentWindow().onFocusChanged(async ({ payload: focused }) => {
-    mainFocused = focused;
     if (typeof window !== 'undefined') (window as any).__mainFocused = focused;
     if (focused) {
       // 获得焦点：取消挂起的隐藏
@@ -141,11 +131,14 @@ const route = useRoute();
 onMounted(async () => {
   if (!isMainWindow()) return;
 
-  try {
-    await clipboardService.startClipboardListener();
-    console.log('✅ 数据库初始化完成，剪贴板监听已启动');
-  } catch (error) {
-    console.error('❌ 初始化失败:', error);
+  // 剪贴板监听依赖 Tauri 插件，纯 Web 环境跳过（否则 onTextUpdate 每次启动报错）
+  if (isTauri()) {
+    try {
+      await clipboardService.startClipboardListener();
+      console.log('✅ 数据库初始化完成，剪贴板监听已启动');
+    } catch (error) {
+      console.error('❌ 初始化失败:', error);
+    }
   }
 
   // 全局快捷键依赖 Tauri 全局快捷键插件，仅在主窗口注册（子窗口如 tooltip 跳过，避免重复注册冲突）
@@ -169,20 +162,22 @@ onMounted(async () => {
   // 退出前强制落库 pending（防崩溃/强制退出丢失当日未落库数据，§14.1.1）
   window.addEventListener('beforeunload', flushStatsOnExit);
   if (isTauri()) {
-    getCurrentWindow().onCloseRequested(() => {
-      void statsService.flush();
+    getCurrentWindow().onCloseRequested(async (event) => {
+      // 等待统计落库完成后再放行关闭：fire-and-forget 的 flush 会被窗口销毁中断，丢失当日数据
+      event.preventDefault();
+      try {
+        await statsService.flush();
+      } finally {
+        await getCurrentWindow().destroy();
+      }
     });
   }
   // 统计 Tab 显示门槛判定：轻量查询（仅 COUNT/SUM 两列），满足后置位解锁（§7.9 / §14.8）。
-  // 未解锁时在后端直接导入演示数据（重建 daily_stat），以便验证统计功能；之后重新判定。
-  // 说明：导入逻辑（buildMockDays / seedMockStats）在后端数据库层执行，不依赖前端交互按钮。
+  // 注：不再在未解锁时灌入演示数据——真实使用达到门槛（活跃≥7天且粘贴≥1000次）后自然解锁。
   try {
-    let unlocked = await statsService.isStatsUnlocked();
-    if (!unlocked) {
-      await seedMockStats(true);
-      unlocked = await statsService.isStatsUnlocked();
+    if (await statsService.isStatsUnlocked()) {
+      statsUnlocked.value = true;
     }
-    if (unlocked) statsUnlocked.value = true;
   } catch (e) {
     console.error('统计解锁判定失败:', e);
   }

@@ -3,7 +3,7 @@ import { ShortcutManager } from './ShortcutManager';
 import { ToggleWindowCommand } from '../global/ToggleWindowCommand';
 import { HideWindowCommand } from '../local/HideWindowCommand';
 import type { ShortcutConfig, ShortcutScope } from './ShortcutConfig';
-import {ArrowDownTargetMovementCommand, ArrowUpTargetMovementCommand} from "~/src/commands/local/TargetMovementCommand";
+import {CursorMoveCommand} from "~/src/commands/local/CursorMoveCommand";
 import {PasteCommand} from "~/src/commands/local/PasteCommand";
 import {SwitchTabCommand} from "~/src/commands/local/SwitchTabCommand";
 import {DelCommand} from  "~/src/commands/local/DelCommand"
@@ -12,16 +12,17 @@ import {ToggleAlwaysOnTopCommand} from "~/src/commands/local/ToggleAlwaysOnTopCo
 import {AddToPinnedCommand} from "~/src/commands/local/AddToPinnedCommand"
 import {PinnedClipPasteCommand} from "~/src/commands/local/PinnedClipPasteCommand"
 import {ClipboardSlotPasteCommand} from "~/src/commands/local/ClipboardSlotPasteCommand"
-import {SaveNoteCommand} from "~/src/commands/local/SaveNoteCommand"
+import {ContextEditCommand} from "~/src/commands/local/ContextEditCommand"
 import {CreateNoteCommand} from "~/src/commands/local/CreateNoteCommand"
 import {FocusSearchCommand} from "~/src/commands/local/FocusSearchCommand"
 import {CycleColorSchemeCommand} from "~/src/commands/local/CycleColorSchemeCommand"
 import dbService from "~/src/db/dbService";
+import { normalizeShortcutKey } from "~/utils/shortcutFormat";
 
 const toggleWindowCommand = new ToggleWindowCommand();
 const hideWindowCommand = new HideWindowCommand();
-const arrowUpTargetMovementCommand = new ArrowUpTargetMovementCommand()
-const arrowDownTargetMovementCommand = new ArrowDownTargetMovementCommand()
+const arrowUpCursorMoveCommand = new CursorMoveCommand(-1)
+const arrowDownCursorMoveCommand = new CursorMoveCommand(1)
 const pasteCommand = new PasteCommand()
 const switchPrevTabCommand = new SwitchTabCommand(-1)
 const switchNextTabCommand = new SwitchTabCommand(1)
@@ -31,7 +32,7 @@ const toggleAlwaysOnTopCommand = new ToggleAlwaysOnTopCommand()
 // Ctrl+U：将当前选中的剪贴项添加为常用剪贴（已存在则忽略）
 const addToPinnedCommand = new AddToPinnedCommand()
 // Ctrl+Enter：保存当前编辑中的便签
-const saveNoteCommand = new SaveNoteCommand()
+const contextEditCommand = new ContextEditCommand()
 // Ctrl+N：新建便签
 const createNoteCommand = new CreateNoteCommand()
 // Ctrl+F：聚焦当前标签页的搜索框（clip / todo 等）
@@ -68,7 +69,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         key: 'ArrowUp',
         defaultKey: 'ArrowUp',
         scope: 'local',
-        command: arrowUpTargetMovementCommand,
+        command: arrowUpCursorMoveCommand,
         title:'选择上一项',
         enabled: true
     },
@@ -77,7 +78,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         key: 'ArrowDown',
         defaultKey: 'ArrowDown',
         scope: 'local',
-        command: arrowDownTargetMovementCommand,
+        command: arrowDownCursorMoveCommand,
         title:'选择下一项',
         enabled: true
     },
@@ -157,7 +158,9 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         id: 'find_in_tab',
         key: 'CommandOrControl+F',
         defaultKey: 'CommandOrControl+F',
-        scope: 'global',
+        // 聚焦搜索框是窗口内语义（窗口隐藏时 dispatchEvent 无意义），
+        // 注册为 global 会在应用驻留托盘时劫持全系统其他应用的 Ctrl+F
+        scope: 'local',
         command: focusSearchCommand,
         title: '聚焦当前页搜索框',
         enabled: true
@@ -176,7 +179,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         key: 'Control+Enter',
         defaultKey: 'Control+Enter',
         scope: 'local',
-        command: saveNoteCommand,
+        command: contextEditCommand,
         title: '保存便签（编辑中）',
         enabled: true
     },
@@ -208,15 +211,15 @@ export const shortcuts = ref<ShortcutConfig[]>([...DEFAULT_SHORTCUTS]);
 const manager = new ShortcutManager();
 let initialized = false;
 
-/** 用当前 shortcuts 配置重新注册全部快捷键（自定义后调用） */
-async function reloadShortcuts() {
+/** 用当前 shortcuts 配置重新注册全部快捷键（自定义后调用），返回注册失败的项 */
+async function reloadShortcuts(): Promise<ShortcutConfig[]> {
     manager.unregisterAllLocals();
     try {
         await manager.unregisterAllGlobals();
     } catch (e) {
         console.error('注销残留快捷键失败:', e);
     }
-    await manager.registerAll(shortcuts.value);
+    return await manager.registerAll(shortcuts.value);
 }
 
 /** 把当前快捷键配置批量写入数据库（幂等 upsert，含启用状态） */
@@ -284,11 +287,12 @@ export async function initShortcuts() {
     initialized = true;
 }
 
-/** 检测某 key 是否与其他快捷键冲突（排除指定 id），返回冲突项或 null */
+/** 检测某 key 是否与其他快捷键冲突（排除指定 id），返回冲突项或 null。
+ *  修饰键别名（Ctrl/Control/Command/CommandOrControl）归一化后比较，避免跨写法冲突漏检 */
 export function findShortcutConflict(key: string, excludeId?: string): ShortcutConfig | null {
-    const normalized = key.toLowerCase().replace(/\s+/g, '');
+    const normalized = normalizeShortcutKey(key);
     return shortcuts.value.find(
-        s => s.id !== excludeId && s.key.toLowerCase().replace(/\s+/g, '') === normalized
+        s => s.id !== excludeId && normalizeShortcutKey(s.key) === normalized
     ) ?? null;
 }
 
@@ -309,12 +313,20 @@ export async function updateShortcutKey(id: string, newKey: string): Promise<str
     const conflict = findShortcutConflict(newKey, id);
     if (conflict) return `与「${conflict.title}」冲突`;
 
+    const prevKey = target.key;
     target.key = newKey;
+    let failed: ShortcutConfig[] = [];
     try {
-        await reloadShortcuts();
+        failed = await reloadShortcuts();
     } catch (e) {
         console.error('快捷键注册失败:', e);
-        return '快捷键注册失败';
+        failed = [target];
+    }
+    if (failed.some(f => f.id === id)) {
+        // 注册失败（如新键被系统/其他程序占用）：回滚为原键并重新注册，不把"死键"持久化
+        target.key = prevKey;
+        try { await reloadShortcuts(); } catch { /* 回滚注册失败仅记录 */ }
+        return '快捷键注册失败（可能被系统或其他程序占用）';
     }
     try {
         await dbService.saveShortcutSetting(target.id, target.key, target.scope, target.title);

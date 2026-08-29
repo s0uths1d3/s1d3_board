@@ -1,4 +1,5 @@
-import Database from "@tauri-apps/plugin-sql";
+import statsService from './statsService';
+import { toDateString as fmtDate } from '~/utils/datetime';
 
 /**
  * 演示数据生成器（Mock Data）
@@ -31,13 +32,6 @@ function mulberry32(seed: number): () => number {
 /** 在 [min, max] 区间取整数 */
 function rint(rand: () => number, min: number, max: number): number {
   return Math.floor(rand() * (max - min + 1)) + min;
-}
-
-function fmtDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
 }
 
 /** 待写入的每日统计行 */
@@ -146,7 +140,8 @@ const MOCK_CLIP_TEXTS: string[] = [
  * @returns true = 已生成；false = 跳过（非强制且已有数据）
  */
 export async function seedMockStats(force = false): Promise<boolean> {
-  const db = await Database.load('sqlite:s1d3_board.db');
+  // 复用统计服务的数据库连接，避免每个模块各自 Database.load 多持连接
+  const db = await statsService.getRawDb();
 
   // 幂等：已有真实统计数据则跳过（force 时强制重建）
   if (!force) {
@@ -187,15 +182,4 @@ export async function seedMockStats(force = false): Promise<boolean> {
 
   console.log(`[mock] 已生成演示统计：${days.length} 天 / ${MOCK_CLIP_TEXTS.length} 条剪贴板记录`);
   return true;
-}
-
-/** 判断当前是否处于"无任何统计数据"状态（供解锁逻辑决定是否生成演示数据） */
-export async function isStatsEmpty(): Promise<boolean> {
-  try {
-    const db = await Database.load('sqlite:s1d3_board.db');
-    const rows: any[] = await db.select('SELECT COUNT(*) AS cnt FROM daily_stat');
-    return (rows?.[0]?.cnt ?? 0) === 0;
-  } catch {
-    return true;
-  }
 }

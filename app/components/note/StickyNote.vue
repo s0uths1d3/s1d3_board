@@ -112,10 +112,11 @@ import { useNoteColors, resolveNoteColor } from "~/composables/useNoteColors";
 import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
-import type { Note } from "~/src/Entities";
-import {isTauri} from "~/src/utils/env";
+import type { Note } from "~/src/entities";
+import {isTauri} from "~/utils/env";
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
-import { findNearestInDirection } from "~/src/utils/focusNavigation";
+import { matchesKeyId } from "~/utils/shortcutFormat";
+import { findNearestInDirection } from "~/utils/focusNavigation";
 import { useSearchHighlight } from "~/composables/useSearchHighlight";
 
 interface StickyNote extends Note {
@@ -170,24 +171,35 @@ function setupLoadMore() {
   if (loadMoreEl.value) loadMoreObserver.observe(loadMoreEl.value)
 }
 
-/** 搜索范围切换到"全部"时：重新查库，确保涵盖未加载的便签；清空搜索时恢复全量 */
+/** 搜索范围切换到"全部"时：重新查库，确保涵盖未加载的便签；清空搜索时恢复全量。
+ *  加 300ms trailing 防抖：此前每个按键立即查库，连续输入 = 连续 SQL */
+let searchFetchTimer: ReturnType<typeof setTimeout> | null = null
 watch([searchScope, noteSearch], async ([scope, q]) => {
+  if (searchFetchTimer) clearTimeout(searchFetchTimer)
   if (q.trim() && scope === 'all') {
-    try {
-      const fetched = await clipboardService.fetchNotes({ value: { searchContent: q.trim() } })
-      notes.value = fetched
-      visibleCount.value = fetched.length
-      if (selectedIndex.value > fetched.length - 1) {
-        selectedIndex.value = Math.max(0, fetched.length - 1)
-      }
-    } catch (e) {
-      console.error('搜索便签失败:', e)
-    }
+    searchFetchTimer = setTimeout(() => {
+      searchFetchTimer = null
+      void fetchNotesByScope(q)
+    }, 300)
   } else if (!q.trim()) {
-    // 清空搜索：恢复全量加载（重置分批）
-    await fetchTodos()
+    // 清空搜索：立即恢复全量加载（重置分批）
+    await fetchNotes()
   }
 })
+
+/** 按"全部"范围查库刷新搜索结果 */
+async function fetchNotesByScope(q: string) {
+  try {
+    const fetched = await clipboardService.fetchNotes({ value: { searchContent: q } })
+    notes.value = fetched
+    visibleCount.value = fetched.length
+    if (selectedIndex.value > fetched.length - 1) {
+      selectedIndex.value = Math.max(0, fetched.length - 1)
+    }
+  } catch (e) {
+    console.error('搜索便签失败:', e)
+  }
+}
 
 /** 跳转到首个高亮匹配：选中第一个匹配便签并丝滑滚动到视图中心 */
 const jumpToFirstMatch = () => {
@@ -210,8 +222,7 @@ watch(selectedIndex, (idx) => {
 const ctrlNIsCreateShortcut = computed(() => {
   const s = shortcuts.value.find(x => x.id === 'create_note')
   if (!s || !s.enabled) return false
-  const k = s.key.toLowerCase().replace(/\s+/g, '')
-  return k === 'control+n' || k === 'n'
+  return matchesKeyId(s.key, 'control+n') || matchesKeyId(s.key, 'n')
 })
 
 // ===== 新建便签：不弹窗，点击即创建（默认第一套配色），并直接进入编辑态 =====
@@ -257,29 +268,39 @@ const onRequestDelete = (note: StickyNote, e?: MouseEvent) => {
   confirmAnchor.value = btn?.getBoundingClientRect() ?? null
 }
 
-/** 确认删除 */
+const updateNote = async (id: string, content: string) => {
+  const note = notes.value.find(n => n.id === id)
+  if (note) {
+    note.content = content
+    note.updated_at = String(Date.now())
+    try {
+      await clipboardService.updateNote(note)
+    } catch (e) {
+      console.error('保存便签失败:', e)
+      showHint('保存失败，请重试')
+    }
+  }
+}
+
+/** 确认删除：失败时给出提示（目标已在确认框关闭前捕获，不恢复弹窗避免卡死交互） */
 const confirmDelete = async () => {
   const target = deleteConfirmTarget.value
   if (!target) return
   deleteConfirmTarget.value = null
   confirmAnchor.value = null
-  await deleteNote(target.id)
-  showHint('已删除')
+  try {
+    await deleteNote(target.id)
+    showHint('已删除')
+  } catch (e) {
+    console.error('删除便签失败:', e)
+    showHint('删除失败，请重试')
+  }
 }
 
 /** 取消删除 */
 const cancelDelete = () => {
   deleteConfirmTarget.value = null
   confirmAnchor.value = null
-}
-
-const updateNote = async (id: string, content: string) => {
-  const note = notes.value.find(n => n.id === id)
-  if (note) {
-    note.content = content
-    note.updated_at = new Date().toString()
-    await clipboardService.updateNote(note)
-  }
 }
 
 const deleteNote = async (id: string) => {
@@ -300,8 +321,13 @@ const changeNoteColor = async (id: string, color: string) => {
   const note = notes.value.find(n => n.id === id)
   if (note) {
     note.color = color
-    note.updated_at = new Date().toString()
-    await clipboardService.updateNote(note)
+    note.updated_at = String(Date.now())
+    try {
+      await clipboardService.updateNote(note)
+    } catch (e) {
+      console.error('保存便签配色失败:', e)
+      showHint('配色保存失败，请重试')
+    }
   }
 }
 
@@ -353,8 +379,10 @@ async function onKeydown(e: KeyboardEvent) {
     return
   }
 
-  // Ctrl+N：新建便签（页面兜底，快捷键系统未注册/未重启时也生效）
+  // Ctrl+N：新建便签（页面兜底，快捷键系统未注册/未重启时也生效）。
+  // 编辑中先让当前 textarea 失焦触发保存——组件卸载不会触发 blur，直接切换会丢失未保存内容
   if (e.ctrlKey && e.key.toLowerCase() === 'n' && ctrlNIsCreateShortcut.value) {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     e.preventDefault()
     e.stopPropagation()
     createNote()
@@ -408,14 +436,19 @@ async function onKeydown(e: KeyboardEvent) {
   }
 }
 
-const fetchTodos = async () => {
+const fetchNotes = async () => {
   try {
     // 轮询时也应用当前搜索条件，避免覆盖搜索结果（全部模式下按搜索词查库）
     const q = noteSearch.value.trim()
-    const fetchedNotes = await clipboardService.fetchNotes({ value: { searchContent: q } })
-    notes.value = fetchedNotes
+    const fetched = await clipboardService.fetchNotes({ value: { searchContent: q } })
+    // 签名比对：无变化时跳过整表替换，避免每秒轮询触发全部卡片无谓重渲染
+    // （此前与 TodoList/主页不同，这里没有任何去重，空闲时每秒全量重渲染一轮）
+    const signature = fetched.map(n => `${n.id}:${n.updated_at}`).join(',')
+    if (signature === lastSignature) return
+    lastSignature = signature
+    notes.value = fetched
     if (!q) visibleCount.value = BATCH_SIZE
-    else visibleCount.value = fetchedNotes.length
+    else visibleCount.value = fetched.length
     // 修正选中索引，避免列表刷新后越界
     if (selectedIndex.value > notes.value.length - 1) {
       selectedIndex.value = Math.max(0, notes.value.length - 1)
@@ -423,17 +456,22 @@ const fetchTodos = async () => {
     // 数据刷新后 sentinel 可能重新出现/消失，重新建立观察
     nextTick(setupLoadMore)
   } catch (error) {
-    console.error("Failed to fetch todos:", error);
+    console.error("Failed to fetch notes:", error);
   }
 };
 
+let lastSignature = '';
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
-  // 仅在 Tauri 桌面容器内：进入便签页立即加载首屏数据（不必等待 1s 后的首次轮询），并保持轮询
+  // 仅在 Tauri 桌面容器内：进入便签页立即加载首屏数据（不必等待首次轮询），并保持轮询。
+  // 3s 粒度 + 签名去重 + 窗口隐藏时暂停
   if (isTauri()) {
-    fetchTodos();
-    intervalId = setInterval(fetchTodos, 1000);
+    fetchNotes();
+    intervalId = setInterval(() => {
+      if (document.hidden) return
+      void fetchNotes()
+    }, 3000);
   }
   window.addEventListener('keydown', onKeydown, true)
   // Ctrl+N 新建便签（CreateNoteCommand 派发）

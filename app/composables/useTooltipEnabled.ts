@@ -1,16 +1,13 @@
-import { ref } from 'vue';
-import dbService from '~/src/db/dbService';
+import { createBooleanSetting } from './useBooleanSetting';
 
-/** 是否开启悬停提示窗口（tooltip）。单例 ref，设置页与主窗口共享，关闭后悬停不再弹出提示 */
-const tooltipEnabled = ref(true);
-let loaded = false;
+/** 是否开启悬停提示窗口（tooltip 独立窗口）；持久化到 settings 表 */
+const setting = createBooleanSetting('tooltip_enabled', true);
 
 export function useTooltipEnabled() {
-  if (!loaded) {
-    loaded = true;
-    dbService.getKeyValue('tooltip_enabled').then((v) => {
-      if (v !== null && v !== undefined && v !== '') tooltipEnabled.value = v === '1';
-    }).catch(() => { /* 未设置过则保持默认开启 */ });
-  }
+  const tooltipEnabled = setting.useSetting();
   return { tooltipEnabled };
+}
+
+export async function setTooltipEnabled(v: boolean): Promise<void> {
+  await setting.persist(v);
 }

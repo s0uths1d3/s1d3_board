@@ -1,16 +1,13 @@
-import { ref } from 'vue';
-import dbService from '~/src/db/dbService';
+import { createBooleanSetting } from './useBooleanSetting';
 
-/** 搜索是否高亮匹配：全局开关，所有搜索框（便签 / 主剪贴板 / 待办等）共用，默认开启 */
-const searchHighlightEnabled = ref(true);
-let loaded = false;
+/** 是否开启搜索命中高亮（列表/卡片通用）；持久化到 settings 表 */
+const setting = createBooleanSetting('search_highlight_enabled', true);
 
 export function useSearchHighlight() {
-  if (!loaded) {
-    loaded = true;
-    dbService.getKeyValue('search_highlight_enabled').then((v) => {
-      if (v !== null && v !== undefined && v !== '') searchHighlightEnabled.value = v === '1';
-    }).catch(() => { /* 未设置过则保持默认开启 */ });
-  }
+  const searchHighlightEnabled = setting.useSetting();
   return { searchHighlightEnabled };
+}
+
+export async function setSearchHighlightEnabled(v: boolean): Promise<void> {
+  await setting.persist(v);
 }

@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue';
 import { listen, emit } from '@tauri-apps/api/event';
 import dbService from '~/src/db/dbService';
-import { isTauri } from '~/src/utils/env';
+import { isTauri } from '~/utils/env';
 
 /**
  * 配色模式：

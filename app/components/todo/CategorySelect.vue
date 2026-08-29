@@ -27,6 +27,8 @@ const { categories, addCategory } = useCategories()
 const open = ref(false)
 const newName = ref('')
 const inputEl = ref<HTMLInputElement | null>(null)
+/** 新增失败提示（重名等）：显示在输入框上方，成功后自动清除 */
+const errorMsg = ref('')
 
 const select = (c: string) => {
   emit('update:modelValue', c)
@@ -39,21 +41,25 @@ const onDelete = (c: string, e?: MouseEvent) => {
   emit('category-delete', c, btn?.getBoundingClientRect())
 }
 
-/** 新增分类并选中 */
+/** 新增分类并选中；失败（重名）时保留输入并提示，不再静默清空让用户无从得知 */
 const submitNew = async () => {
   const name = newName.value.trim()
   if (!name) return
   const ok = await addCategory(name)
   if (ok) {
+    errorMsg.value = ''
+    newName.value = ''
     emit('update:modelValue', name)
     open.value = false
+  } else {
+    errorMsg.value = '分类已存在'
   }
-  newName.value = ''
 }
 
 // 展开时聚焦新增输入框；收起时清空未提交内容
 watch(open, (v) => {
   if (v) {
+    errorMsg.value = ''
     nextTick(() => inputEl.value?.focus())
   } else {
     newName.value = ''
@@ -109,6 +115,7 @@ watch(open, (v) => {
         </div>
       </li>
       <li class="mt-1 border-t border-accent/60 pt-1" data-dd-keep-open>
+        <div v-if="errorMsg" class="mb-1 px-1 text-xs text-danger">{{ errorMsg }}</div>
         <input
             ref="inputEl"
             v-model="newName"
