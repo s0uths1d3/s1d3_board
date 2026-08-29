@@ -1,7 +1,7 @@
 <template>
   <div
       class="sticky-note-card glass-card group relative mb-4 flex min-h-[200px] cursor-pointer break-inside-avoid flex-col rounded-2xl border p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
-      :class="[selected ? 'shadow-[0_0_18px_-2px_rgba(196,167,125,0.45)]' : '', saved ? 'note-saved' : '']"
+      :class="[selected ? '!border-gold ring-2 ring-gold/60 shadow-[0_0_22px_-2px_rgba(196,167,125,0.6)]' : '', saved ? 'note-saved' : '']"
       :style="noteStyle"
       @click="$emit('select')"
   >
@@ -226,11 +226,12 @@ onBeforeUnmount(() => {
 // ===== 配色：自定义名称 + 颜色（useNoteColors 统一管理，卡片背景由 hex 动态生成）=====
 const { colors: noteColors, replaceColors } = useNoteColors()
 
-/** 卡片着色：低透明底 + 同色描边（旧名称存储自动解析为 hex） */
+/** 卡片着色：低透明底 + 同色描边（旧名称存储自动解析为 hex）。
+ *  选中态的边框高亮由模板里的选中类（!border-gold + ring）统一处理，与待办选中样式一致 */
 const noteColorHex = computed(() => resolveNoteColor(props.note.color))
 const noteStyle = computed(() => ({
   backgroundColor: noteColorHex.value + '8c',
-  borderColor: props.selected ? 'rgb(var(--c-gold))' : noteColorHex.value + '80',
+  borderColor: noteColorHex.value + '80',
 }))
 
 // 管理器：本地草稿，完成后整表提交

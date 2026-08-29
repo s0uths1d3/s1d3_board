@@ -17,7 +17,6 @@ import {isTauri} from "~/utils/env";
 import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
 import statsService from "~/src/statistics/statsService";
 import reminderService from "~/src/todo/reminderService";
-import { statsUnlocked } from "~/composables/useTabs";
 import { savePopupLastPosition } from "~/composables/usePopupPosition";
 
 /** 剪贴板监听与全局快捷键只需在主窗口注册一次；
@@ -171,15 +170,6 @@ onMounted(async () => {
         await getCurrentWindow().destroy();
       }
     });
-  }
-  // 统计 Tab 显示门槛判定：轻量查询（仅 COUNT/SUM 两列），满足后置位解锁（§7.9 / §14.8）。
-  // 注：不再在未解锁时灌入演示数据——真实使用达到门槛（活跃≥7天且粘贴≥1000次）后自然解锁。
-  try {
-    if (await statsService.isStatsUnlocked()) {
-      statsUnlocked.value = true;
-    }
-  } catch (e) {
-    console.error('统计解锁判定失败:', e);
   }
 })
 

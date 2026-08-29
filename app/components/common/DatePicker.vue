@@ -241,16 +241,26 @@ function positionPanel() {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 
+  // 面板已渲染时用真实尺寸（datetime 模式比估算值高得多），否则退回估算值
+  const panelH = panelRef.value?.offsetHeight || PANEL_HEIGHT;
+  const panelW = panelRef.value?.offsetWidth || PANEL_WIDTH;
+
   // 左右：默认对齐按钮左缘，超右边界则收进视口
   let left = rect.left;
-  if (left + PANEL_WIDTH > vw - 8) left = Math.max(8, vw - PANEL_WIDTH - 8);
+  if (left + panelW > vw - 8) left = Math.max(8, vw - panelW - 8);
+  if (left < 8) left = 8;
 
-  // 上下：优先向下展开，下方空间不足且上方足够时向上弹
+  // 上下：优先向下展开；放不下且上方足够时向上弹；两者都放不下则钳制在视口内
   let top = rect.bottom + 8;
   let up = false;
-  if (top + PANEL_HEIGHT > vh - 8 && rect.top - PANEL_HEIGHT - 8 >= 8) {
-    top = rect.top - PANEL_HEIGHT - 8;
-    up = true;
+  if (top + panelH > vh - 8) {
+    const aboveTop = rect.top - panelH - 8;
+    if (aboveTop >= 8) {
+      top = aboveTop;
+      up = true;
+    } else {
+      top = Math.max(8, Math.min(top, vh - panelH - 8));
+    }
   }
   const rightAligned = left !== rect.left;
 
@@ -294,7 +304,11 @@ watch(open, (v) => {
     // 外部 v-model:open 编程打开时不走 toggle()，这里统一初始化视图/时间
     syncView();
     initTime();
+    // 触发元素在滚动容器可视区外时先滚入（nearest：已可见则不滚动），面板才能贴着它弹出
+    rootEl.value?.scrollIntoView({ block: 'nearest' });
     positionPanel();
+    // 面板渲染完成后用真实尺寸二次定位（首拍用估算值）
+    nextTick(() => positionPanel());
     // capture 捕获所有祖先滚动，保证面板跟随按钮位置
     window.addEventListener('resize', positionPanel);
     document.addEventListener('scroll', positionPanel, true);
@@ -330,7 +344,7 @@ const clearable = computed(() => hasValue.value);
 </script>
 
 <template>
-  <div ref="rootEl" class="relative inline-block">
+  <div ref="rootEl" :class="hideTrigger ? '' : 'relative inline-block'">
     <!-- 触发按钮（外观与输入框一致）。hideTrigger 时不渲染，仅作"面板"容器使用。 -->
     <button
       v-if="!hideTrigger"
@@ -365,7 +379,8 @@ const clearable = computed(() => hasValue.value);
         <div
           v-if="open"
           ref="panelRef"
-          class="picker-panel fixed z-[9999] rounded-2xl border border-accent bg-surface p-3 shadow-float"
+          class="picker-panel dd-keep-open-panel fixed z-[9999] rounded-2xl border border-accent bg-surface p-3 shadow-float"
+          data-dd-keep-open
           :style="panelStyle"
           @click.stop
         >
@@ -427,7 +442,7 @@ const clearable = computed(() => hasValue.value);
             <span class="text-xs text-ink-faint">时间</span>
 
             <!-- 小时选择（0-23）：面板靠近视口底部，向上展开避免被屏幕裁切 -->
-            <UiDropdown align="end" direction="up" :close-on-select="false" aria-label="小时" panel-class="glass-card menu w-16 rounded-xl p-1" @open="scrollToActive(hourListEl, hour)">
+            <UiDropdown align="end" direction="up" :close-on-select="false" aria-label="小时" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive(hourListEl, hour)">
               <template #trigger>
                 <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none">
                   <span>{{ pad(hour) }}</span>
@@ -454,7 +469,7 @@ const clearable = computed(() => hasValue.value);
             <span class="text-ink-faint">:</span>
 
             <!-- 分钟选择（0-59） -->
-            <UiDropdown align="end" direction="up" :close-on-select="false" aria-label="分钟" panel-class="glass-card menu w-16 rounded-xl p-1" @open="scrollToActive(minuteListEl, minute)">
+            <UiDropdown align="end" direction="up" :close-on-select="false" aria-label="分钟" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive(minuteListEl, minute)">
               <template #trigger>
                 <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none">
                   <span>{{ pad(minute) }}</span>

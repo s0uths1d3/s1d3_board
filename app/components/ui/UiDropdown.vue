@@ -110,11 +110,14 @@ function onPanelClick(e: MouseEvent) {
 }
 
 function onDocPointerDown(e: PointerEvent) {
-  const t = e.target as Node | null;
+  const t = e.target as HTMLElement | null;
   if (!t) return;
   // 触发器点击由 toggle 处理（再点收起），这里只管外部点击收起
   if (rootEl.value?.contains(t)) return;
   if (panelEl.value?.contains(t)) return;
+  // Teleport 到 body 的嵌套面板（如内嵌 DatePicker 的日期/时分选择面板）
+  // 标记 data-dd-keep-open / .dd-keep-open-panel 时同样不收起，避免父下拉被误关闭
+  if (t.closest?.('[data-dd-keep-open], .dd-keep-open-panel')) return;
   close();
 }
 

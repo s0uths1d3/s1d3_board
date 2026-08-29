@@ -18,11 +18,10 @@ export function setActiveTab(key: TabKey) {
   void statsService.record({ [`tab_${key}`]: 1 } as Partial<Record<StatField, number>>)
 }
 
-/** 标题栏导航项配置（「统计」带显示门槛，见 statsUnlocked） */
+/** 标题栏导航项配置 */
 export interface TabItem {
   key: TabKey
   name: string
-  gate?: 'stats-unlocked'
 }
 
 export const tabItems: TabItem[] = [
@@ -31,12 +30,8 @@ export const tabItems: TabItem[] = [
   { key: 'note', name: '便签' },
   { key: 'pinned', name: '常用剪贴板' },
   { key: 'setting', name: '设置' },
-  // 统计 Tab 带显示门槛（§7.9）：活跃 ≥ 7 天 且 粘贴 ≥ 1000 次才可见
-  { key: 'statistics', name: '统计', gate: 'stats-unlocked' },
+  { key: 'statistics', name: '统计' },
 ]
-
-/** 统计是否已解锁（由 statsService.isStatsUnlocked() 在启动时判定后置位，永久保持） */
-export const statsUnlocked = ref(false)
 
 // ===== 导航栏自定义配置（顺序 + 启用状态，持久化到 settings 表） =====
 const NAV_CONFIG_KEY = 'nav_tab_config'
@@ -100,13 +95,12 @@ function orderedTabs(): TabItem[] {
   return list
 }
 
-/** 设置页分组行数据：tab + 启用态 + 锁定态 + 门槛标记 */
+/** 设置页分组行数据：tab + 启用态 + 锁定态 */
 export interface NavRow {
   key: TabKey
   name: string
   enabled: boolean
   locked: boolean
-  gate: boolean
 }
 
 /** 导航配置行（设置页使用）：全部 tab（含禁用项），按用户顺序排列 */
@@ -116,16 +110,12 @@ export const navRows = computed<NavRow[]>(() =>
     name: t.name,
     enabled: !disabledTabs.value.includes(t.key),
     locked: isTabLocked(t.key),
-    gate: t.gate === 'stats-unlocked',
   })),
 )
 
-/** 导航可见 tabs：按用户顺序，过滤禁用项与未达门槛的统计 Tab（响应式，TitleBar 直接渲染） */
+/** 导航可见 tabs：按用户顺序，过滤禁用项（响应式，TitleBar 直接渲染） */
 export const navTabs = computed<TabItem[]>(() =>
-  orderedTabs().filter(t => {
-    if (t.gate === 'stats-unlocked' && !statsUnlocked.value) return false
-    return !disabledTabs.value.includes(t.key)
-  }),
+  orderedTabs().filter(t => !disabledTabs.value.includes(t.key)),
 )
 
 export function getVisibleTabItems(): TabItem[] {

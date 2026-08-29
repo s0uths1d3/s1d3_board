@@ -16,9 +16,6 @@ import { toDateString } from '~/utils/datetime';
 import DatePicker from '~/components/common/DatePicker.vue';
 import LazySection from '~/components/statistics/LazySection.vue';
 
-/** 测试数据面板仅开发环境可用（生产不渲染入口，也不打包 mock 引用） */
-const isDev = import.meta.dev;
-
 type RangeKey = 'day' | 'week' | 'month' | 'year' | 'custom';
 
 const rangeOptions: { key: RangeKey; name: string }[] = [
@@ -393,87 +390,6 @@ const tagsByCategory = computed(() => {
 /** 趋势图最大值（归一化柱高） */
 const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
 
-// ===== 编辑测试数据（§测试用：从 mock 数据加载初值，修改后写回 daily_stat）=====
-const editVisible = ref(false);
-const editDate = ref(toDateString(new Date()));
-const editFields = ref<{ key: string; label: string; value: number }[]>([]);
-
-/** 可编辑的统计字段（不含时段/tab 等冗余计数，聚焦业务量） */
-const EDIT_FIELD_DEFS: { key: StatField; label: string }[] = [
-  { key: 'clip_text', label: '剪贴文本' },
-  { key: 'clip_image', label: '剪贴图片' },
-  { key: 'clip_use', label: '粘贴使用' },
-  { key: 'clip_chars', label: '复制字符量' },
-  { key: 'todo_added', label: '待办新增' },
-  { key: 'todo_completed', label: '待办完成' },
-  { key: 'todo_deleted', label: '待办删除' },
-  { key: 'todo_chars', label: '待办内容量' },
-  { key: 'todo_reminded', label: '待办提醒' },
-  { key: 'note_added', label: '便签新增' },
-  { key: 'note_deleted', label: '便签删除' },
-  { key: 'favorite_toggle', label: '收藏切换' },
-  { key: 'usage_seconds', label: '使用时长(秒)' },
-  { key: 'shortcut_count', label: '快捷键次数' },
-];
-
-const editSaving = ref(false);
-const editMsg = ref('');
-
-/** 打开编辑面板：初值取当日真实数据（无则全 0），并附带最近一条 mock 行供参考 */
-async function openEditPanel() {
-  if (!import.meta.dev) return;
-  editDate.value = toDateString(new Date());
-  editMsg.value = '';
-  editVisible.value = true;
-  try {
-    const today = await statsService.getDaily(editDate.value);
-    editFields.value = EDIT_FIELD_DEFS.map(d => ({
-      key: d.key,
-      label: d.label,
-      value: today[d.key] ?? 0,
-    }));
-  } catch {
-    editFields.value = EDIT_FIELD_DEFS.map(d => ({ key: d.key, label: d.label, value: 0 }));
-  }
-}
-
-/** 载入 mock 数据作为当前编辑初值（用 mock 序列中最近一天的各字段值）。
- *  mockData 改为 dev-only 动态导入，生产构建不打包演示数据生成器。 */
-async function loadMockValues() {
-  try {
-    const { buildMockDays } = await import('~/src/statistics/mockData');
-    const days = buildMockDays();
-    const sample = days[days.length - 1]?.row ?? {};
-    editFields.value = EDIT_FIELD_DEFS.map(d => ({
-      key: d.key,
-      label: d.label,
-      value: sample[d.key] ?? 0,
-    }));
-    editMsg.value = '已载入最近一天演示数据，可直接修改后保存';
-  } catch {
-    editMsg.value = '载入演示数据失败';
-  }
-}
-
-/** 保存：将编辑后的各字段写回 daily_stat（UPSERT 当日） */
-async function saveEditData() {
-  editSaving.value = true;
-  editMsg.value = '';
-  try {
-    const partial: Partial<Record<StatField, number>> = {};
-    for (const f of editFields.value) {
-      partial[f.key as StatField] = Number(f.value) || 0;
-    }
-    await statsService.setDaily(editDate.value, partial);
-    editMsg.value = `已保存 ${editDate.value} 的测试数据`;
-    // 刷新当前统计展示
-    await load({ skeleton: false });
-  } catch (e) {
-    editMsg.value = '保存失败：' + (e as Error).message;
-  } finally {
-    editSaving.value = false;
-  }
-}
 </script>
 
 <template>
@@ -492,15 +408,6 @@ async function saveEditData() {
           {{ opt.name }}
         </button>
         <div class="ml-auto flex items-center gap-2 text-xs text-ink-faint">
-          <button
-            v-if="isDev"
-            type="button"
-            class="btn-soft px-2.5 py-1 text-xs"
-            v-tip="'编辑当日统计测试数据（演示/调试用）'"
-            @click="openEditPanel"
-          >
-            测试数据
-          </button>
           <span v-if="range === 'custom'" class="flex items-center gap-1">
             <DatePicker v-model="customFrom" placeholder="开始日期" :max="customTo || undefined" />
             <span class="text-ink-faint">—</span>
@@ -774,64 +681,5 @@ async function saveEditData() {
       </template>
     </template>
 
-    <!-- ===== 测试数据编辑面板（演示/调试用）===== -->
-    <Teleport to="body">
-      <div
-        v-if="editVisible"
-        class="fixed inset-0 z-[99998] flex items-center justify-center bg-black/30 p-4"
-        @click.self="editVisible = false"
-      >
-        <div class="glass-card w-full max-w-lg rounded-2xl p-5 shadow-float">
-          <div class="mb-3 flex items-center justify-between">
-            <h3 class="text-sm font-semibold text-ink">编辑当日统计测试数据</h3>
-            <button
-              type="button"
-              class="btn-soft flex h-7 w-7 items-center justify-center rounded-full p-0"
-              @click="editVisible = false"
-            >
-              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-            </button>
-          </div>
-
-          <div class="mb-3 flex items-center gap-2">
-            <label class="text-xs text-ink-faint">日期</label>
-            <DatePicker v-model="editDate" placeholder="YYYY-MM-DD" />
-            <button
-              type="button"
-              class="btn-soft ml-auto px-2.5 py-1 text-xs"
-              @click="loadMockValues"
-            >
-              载入演示值
-            </button>
-          </div>
-
-          <div class="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
-            <label
-              v-for="f in editFields"
-              :key="f.key"
-              class="flex items-center justify-between gap-2 rounded-lg bg-surface-field px-2 py-1.5"
-            >
-              <span class="text-xs text-ink-soft">{{ f.label }}</span>
-              <input
-                v-model.number="f.value"
-                type="number"
-                min="0"
-                class="w-28 rounded-lg border border-accent bg-surface-field px-2 py-1 text-right text-sm text-ink tabular-nums outline-none focus:border-gold"
-              />
-            </label>
-          </div>
-
-          <div class="mt-4 flex items-center justify-between gap-3">
-            <span class="text-xs text-ink-faint">{{ editMsg }}</span>
-            <div class="flex gap-2">
-              <button type="button" class="btn-soft" @click="editVisible = false">取消</button>
-              <button type="button" class="btn-gold" :disabled="editSaving" @click="saveEditData">
-                {{ editSaving ? '保存中…' : '保存' }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>

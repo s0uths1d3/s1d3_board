@@ -14,8 +14,12 @@ import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '
 import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
 import { useTodoSmartRemind, setTodoSmartRemindEnabled } from '~/composables/useTodoSmartRemind';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
-import { navRows, reorderTab, persistNavConfig, setTabEnabled, statsUnlocked } from '~/composables/useTabs';
+import { navRows, reorderTab, persistNavConfig, setTabEnabled } from '~/composables/useTabs';
 import { useLongPressReorder } from '~/composables/useLongPressReorder';
+import { getVersion } from '@tauri-apps/api/app';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { writeText } from 'tauri-plugin-clipboard-api';
+import appIcon from '~/assets/icon/icon.png';
 
 const osType = ref('');
 
@@ -182,8 +186,7 @@ const settings: SettingGroup[] = [
   },
   {
     title: '通用设置',
-    type: 'general',
-    items: [
+    type: 'general',    items: [
       {
         label: '剪贴板最大存储数量',
         value: '',
@@ -225,6 +228,11 @@ const settings: SettingGroup[] = [
         type: 'action'
       }
     ]
+  },
+  {
+    title: '关于',
+    type: 'about',
+    items: [],
   }
 ];
 
@@ -232,6 +240,110 @@ const activeSetting = ref(settings[0]);
 // 持久化当前选中的设置分类，下次进入设置默认停在该分类
 watch(activeSetting, async (val) => {
   await dbService.setKeyValue('setting_active_tab', val?.title ?? '');
+});
+
+// ===== 关于（版本 / 描述 / 作者 / 主页 / 检查更新）=====
+/** 版本单一来源：tauri.conf.json 的 version（经 getVersion 读取）；纯 Web 环境回退到该常量 */
+const FALLBACK_VERSION = '0.2.0';
+const APP_REPO = 'https://github.com/s0uths1d3/s1d3_board';
+const APP_RELEASES_API = 'https://api.github.com/repos/s0uths1d3/s1d3_board/releases/latest';
+const APP_AUTHOR = 's1d3';
+
+const appVersion = ref(FALLBACK_VERSION);
+
+type UpdateState = 'idle' | 'checking' | 'latest' | 'available' | 'error';
+const updateState = ref<UpdateState>('idle');
+const latestVersion = ref('');
+const releaseUrl = ref('');
+let aboutAutoChecked = false;
+
+/** 语义化版本比较：>0 表示 a 更新 */
+function compareVersions(a: string, b: string): number {
+  const pa = a.replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = b.replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/**
+ * 联网检查 GitHub Releases 最新版本（10s 超时；仓库暂无 Release 视为已最新）。
+ * 手动点击时用 toast 给出各结果提示；进入「关于」页的自动检查静默执行（卡片内状态仍更新）。
+ */
+async function checkUpdate(options?: { silent?: boolean }) {
+  const silent = options?.silent ?? false;
+  if (updateState.value === 'checking') return;
+  updateState.value = 'checking';
+  if (!silent) showHint('正在检查更新…');
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    const res = await fetch(APP_RELEASES_API, {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (res.status === 404) {
+      // 仓库还没有任何 Release：不存在更新
+      latestVersion.value = '';
+      updateState.value = 'latest';
+      if (!silent) showHint('当前已是最新版本');
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    latestVersion.value = String(data.tag_name ?? '').replace(/^v/i, '');
+    releaseUrl.value = String(data.html_url || `${APP_REPO}/releases`);
+    const hasNew = compareVersions(latestVersion.value, appVersion.value) > 0;
+    updateState.value = hasNew ? 'available' : 'latest';
+    if (!silent) showHint(hasNew ? `发现新版本 v${latestVersion.value}，请及时更新` : '当前已是最新版本');
+  } catch (e) {
+    console.error('检查更新失败:', e);
+    updateState.value = 'error';
+    if (!silent) showHint('检查更新失败，请稍后重试');
+  }
+}
+
+async function openRepoPage() {
+  try {
+    if (isTauri()) await openUrl(APP_REPO);
+    else window.open(APP_REPO, '_blank', 'noopener');
+  } catch (e) {
+    console.error('打开主页失败:', e);
+    showHint('打开主页失败');
+  }
+}
+
+async function openReleasePage() {
+  const url = releaseUrl.value || `${APP_REPO}/releases`;
+  try {
+    if (isTauri()) await openUrl(url);
+    else window.open(url, '_blank', 'noopener');
+  } catch (e) {
+    console.error('打开发布页失败:', e);
+    showHint('打开发布页失败');
+  }
+}
+
+async function copyRepoLink() {
+  try {
+    if (isTauri()) await writeText(APP_REPO);
+    else await navigator.clipboard.writeText(APP_REPO);
+    showHint('已复制主页链接');
+  } catch (e) {
+    console.error('复制链接失败:', e);
+    showHint('复制失败，请手动复制');
+  }
+}
+
+// 首次进入「关于」页时自动静默检查一次更新（会话内仅一次，不弹 toast 打扰）
+watch(activeSetting, (s) => {
+  if (s?.type === 'about' && !aboutAutoChecked) {
+    aboutAutoChecked = true;
+    void checkUpdate({ silent: true });
+  }
 });
 
 // ===== 设置左侧分类 + 导航配置列表 长按拖拽排序 =====
@@ -445,6 +557,12 @@ onMounted(async () => {
   osType.value = getOsTypeFromNavigator();
   maxLimit.value = await dbService.getKeyValue('max_save_count');
   apiKey.value = await dbService.getKeyValue('api_key');
+  // 「关于」页版本号：与 tauri.conf.json 的 version 同源；纯 Web 环境保持回退常量
+  if (isTauri()) {
+    try {
+      appVersion.value = await getVersion();
+    } catch { /* 读取失败保持回退版本 */ }
+  }
   // 配色的读取/应用/持久化由 useColorScheme 统一负责，这里无需处理
   // 恢复上次选中的设置分类（快捷键 / Api设置 / 通用）
   try {
@@ -582,6 +700,75 @@ onMounted(async () => {
 
             <p class="text-xs text-ink-faint">
               点击快捷键输入框后按下新的组合键即可自定义；Esc 取消；重复的快捷键会提示冲突。全局快捷键在系统任意位置生效，局部快捷键仅在窗口内生效。
+            </p>
+          </div>
+
+          <!-- 关于：应用信息 / 主页 / 检查更新 -->
+          <div v-else-if="activeSetting.type === 'about'" class="flex flex-col gap-4">
+            <!-- 应用信息 -->
+            <div class="glass-card rounded-2xl p-5">
+              <div class="flex items-center gap-4">
+                <img :src="appIcon" alt="s1d3 board" class="h-14 w-14 shrink-0 rounded-xl shadow-soft" />
+                <div class="min-w-0">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-lg font-semibold text-ink">s1d3 board</span>
+                    <span class="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-xs text-gold tabular-nums">v{{ appVersion }}</span>
+                  </div>
+                  <p class="mt-1 text-xs leading-relaxed text-ink-faint">
+                    基于 Tauri 2 + Nuxt 4 + Vue 3 的桌面效率工具，为剪贴板、待办、便签、统计等日常高频操作提供系统托盘内快捷访问。
+                  </p>
+                  <p class="mt-1 text-xs text-ink-faint">作者：<span class="text-ink-soft">{{ APP_AUTHOR }}</span></p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 项目主页 -->
+            <div class="glass-card rounded-2xl p-4">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-ink">GitHub 主页</div>
+                  <div class="truncate text-xs text-ink-faint">{{ APP_REPO }}</div>
+                </div>
+                <div class="flex shrink-0 gap-2">
+                  <button type="button" class="btn-soft px-3 py-1.5 text-xs" v-tip="'复制仓库链接'" @click="copyRepoLink">
+                    复制链接
+                  </button>
+                  <button type="button" class="btn-gold px-3 py-1.5 text-xs" v-tip="'在浏览器中打开项目主页'" @click="openRepoPage">
+                    打开主页
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 检查更新 -->
+            <div class="glass-card rounded-2xl p-4">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-ink">检查更新</div>
+                  <div class="mt-0.5 text-xs text-ink-faint">
+                    <template v-if="updateState === 'checking'">正在检查新版本…</template>
+                    <template v-else-if="updateState === 'latest'">当前已是最新版本（v{{ appVersion }}）</template>
+                    <template v-else-if="updateState === 'available'">
+                      发现新版本 <span class="font-semibold text-gold">v{{ latestVersion }}</span>
+                      <button type="button" class="text-gold underline underline-offset-2" @click="openReleasePage">查看发布页</button>
+                    </template>
+                    <template v-else-if="updateState === 'error'">检查失败：网络不可用或超出请求限制，请稍后重试</template>
+                    <template v-else>联网检查 GitHub Releases 是否有新版本</template>
+                  </div>
+                </div>
+                <button
+                    type="button"
+                    class="btn-soft shrink-0 px-3 py-1.5 text-xs"
+                    :disabled="updateState === 'checking'"
+                    @click="checkUpdate()"
+                >
+                  {{ updateState === 'checking' ? '检查中…' : '检查更新' }}
+                </button>
+              </div>
+            </div>
+
+            <p class="text-xs text-ink-faint">
+              如果这个工具对你有帮助，欢迎到 GitHub 主页点个 Star ⭐；问题与建议也可以通过 Issues 反馈。
             </p>
           </div>
 
@@ -725,17 +912,14 @@ onMounted(async () => {
                     <circle cx="16" cy="9" r="0.1" /><circle cx="16" cy="15" r="0.1" />
                   </svg>
                   <div class="flex flex-col">
-                    <div class="flex items-center gap-1.5 text-ink" :class="{ 'opacity-50': !row.enabled || (row.gate && !statsUnlocked) }">
+                    <div class="flex items-center gap-1.5 text-ink" :class="{ 'opacity-50': !row.enabled }">
                       {{ row.name }}
                       <svg v-if="row.locked" class="h-3.5 w-3.5 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <rect x="5" y="11" width="14" height="10" rx="2" />
                         <path d="M8 11V7a4 4 0 0 1 8 0v4" />
                       </svg>
                     </div>
-                    <div v-if="row.gate && !statsUnlocked" class="text-xs text-ink-faint">
-                      解锁条件：活跃使用 ≥ 7 天 且 累计粘贴 ≥ 1000 次
-                    </div>
-                    <div v-else-if="row.locked" class="text-xs text-ink-faint">内置项，不可关闭</div>
+                    <div v-if="row.locked" class="text-xs text-ink-faint">内置项，不可关闭</div>
                   </div>
                 </div>
                 <!-- 右侧操作：内置项显示锁定图标；未解锁统计显示禁用开关；其余为可切换胶囊开关 -->
@@ -751,10 +935,8 @@ onMounted(async () => {
                 </svg>
                 <UiToggleSwitch
                     v-else
-                    :model-value="row.enabled && !(row.gate && !statsUnlocked)"
-                    :disabled="row.gate && !statsUnlocked"
+                    :model-value="row.enabled"
                     tip-on="点击隐藏" tip-off="点击显示"
-                    disabled-tip="未解锁，满足条件后可开启"
                     :label="row.name"
                     @change="onNavRowToggle(row)"
                 />
@@ -762,7 +944,7 @@ onMounted(async () => {
               </TransitionGroup>
             </div>
             <p class="text-xs text-ink-faint">
-              按住图标（约 0.5 秒）后拖动即可调整导航栏顺序，松开自动保存；关闭图标后将从标题栏隐藏（内置的剪贴板与设置不可关闭）。「统计」达到解锁条件后自动出现。
+              按住图标（约 0.5 秒）后拖动即可调整导航栏顺序，松开自动保存；关闭图标后将从标题栏隐藏（内置的剪贴板与设置不可关闭）。
             </p>
           </div>
         </div>

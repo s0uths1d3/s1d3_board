@@ -1,7 +1,7 @@
 /**
  * 统一的日期/时间处理工具（单一事实来源）。
  *
- * 此前本地时区 YYYY-MM-DD 格式化在 statsService / StatsPage / mockData 三处逐字重复，
+ * 此前本地时区 YYYY-MM-DD 格式化在 statsService / StatsPage / mockData 等多处逐字重复，
  * 任何时区或补零规则修改都要改三处；解析逻辑散布在 15+ 处且时区语义不统一
  * （date-only 字符串按 UTC 解析、datetime-local 按本地时区解析）。
  * 新的日期处理逻辑一律加在这里，不要在调用方手写。

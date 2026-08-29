@@ -94,6 +94,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.name }}
+          # Release 说明：读取 CHANGELOG.md 中「未发布」小节；无该小节时使用完整文件。
+          # softprops 要求 body_path 指向已存在文件，这里始终传 CHANGELOG.md。
+          body_path: CHANGELOG.md
           files: |
             src-tauri/target/release/bundle/**/*.exe
             src-tauri/target/release/bundle/**/*.msi

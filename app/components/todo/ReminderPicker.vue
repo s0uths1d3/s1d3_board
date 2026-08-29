@@ -9,9 +9,10 @@
  * - 不提醒
  * 基于 UiDropdown：面板 Teleport 到 body + fixed 定位、视口收进，交互由组件统一处理。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import UiDropdown from '~/components/ui/UiDropdown.vue'
 import UiSegmented from '~/components/ui/UiSegmented.vue'
+import DatePicker from '~/components/common/DatePicker.vue'
 import type { ReminderRule } from '~/src/entities'
 
 const props = withDefaults(defineProps<{
@@ -85,6 +86,25 @@ function clampRuleValue(kind: ReminderRule['kind'], raw: string): number {
   return Math.min(max, Math.max(1, n))
 }
 
+// ===== 「指定时刻」：统一 DatePicker（mode="datetime"）面板，编程控制开关 =====
+/** 当前展开指定时刻选择面板的规则下标（null = 全部收起） */
+const atPickerIdx = ref<number | null>(null)
+
+function toggleAtPicker(idx: number) {
+  atPickerIdx.value = atPickerIdx.value === idx ? null : idx
+}
+
+/** 触发按钮文案：MM-DD HH:mm；未选择时给占位提示 */
+function formatAtValue(v: string): string {
+  return v ? v.replace('T', ' ').slice(5) : '选择时刻'
+}
+
+function onAtValue(idx: number, v: string) {
+  // 面板的"清空"对指定时刻无意义（空值永不触发），忽略
+  if (!v) return
+  updateRule(idx, { value: v })
+}
+
 function updateRule(idx: number, patch: Partial<ReminderRule>) {
   const cur = props.rules[idx]
   if (!cur) return
@@ -109,7 +129,8 @@ function ruleSummary(r: ReminderRule): string {
 }
 
 function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule) {
-  // 切换类型时给一个合理的默认值
+  // 切换类型时给一个合理的默认值；同时收起可能展开的时刻选择面板
+  atPickerIdx.value = null
   const value = kind === 'percent' ? 25 : kind === 'offset' ? 30 : cur.kind === 'at' ? cur.value : ''
   updateRule(idx, { kind, value } as Partial<ReminderRule>)
 }
@@ -173,20 +194,37 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
           <div class="flex items-center gap-1.5">
             <select
                 :value="rule.kind"
-                class="h-7 shrink-0 rounded-md border border-accent bg-surface-field px-1 text-xs text-ink focus:border-gold focus:outline-none"
+                class="h-7 shrink-0 cursor-pointer rounded-md border border-accent bg-surface-field px-1 text-xs text-ink focus:border-gold focus:outline-none"
                 @change="onKindChange(idx, ($event.target as HTMLSelectElement).value as ReminderRule['kind'], rule)"
             >
               <option value="percent">按百分比</option>
               <option value="offset">提前分钟</option>
               <option value="at">指定时刻</option>
             </select>
-            <input
-                v-if="rule.kind === 'at'"
-                type="datetime-local"
-                :value="rule.value"
-                class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs tabular-nums text-ink focus:border-gold focus:outline-none"
-                @change="updateRule(idx, { value: ($event.target as HTMLInputElement).value })"
-            />
+            <div v-if="rule.kind === 'at'" class="relative min-w-0 flex-1">
+              <!-- 触发按钮：展示当前指定时刻，点击打开统一日期时间选择面板 -->
+              <button
+                  type="button"
+                  class="w-full cursor-pointer truncate rounded-md border bg-surface-field px-1.5 py-1 text-left text-xs tabular-nums transition-colors duration-300 ease-soft hover:border-gold focus:outline-none"
+                  :class="atPickerIdx === idx ? 'border-gold' : 'border-accent'"
+                  @click.stop="toggleAtPicker(idx)"
+              >
+                <span :class="rule.value ? 'text-ink' : 'text-ink-faint'">{{ formatAtValue(rule.value) }}</span>
+              </button>
+              <!-- 隐藏的统一 DatePicker：仅作面板容器，由本组件编程控制开关
+                   （与 DueTimeSelect 的自定义截止时刻同一模式；datetime 面板 Teleport 到 body，
+                   已带 dd-keep-open-panel 标记，不会误触发外层下拉收起） -->
+              <DatePicker
+                  :model-value="rule.value"
+                  mode="datetime"
+                  :open="atPickerIdx === idx"
+                  :hide-trigger="true"
+                  :live-emit="false"
+                  class="pointer-events-none absolute inset-0 opacity-0"
+                  @update:open="(v: boolean) => { atPickerIdx = v ? idx : null }"
+                  @update:model-value="(v: string) => onAtValue(idx, v)"
+              />
+            </div>
             <template v-else>
               <input
                   type="number"
@@ -201,7 +239,7 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
             <button
                 type="button"
                 v-tip="'删除该闹钟'"
-                class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
+                class="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
                 @click="removeRule(idx)"
             >
               <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -219,7 +257,7 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
         <div class="flex items-center justify-between border-t border-accent/60 pt-1.5">
           <button
               type="button"
-              class="rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
+              class="cursor-pointer rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
               @click="addRule"
           >
             + 添加闹钟

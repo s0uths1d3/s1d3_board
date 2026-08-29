@@ -7,7 +7,7 @@ import { toDateString } from "~/utils/datetime";
  * 统计服务（单例）
  *
  * 职责边界（设计文档 §4）：只负责 `daily_stat` 的读写与聚合查询
- * （record / getDaily / getStatsRange / getDailySeries / isStatsUnlocked / 使用时长累计），
+ * （record / getDaily / getStatsRange / getDailySeries / 使用时长累计），
  * **不包含任何用户标签 / 趣味换算逻辑**（标签逻辑独立在 userTags.ts）。
  *
  * 性能约束（设计文档 §14）：
@@ -183,27 +183,6 @@ class StatsService {
     }
   }
 
-  /**
-   * 测试用：直接覆盖某天的统计数据（UPSERT）。
-   * 供「编辑测试数据」面板使用——从 mock 数据加载初值、修改后写回 daily_stat，
-   * 便于手动构造数据验证统计页各种展示。
-   */
-  public async setDaily(date: string, partial: Partial<Record<StatField, number>>): Promise<void> {
-    await this.ensureDbInitialized();
-    const cols = Object.keys(partial);
-    if (cols.length === 0) return;
-    const vals = cols.map(c => partial[c as StatField] ?? 0);
-    const insertCols = ['stat_date', ...cols];
-    const placeholders = insertCols.map((_, i) => `$${i + 1}`).join(', ');
-    const setClause = cols.map(k => `${k} = excluded.${k}`).join(', ');
-    await this.db!.execute(
-      `INSERT INTO daily_stat (${insertCols.join(', ')})
-       VALUES (${placeholders})
-       ON CONFLICT(stat_date) DO UPDATE SET ${setClause}`,
-      [date, ...vals]
-    );
-  }
-
   /** 3) 查询单日聚合 */
   public async getDaily(date: string): Promise<StatsSummary> {
     await this.ensureDbInitialized();
@@ -293,18 +272,6 @@ class StatsService {
       else map.set(date, { stat_date: date, value: add });
     }
     return [...map.values()].sort((a, b) => (a.stat_date < b.stat_date ? -1 : 1));
-  }
-
-  /** 6) 统计模块显示门槛（§7.9）：活跃 ≥ 7 天 且 累计粘贴 ≥ 1000 次（轻量判定，仅两列） */
-  public async isStatsUnlocked(): Promise<boolean> {
-    await this.ensureDbInitialized();
-    const rows: any[] = await this.db!.select(
-      `SELECT
-         (SELECT COUNT(DISTINCT stat_date) FROM daily_stat) AS days,
-         (SELECT COALESCE(SUM(clip_use), 0) FROM daily_stat) AS clip_use`
-    );
-    const r = rows?.[0] ?? { days: 0, clip_use: 0 };
-    return (r.days ?? 0) >= 7 && (r.clip_use ?? 0) >= 1000;
   }
 
   /** 最常复制的文本项（趣味数据"复制之王"，§7.5） */
