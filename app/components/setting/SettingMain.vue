@@ -10,6 +10,7 @@ import { isTauri } from '~/src/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
 import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
 import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
+import { useTodoSmartRemind } from '~/composables/useTodoSmartRemind';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
 import { navRows, reorderTab, persistNavConfig, setTabEnabled, statsUnlocked } from '~/composables/useTabs';
 import { useLongPressReorder } from '~/composables/useLongPressReorder';
@@ -73,6 +74,8 @@ function selectPopupPosition(v: string) {
 }
 /** 是否开启搜索高亮，与所有搜索框共享同一状态 */
 const { searchHighlightEnabled } = useSearchHighlight();
+/** 待办智能提醒（提前 30/10/5 分钟 + 自定义提醒）；关闭后仅保留到期时刻通知 */
+const { smartRemindEnabled } = useTodoSmartRemind();
 watch(searchHighlightEnabled, async (val) => {
   await clipboardService.setKeyValue('search_highlight_enabled', val ? '1' : '0');
 });
@@ -171,6 +174,11 @@ const settings: SettingGroup[] = [
       },
       {
         label: '提示窗口',
+        value: '',
+        type: 'checkbox'
+      },
+      {
+        label: '待办智能提醒',
         value: '',
         type: 'checkbox'
       },
@@ -677,6 +685,13 @@ onMounted(async () => {
                       tip-on="点击禁用" tip-off="点击启用"
                       label="搜索高亮"
                       @change="showHint(searchHighlightEnabled ? '已开启搜索高亮' : '已关闭搜索高亮')"
+                  />
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === '待办智能提醒'"
+                      v-model="smartRemindEnabled"
+                      tip-on="关闭后仅保留到期时刻通知" tip-off="开启后按任务长短智能提前提醒"
+                      label="待办智能提醒"
+                      @change="showHint(smartRemindEnabled ? '已开启智能提醒' : '已关闭智能提醒，仅保留到期通知')"
                   />
                   <!-- 窗口弹出位置：三选一分段控件（跟随系统风格，选中金色高亮） -->
                   <UiSegmented

@@ -28,16 +28,31 @@ export interface PinnedClip {
     updated_at: string;
 }
 
+/** 自定义提醒规则：按百分比（剩余时长比例）/ 按时间（提前分钟数）/ 指定时刻 */
+export type ReminderRule =
+    | { id: string; kind: 'percent'; value: number }
+    | { id: string; kind: 'offset'; value: number }
+    | { id: string; kind: 'at'; value: string };
+
 export interface Todo {
     id: string;
     title: string;
     description?: string;
     completed: 0 | 1;
-    priority: 'low' | 'medium' | 'high';
+    /** 优先级数值 0-255，越大越优先（等级定义与颜色见 useTodoPriorities） */
+    priorityLevel?: number;
+    /** 旧版三档文本优先级（legacy 列，仅兼容保留；读写以 priorityLevel 为准） */
+    priority?: 'low' | 'medium' | 'high';
     category?: string;
     created_at?: string;
     updated_at: string;
     dueDate?: string;
+    /** 提醒模式：smart = 智能策略（默认/缺省）、off = 不提醒、custom = 按 remindRules 自定义 */
+    remindMode?: 'smart' | 'off' | 'custom';
+    /** 自定义提醒规则列表（remindMode === 'custom' 时生效；DB 中为 JSON 文本列） */
+    remindRules?: ReminderRule[];
+    /** 旧版单一自定义提醒时刻（legacy 列；读取时自动折算为一条 at 规则） */
+    remindAt?: string;
 }
 
 export interface Note {

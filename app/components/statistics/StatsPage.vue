@@ -113,7 +113,7 @@ const trendOptions: { key: string; name: string; fields: StatField[] }[] = [
   { key: 'clip_use', name: '粘贴', fields: ['clip_use'] },
   { key: 'usage', name: '时长', fields: ['usage_seconds'] },
   { key: 'shortcut', name: '快捷键', fields: ['shortcut_count'] },
-  { key: 'todo', name: '待办', fields: ['todo_added', 'todo_completed'] },
+  { key: 'todo', name: '待办', fields: ['todo_added', 'todo_completed', 'todo_reminded'] },
   { key: 'todo_chars', name: '待办内容量', fields: ['todo_chars'] },
   { key: 'note', name: '便签', fields: ['note_added'] },
 ];
@@ -389,6 +389,7 @@ const EDIT_FIELD_DEFS: { key: StatField; label: string }[] = [
   { key: 'todo_completed', label: '待办完成' },
   { key: 'todo_deleted', label: '待办删除' },
   { key: 'todo_chars', label: '待办内容量' },
+  { key: 'todo_reminded', label: '待办提醒' },
   { key: 'note_added', label: '便签新增' },
   { key: 'note_deleted', label: '便签删除' },
   { key: 'favorite_toggle', label: '收藏切换' },

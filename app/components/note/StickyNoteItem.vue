@@ -1,7 +1,8 @@
 <template>
   <div
-      class="sticky-note-card glass-card group relative mb-4 flex min-h-[200px] cursor-pointer break-inside-avoid flex-col rounded-2xl p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
-      :class="[getColorClass(note.color || 'yellow'), selected ? 'border-gold shadow-[0_0_18px_-2px_rgba(196,167,125,0.45)]' : 'border-transparent', saved ? 'note-saved' : '']"
+      class="sticky-note-card glass-card group relative mb-4 flex min-h-[200px] cursor-pointer break-inside-avoid flex-col rounded-2xl border p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
+      :class="[selected ? 'shadow-[0_0_18px_-2px_rgba(196,167,125,0.45)]' : '', saved ? 'note-saved' : '']"
+      :style="noteStyle"
       @click="$emit('select')"
   >
     <!-- 右上角工具栏：悬浮不占用内容空间；编辑态隐藏，避免遮挡 textarea -->
@@ -17,19 +18,76 @@
             </svg>
           </div>
         </template>
-        <ul class="w-fit p-1.5">
-          <li v-for="color in colors" :key="color.name">
+        <div class="w-56 space-y-2 p-1.5">
+          <!-- 选择配色 -->
+          <div>
+            <p class="mb-1 px-1 text-[10px] uppercase tracking-wide text-ink-faint">选择配色</p>
+            <div class="flex flex-wrap gap-1.5 px-0.5">
+              <button
+                  v-for="c in noteColors"
+                  :key="c.name"
+                  type="button"
+                  v-tip="c.name"
+                  class="flex h-7 w-7 items-center justify-center rounded-full border border-white/60 shadow-sm transition-transform hover:scale-110"
+                  :style="{ backgroundColor: c.color }"
+                  @click="$emit('color-change', note.id, c.color)"
+              >
+                <svg v-if="noteColorHex === c.color" class="h-3.5 w-3.5 text-white drop-shadow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- 管理配色：名称 + 颜色选取器，增改删 -->
+          <div v-if="managingColors" class="max-h-72 space-y-1.5 overflow-y-auto border-t border-accent/60 pt-1.5" data-dd-keep-open>
+            <div v-for="(row, idx) in colorDrafts" :key="idx" class="rounded-lg border border-accent/50 p-1.5">
+              <div class="flex items-center gap-1.5">
+                <button
+                    type="button"
+                    v-tip="'修改颜色'"
+                    class="h-5 w-5 shrink-0 rounded-full border border-white/60 shadow-sm transition-transform hover:scale-110"
+                    :class="colorRow === idx ? 'ring-2 ring-gold' : ''"
+                    :style="{ backgroundColor: row.color }"
+                    @click="colorRow = colorRow === idx ? null : idx"
+                />
+                <input
+                    type="text" maxlength="8" placeholder="名称"
+                    v-model="row.name"
+                    class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                />
+                <button
+                    type="button"
+                    v-tip="'删除该配色'"
+                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
+                    @click="removeColorDraft(idx)"
+                >
+                  <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div v-if="colorRow === idx" class="mt-1.5">
+                <UiColorPicker v-model="row.color" :presets="NOTE_COLOR_PRESETS" />
+              </div>
+            </div>
+            <p v-if="colorDrafts.length === 0" class="px-1 py-1 text-center text-xs text-ink-faint">暂无配色，点击下方新增</p>
+            <div class="flex items-center justify-between pt-0.5">
+              <button type="button" class="rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink" @click="addColorDraft">+ 新增配色</button>
+              <button type="button" class="btn-gold px-3 py-1 text-xs" @click="commitColors">完成</button>
+            </div>
+          </div>
+          <div v-else class="border-t border-accent/60 pt-1.5">
             <button
                 type="button"
-                @click="$emit('color-change', note.id, color.name)"
-                v-tip="color.label"
-                class="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-ink transition-colors hover:bg-white/40"
+                data-dd-keep-open
+                class="w-full rounded-lg px-2 py-1 text-left text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
+                @click="openColorManager"
             >
-              <span class="h-3.5 w-3.5 flex-none rounded-full border border-white/50 shadow-sm" :class="color.dotClass"></span>
-              <span>{{ color.label }}</span>
+              管理配色…
             </button>
-          </li>
-        </ul>
+          </div>
+        </div>
       </UiDropdown>
       <button
           type="button"
@@ -86,6 +144,9 @@
 </template>
 
 <script setup lang="ts">
+import UiDropdown from '~/components/ui/UiDropdown.vue';
+import UiColorPicker from '~/components/ui/UiColorPicker.vue';
+import { useNoteColors, NOTE_COLOR_PRESETS, type NoteColor } from '~/composables/useNoteColors';
 import { ref, watch, nextTick, computed, onMounted, onBeforeUnmount } from 'vue'
 import type { Note } from '~/src/Entities';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
@@ -156,18 +217,39 @@ onBeforeUnmount(() => {
   if (saveAnimTimer) clearTimeout(saveAnimTimer)
 })
 
-const colors = [
-  { name: 'blue', label: '蓝', class: 'bg-[rgba(186,206,224,0.55)] border border-[rgba(140,170,200,0.5)]', dotClass: 'bg-[#9fbfd6]' },
-  { name: 'yellow', label: '黄', class: 'bg-[rgba(224,212,170,0.55)] border border-[rgba(200,180,120,0.5)]', dotClass: 'bg-[#dcc88a]' },
-  { name: 'pink', label: '粉', class: 'bg-[rgba(224,196,200,0.55)] border border-[rgba(200,150,160,0.5)]', dotClass: 'bg-[#d6a8b0]' },
-  { name: 'green', label: '绿', class: 'bg-[rgba(196,214,186,0.55)] border border-[rgba(150,180,140,0.5)]', dotClass: 'bg-[#b3d0a0]' },
-  { name: 'purple', label: '紫', class: 'bg-[rgba(206,196,224,0.55)] border border-[rgba(170,150,200,0.5)]', dotClass: 'bg-[#bfb0d6]' },
-  { name: 'orange', label: '橙', class: 'bg-[rgba(224,200,176,0.55)] border border-[rgba(200,160,120,0.5)]', dotClass: 'bg-[#d9b58a]' }
-]
+// ===== 配色：自定义名称 + 颜色（useNoteColors 统一管理，卡片背景由 hex 动态生成）=====
+const { colors: noteColors, resolveNoteColor, replaceColors } = useNoteColors()
 
-const getColorClass = (color: string) => {
-  const colorObj = colors.find(c => c.name === color)
-  return colorObj ? colorObj.class : colors[0]!.class
+/** 卡片着色：低透明底 + 同色描边（旧名称存储自动解析为 hex） */
+const noteColorHex = computed(() => resolveNoteColor(props.note.color))
+const noteStyle = computed(() => ({
+  backgroundColor: noteColorHex.value + '8c',
+  borderColor: selected.value ? 'rgb(var(--c-gold))' : noteColorHex.value + '80',
+}))
+
+// 管理器：本地草稿，完成后整表提交
+const managingColors = ref(false)
+const colorDrafts = ref<NoteColor[]>([])
+/** 当前展开取色器的行（默认全部收起，避免面板超高） */
+const colorRow = ref<number | null>(null)
+
+function openColorManager() {
+  colorDrafts.value = noteColors.value.map(c => ({ ...c }))
+  colorRow.value = null
+  managingColors.value = true
+}
+
+function addColorDraft() {
+  colorDrafts.value.push({ name: '', color: '#dcc88a' })
+}
+
+function removeColorDraft(idx: number) {
+  colorDrafts.value.splice(idx, 1)
+}
+
+async function commitColors() {
+  await replaceColors(colorDrafts.value)
+  managingColors.value = false
 }
 
 const saved = ref(false)

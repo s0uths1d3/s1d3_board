@@ -13,13 +13,17 @@
 | Prop | 默认 | 说明 |
 | --- | --- | --- |
 | `v-model:open` | 内部自管 | 受控开关；需要在面板逻辑里主动收起时绑定 |
-| `align` | `'start'` | 面板水平对齐：`start` / `center` / `end` |
-| `direction` | `'down'` | `down` / `up` / `auto`（空间不足自动上翻，teleport 模式生效） |
-| `teleport` | `false` | 面板 Teleport 到 body 并 fixed 定位；调用方有 overflow 裁切/层叠上下文限制时使用 |
+| `align` | `'start'` | 面板水平对齐：`start` / `center` / `end`（居中于触发器） |
+| `direction` | `'down'` | `down` / `up`：优先展开方向；空间不足自动翻转到另一侧 |
 | `match-trigger-width` | `false` | 面板宽度撑满触发器 |
 | `panel-class` | `''` | 面板类：宽度/圆角/内边距，如 `glass-card menu w-32 rounded-2xl p-2` |
 | `close-on-select` | `true` | 点击面板内容自动收起；带 `data-dd-keep-open` 的元素例外（删除按钮/输入框等交互中元素） |
 | `disabled` | `false` | 禁用触发器 |
+
+面板定位：统一 **Teleport 到 body + fixed 定位**，坐标由触发器矩形实时计算，
+水平越界自动收进视口、垂直空间不足自动上翻——永不被窗口边缘裁切，
+也天然规避调用方容器的 overflow 裁切、层叠上下文与 hover transform 干扰；
+滚动/缩放时跟随重定位。
 
 插槽：`#trigger="{ open, toggle }"`（触发器内容，勿在此绑定点击——组件已接管）、`#default="{ close, open }"`（面板内容）。
 

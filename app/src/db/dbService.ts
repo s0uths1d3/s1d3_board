@@ -1,7 +1,59 @@
 import Database from "@tauri-apps/plugin-sql";
 import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from 'tauri-plugin-clipboard-api';
-import type { ClipboardData,Note,Todo,PinnedClip } from "../Entities";
+import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip } from "../Entities";
 import statsService from "~/src/statistics/statsService";
+
+/** 优先级数值收敛：整数 0-255（越界/非法回退 127 中档） */
+function clampPriorityLevel(level?: number): number {
+    const n = Math.round(Number(level));
+    if (!Number.isFinite(n)) return 127;
+    return Math.min(255, Math.max(0, n));
+}
+
+/** 旧版三档文本列（legacy）随数值同步：低 <64 / 中 64-191 / 高 ≥192 */
+function tierOf(level: number): 'low' | 'medium' | 'high' {
+    return level >= 192 ? 'high' : level >= 64 ? 'medium' : 'low';
+}
+
+/** 提醒规则列表 → JSON 文本列（空列表存 ''） */
+function stringifyRemindRules(rules?: ReminderRule[]): string {
+    if (!rules || rules.length === 0) return '';
+    try {
+        return JSON.stringify(rules.filter(r => r && typeof r.id === 'string'));
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * DB 行 → Todo 的提醒规则映射：
+ * 解析 remind_rules JSON（容错损坏数据）；旧数据无规则但有 remindAt（单一自定义时刻）
+ * 时自动折算为一条 at 规则，保证老配置继续生效。
+ */
+function mapTodoRemindRules(row: Todo): Todo {
+    const rules: ReminderRule[] = [];
+    const raw = (row as unknown as { remind_rules?: string }).remind_rules;
+    if (raw) {
+        try {
+            const parsed: unknown = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                for (const r of parsed as ReminderRule[]) {
+                    if (!r || typeof r.id !== 'string') continue;
+                    if (r.kind === 'percent' || r.kind === 'offset') {
+                        const v = Math.round(Number(r.value));
+                        if (Number.isFinite(v) && v > 0) rules.push({ id: r.id, kind: r.kind, value: v });
+                    } else if (r.kind === 'at' && typeof r.value === 'string' && r.value) {
+                        rules.push({ id: r.id, kind: 'at', value: r.value });
+                    }
+                }
+            }
+        } catch { /* JSON 损坏视为无规则 */ }
+    }
+    if (rules.length === 0 && row.remindMode === 'custom' && row.remindAt) {
+        rules.push({ id: 'legacy', kind: 'at', value: row.remindAt });
+    }
+    return { ...row, remindRules: rules };
+}
 
 
 class ClipboardService {
@@ -20,6 +72,54 @@ class ClipboardService {
     private async initDatabase() {
         const dbName = 'sqlite:s1d3_board.db';
         this.db = await Database.load(dbName);
+        await this.ensureFeatureColumns();
+    }
+
+    /**
+     * 兜底列迁移（幂等）：部分环境下 Rust 侧 tauri-plugin-sql 迁移可能未执行
+     * （如运行了旧可执行文件、迁移环节静默失败），导致新功能的列缺失、SQL 报错。
+     * 此处在连接建立后按 PRAGMA 检查并补齐功能所需列；列已存在则跳过，
+     * 与 Rust 侧 migration（同 DDL）互不冲突。
+     */
+    private async ensureFeatureColumns() {
+        const wanted = [
+            { table: 'todo', column: 'remind_mode', ddl: 'ALTER TABLE todo ADD COLUMN remind_mode TEXT' },
+            { table: 'todo', column: 'remind_at', ddl: 'ALTER TABLE todo ADD COLUMN remind_at TEXT' },
+            { table: 'todo', column: 'priority_level', ddl: 'ALTER TABLE todo ADD COLUMN priority_level INTEGER' },
+            { table: 'todo', column: 'remind_rules', ddl: 'ALTER TABLE todo ADD COLUMN remind_rules TEXT' },
+            { table: 'daily_stat', column: 'todo_reminded', ddl: 'ALTER TABLE daily_stat ADD COLUMN todo_reminded INTEGER NOT NULL DEFAULT 0' },
+            { table: 'daily_stat', column: 'todo_chars', ddl: 'ALTER TABLE daily_stat ADD COLUMN todo_chars INTEGER NOT NULL DEFAULT 0' },
+        ];
+        for (const { table, column, ddl } of wanted) {
+            try {
+                const cols = await this.db!.select<{ name: string }[]>(`PRAGMA table_info(${table})`);
+                if (Array.isArray(cols) && !cols.some(c => c.name === column)) {
+                    await this.db!.execute(ddl);
+                    console.info(`[db] 补齐列 ${table}.${column}`);
+                }
+            } catch (e) {
+                // 单列补齐失败（如表尚未创建）不影响其余列与其余功能
+                console.warn(`[db] 检查/补齐列 ${table}.${column} 失败:`, e);
+            }
+        }
+        let addedPriorityLevel = false;
+        if (wanted.some(w => w.column === 'priority_level')) {
+            try {
+                const cols = await this.db!.select<{ name: string }[]>("PRAGMA table_info(todo)");
+                addedPriorityLevel = Array.isArray(cols) && !cols.some(c => c.name === 'priority_level');
+            } catch { addedPriorityLevel = false; }
+        }
+        if (addedPriorityLevel) {
+            // 刚补建 priority_level 时回填存量数据：旧三档文本 → 0/127/255（WHERE 保证幂等）
+            try {
+                await this.db!.execute(
+                    "UPDATE todo SET priority_level = CASE priority WHEN 'low' THEN 0 WHEN 'medium' THEN 127 WHEN 'high' THEN 255 ELSE 127 END WHERE priority_level IS NULL"
+                );
+                console.info('[db] 已回填 priority_level 存量数据');
+            } catch (e) {
+                console.warn('[db] 回填 priority_level 失败:', e);
+            }
+        }
     }
 
     public async ensureDbInitialized() {
@@ -395,9 +495,10 @@ class ClipboardService {
     public async insertTodo(todo: Todo): Promise<void> {
         await this.ensureDbInitialized();
         const now = Math.floor(Date.now());
+        const level = clampPriorityLevel(todo.priorityLevel);
         await this.db!.execute(
-            "INSERT INTO todo (id,title, description, completed, priority, category, created_at, updated_at, dueDate) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-            [todo.id,todo.title, todo.description || '', todo.completed, todo.priority, todo.category || '', now, now, todo.dueDate || '']
+            "INSERT INTO todo (id,title, description, completed, priority, priority_level, category, created_at, updated_at, dueDate, remind_mode, remind_at, remind_rules) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+            [todo.id,todo.title, todo.description || '', todo.completed, tierOf(level), level, todo.category || '', now, now, todo.dueDate || '', todo.remindMode || 'smart', todo.remindAt || '', stringifyRemindRules(todo.remindRules)]
         );
         // 统计埋点（fire-and-forget）：新建待办 +1，并累计任务标题+描述的字符数
         const todoChars = (todo.title?.length ?? 0) + (todo.description?.length ?? 0);
@@ -407,9 +508,10 @@ class ClipboardService {
     public async updateTodo(todo: Todo): Promise<void> {
         await this.ensureDbInitialized();
         const now = Math.floor(Date.now());
+        const level = clampPriorityLevel(todo.priorityLevel);
         await this.db!.execute(
-            "UPDATE todo SET title = $1, description = $2, completed = $3, priority = $4, category = $5, updated_at = $6, dueDate = $7 WHERE id = $8",
-            [todo.title, todo.description || '', todo.completed, todo.priority, todo.category || '', now, todo.dueDate || '', todo.id]
+            "UPDATE todo SET title = $1, description = $2, completed = $3, priority = $4, priority_level = $5, category = $6, updated_at = $7, dueDate = $8, remind_mode = $9, remind_at = $10, remind_rules = $11 WHERE id = $12",
+            [todo.title, todo.description || '', todo.completed, tierOf(level), level, todo.category || '', now, todo.dueDate || '', todo.remindMode || 'smart', todo.remindAt || '', stringifyRemindRules(todo.remindRules), todo.id]
         );
     }
 
@@ -425,15 +527,16 @@ class ClipboardService {
 
         const content: string = filter.value.searchContent;
 
-        return await this.db!.select(
+        const rows = await this.db!.select(
             "SELECT * FROM todo WHERE title LIKE $1 ORDER BY updated_at DESC LIMIT 500",
             [`%${content}%`]
         ) as Todo[];
+        return rows.map(mapTodoRemindRules);
     }
 
     public async fetchSingleTodo(todoId: string): Promise<Todo> {
         const data = await this.db!.select("SELECT * FROM todo WHERE id = $1", [todoId]) as Todo[];
-        return data[0] as Todo;
+        return data[0] ? mapTodoRemindRules(data[0]) : data[0];
     }
 
 

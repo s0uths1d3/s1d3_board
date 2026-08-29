@@ -3,7 +3,7 @@
     <div class="relative max-w-6xl mx-auto">
       <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
         <button
-            @click="openCreate"
+            @click="createNote"
             class="btn-gold flex h-10 items-center shadow-soft transition-all duration-300 ease-soft hover:shadow-float"
         >
           新建便签
@@ -102,94 +102,13 @@
         @cancel="cancelDelete"
     />
 
-    <!-- 新建便签弹窗：遮罩淡入 + 卡片缩放上浮，配色可实时预览 -->
-    <Teleport to="body">
-      <Transition name="create-overlay">
-        <div
-            v-if="creating"
-            class="fixed inset-0 z-[100] flex items-center justify-center bg-[rgba(40,34,28,0.28)] backdrop-blur-sm"
-            @click.self="cancelCreate"
-        >
-          <Transition name="create-card" appear>
-            <div
-                v-if="creating"
-                class="create-card glass-card w-[480px] max-w-[92vw] rounded-3xl p-6 shadow-float"
-                :class="getColorClass(newColor)"
-            >
-              <div class="mb-4 flex items-center justify-between">
-                <h3 class="text-lg font-bold text-ink">新建便签</h3>
-                <button
-                    type="button"
-                    @click="cancelCreate"
-                    v-tip="'关闭'"
-                    class="rounded-full p-1.5 text-ink-soft transition-all duration-300 ease-soft hover:bg-white/40 hover:text-ink"
-                >
-                  <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                  </svg>
-                </button>
-              </div>
-
-              <!-- 实时预览卡片 -->
-              <textarea
-                  ref="newContentRef"
-                  v-model="newContent"
-                  rows="5"
-                  placeholder="写点什么…"
-                  class="w-full resize-none rounded-2xl bg-white/40 px-4 py-3 text-ink outline-none transition-all duration-300 ease-soft placeholder:text-ink-faint focus:bg-white/55 focus:shadow-[inset_0_0_0_1.5px_rgba(196,167,125,0.45)]"
-                  @keydown.enter.exact.prevent="confirmCreate"
-                  @keydown.esc.prevent="cancelCreate"
-              ></textarea>
-
-              <!-- 配色选择 -->
-              <div class="mt-4 flex items-center gap-3">
-                <span class="text-sm text-ink-faint">配色</span>
-                <div class="flex items-center gap-2.5">
-                  <button
-                      v-for="c in colors"
-                      :key="c.name"
-                      type="button"
-                      @click="newColor = c.name"
-                      v-tip="c.label"
-                      class="relative flex h-8 w-8 items-center justify-center rounded-full transition-all duration-300 ease-soft"
-                      :class="[c.dotClass, newColor === c.name ? 'scale-110 ring-2 ring-gold ring-offset-2 ring-offset-transparent' : 'hover:scale-110 opacity-80 hover:opacity-100']"
-                  >
-                    <Transition name="check-pop">
-                      <svg
-                          v-if="newColor === c.name"
-                          class="h-4 w-4 text-white drop-shadow"
-                          fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                      >
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path>
-                      </svg>
-                    </Transition>
-                  </button>
-                </div>
-              </div>
-
-              <div class="mt-6 flex items-center justify-end gap-3">
-                <button
-                    type="button"
-                    class="btn-soft outline-none focus:ring-2 focus:ring-gold/60"
-                    @click="cancelCreate"
-                >取消</button>
-                <button
-                    type="button"
-                    class="btn-gold outline-none focus:ring-2 focus:ring-gold/60"
-                    @click="confirmCreate"
-                >保存便签</button>
-              </div>
-            </div>
-          </Transition>
-        </div>
-      </Transition>
-    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import StickyNoteItem from "./StickyNoteItem.vue";
+import { useNoteColors } from "~/composables/useNoteColors";
 import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
@@ -295,61 +214,27 @@ const ctrlNIsCreateShortcut = computed(() => {
   return k === 'control+n' || k === 'n'
 })
 
-const colors = [
-  { name: 'yellow', label: '黄', class: 'bg-[rgba(224,212,170,0.55)] border border-[rgba(200,180,120,0.5)]', dotClass: 'bg-[#dcc88a]' },
-  { name: 'pink', label: '粉', class: 'bg-[rgba(224,196,200,0.55)] border border-[rgba(200,150,160,0.5)]', dotClass: 'bg-[#d6a8b0]' },
-  { name: 'blue', label: '蓝', class: 'bg-[rgba(186,206,224,0.55)] border border-[rgba(140,170,200,0.5)]', dotClass: 'bg-[#9fbfd6]' },
-  { name: 'green', label: '绿', class: 'bg-[rgba(196,214,186,0.55)] border border-[rgba(150,180,140,0.5)]', dotClass: 'bg-[#b3d0a0]' },
-  { name: 'purple', label: '紫', class: 'bg-[rgba(206,196,224,0.55)] border border-[rgba(170,150,200,0.5)]', dotClass: 'bg-[#bfb0d6]' },
-  { name: 'orange', label: '橙', class: 'bg-[rgba(224,200,176,0.55)] border border-[rgba(200,160,120,0.5)]', dotClass: 'bg-[#d9b58a]' }
-]
+// ===== 新建便签：不弹窗，点击即创建（默认第一套配色），并直接进入编辑态 =====
+const { colors: noteColors, resolveNoteColor } = useNoteColors()
 
-/** 配色 class 查询（新建预览卡片与 StickyNoteItem 共用同一套配色） */
-const getColorClass = (color: string) => {
-  const colorObj = colors.find(c => c.name === color)
-  return colorObj ? colorObj.class : colors[0]!.class
-}
-
-// ===== 新建便签弹窗（替代原"直接插入空白便签"：弹窗内填写 + 实时配色预览 + 细致动画）=====
-const creating = ref(false)
-const newContent = ref('')
-const newColor = ref('orange')
-const newContentRef = ref<HTMLTextAreaElement>()
-
-/** 打开新建弹窗并聚焦输入框 */
-const openCreate = async () => {
-  newContent.value = ''
-  newColor.value = 'orange'
-  creating.value = true
-  await nextTick()
-  newContentRef.value?.focus()
-}
-
-/** 确认新建：写入数据库并插入瀑布流顶部，关闭弹窗 */
-const confirmCreate = async () => {
-  if (!creating.value) return
+/** 直接新建便签：写入数据库并插入瀑布流顶部，随后自动进入编辑 */
+const createNote = async () => {
   const newNote: StickyNote = {
     id: uuidv4(),
-    content: newContent.value,
-    color: newColor.value,
-    created_at: new Date().toString(),
-    updated_at: new Date().toString()
+    content: '',
+    color: resolveNoteColor(noteColors.value[0]?.color),
+    created_at: String(Date.now()),
+    updated_at: String(Date.now())
   }
   await clipboardService.insertNote(newNote)
   notes.value.unshift(newNote)
+  editingId.value = newNote.id
   nextTick(setupLoadMore)
-  creating.value = false
-  showHint('已新建便签')
-}
-
-/** 取消新建：直接关闭弹窗，不写入任何数据 */
-const cancelCreate = () => {
-  if (!creating.value) return
-  creating.value = false
+  showHint('已新建便签，输入内容自动保存')
 }
 
 /** Ctrl+N 新建便签（CreateNoteCommand 派发 create-note 事件） */
-const onCreateNote = () => openCreate()
+const onCreateNote = () => createNote()
 
 // ===== 即时反馈提示（toast，复用主剪贴板 pinnedHint 样式） =====
 const hint = ref('')
@@ -472,7 +357,7 @@ async function onKeydown(e: KeyboardEvent) {
   if (e.ctrlKey && e.key.toLowerCase() === 'n' && ctrlNIsCreateShortcut.value) {
     e.preventDefault()
     e.stopPropagation()
-    openCreate()
+    createNote()
     return
   }
 

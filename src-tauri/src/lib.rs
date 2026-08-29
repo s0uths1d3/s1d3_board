@@ -273,6 +273,38 @@ CREATE TABLE IF NOT EXISTS daily_stat
 -- 待办内容量：新建待办时累计标题+描述字符数（与 clip_chars 类似的"内容量"口径）
 ALTER TABLE daily_stat ADD COLUMN todo_chars INTEGER NOT NULL DEFAULT 0;
                             "#
+                        },
+                        Migration {
+                            version: 8,
+                            description: "Add todo remind_mode/remind_at columns for smart due-time reminders",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 待办提醒：remind_mode = smart(智能默认)/off(不提醒)/custom(自定义)；NULL 视为 smart
+-- remind_at = 自定义提醒时刻（本地 ISO YYYY-MM-DDTHH:mm，与 dueDate 同格式）
+ALTER TABLE todo ADD COLUMN remind_mode TEXT;
+ALTER TABLE todo ADD COLUMN remind_at TEXT;
+-- 提醒触发次数统计
+ALTER TABLE daily_stat ADD COLUMN todo_reminded INTEGER NOT NULL DEFAULT 0;
+                            "#
+                        },
+                        Migration {
+                            version: 9,
+                            description: "Add todo priority_level (0-255) and migrate legacy priority tiers",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 数值化优先级：0-255，越大越优先；旧三档文本映射为 0/127/255
+ALTER TABLE todo ADD COLUMN priority_level INTEGER;
+UPDATE todo SET priority_level = CASE priority WHEN 'low' THEN 0 WHEN 'medium' THEN 127 WHEN 'high' THEN 255 ELSE 127 END;
+                            "#
+                        },
+                        Migration {
+                            version: 10,
+                            description: "Add todo remind_rules JSON column for multiple custom reminder alarms",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 自定义提醒闹钟列表（JSON）：[{id,kind:'percent'|'offset'|'at',value}]
+ALTER TABLE todo ADD COLUMN remind_rules TEXT;
+                            "#
                         }
                     ]
                 )

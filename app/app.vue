@@ -16,6 +16,7 @@ import clipboardService from "~/src/db/dbService";
 import {isTauri} from "~/src/utils/env";
 import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
 import statsService from "~/src/statistics/statsService";
+import reminderService from "~/src/todo/reminderService";
 import { seedMockStats } from "~/src/statistics/mockData";
 import { statsUnlocked } from "~/composables/useTabs";
 import { savePopupLastPosition } from "~/composables/usePopupPosition";
@@ -162,6 +163,9 @@ onMounted(async () => {
   // ===== 统计模块（§7.9 / §14.8）=====
   // 使用时长跟踪（30s 结算一次，增量进入 pending 累加器，§4.5）
   statsService.startUsageTracking();
+  // ===== 待办智能提醒 =====
+  // 调度服务挂主窗口：切 Tab（TodoList 卸载）不丢定时器；内部幂等，TodoList 侧会兜底再调
+  void reminderService.start();
   // 退出前强制落库 pending（防崩溃/强制退出丢失当日未落库数据，§14.1.1）
   window.addEventListener('beforeunload', flushStatsOnExit);
   if (isTauri()) {

@@ -21,6 +21,9 @@ logs
 # CodeBuddy workspace data
 .codebuddy
 
+# IDE workspace data
+.zcode
+
 # Local env files
 .env
 .env.*

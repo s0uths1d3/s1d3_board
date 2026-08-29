@@ -44,15 +44,18 @@
               />
             </h3>
 
+            <!-- 优先级徽章：等级色点 + 名称，颜色/数值一眼可辨（悬停显示数值档位） -->
             <span
-                class="rounded-full px-2 py-0.5 text-xs font-medium"
-                :class="{
-                'bg-[rgba(200,90,90,0.15)] text-danger': todo.priority === 'high',
-                'bg-gold/20 text-gold': todo.priority === 'medium',
-                'bg-success/20 text-success': todo.priority === 'low'
-              }"
+                class="flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium"
+                :style="{
+                  backgroundColor: pLevel.color + '26',
+                  color: pLevel.color,
+                  border: `1px solid ${pLevel.color}59`,
+                }"
+                v-tip="`优先级 ${pLevel.level}/255`"
             >
-              {{ priorityLabels[todo.priority] }}
+              <span class="h-1.5 w-1.5 rounded-full" :style="{ backgroundColor: pLevel.color }" />
+              {{ pLevel.name }}
             </span>
 
             <span class="rounded-full border border-accent px-2 py-0.5 text-xs text-ink-soft">
@@ -114,32 +117,35 @@
               </button>
 
               <!-- 优先级选择：三层递减线表示高/中/低优先级 -->
-              <UiDropdown align="center" aria-label="优先级" panel-class="glass-card menu rounded-2xl p-2">
+              <UiDropdown align="center" aria-label="优先级" panel-class="glass-card menu w-32 rounded-2xl p-2">
                 <template #trigger>
-                  <label class="btn-soft flex h-8 w-8 items-center justify-center p-2">
+                  <label class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2">
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h10M4 18h6"></path>
                     </svg>
                   </label>
                 </template>
-                <ul class="menu p-2">
-                  <li v-for="(label, priority) in priorityLabels" :key="priority">
-                    <a @click="choosePriority(priority)" class="flex items-center gap-2 rounded-lg hover:bg-secondary">
-                      <span class="h-2 w-2 rounded-full" :class="{
-                        'bg-danger': priority === 'high',
-                        'bg-gold': priority === 'medium',
-                        'bg-success': priority === 'low'
-                      }"></span>
-                      {{ label }}
-                    </a>
-                  </li>
-                </ul>
+                <template #default="{ close }">
+                  <ul class="menu max-h-60 w-44 overflow-y-auto p-2">
+                    <li v-for="p in priorityLevels" :key="p.level">
+                      <a
+                          @click="choosePriorityLevel(p.level, close)"
+                          class="flex items-center gap-2 rounded-lg hover:bg-secondary"
+                          :class="currentLevel === p.level ? 'bg-gold/20 font-semibold' : ''"
+                      >
+                        <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ backgroundColor: p.color }" />
+                        <span class="flex-1">{{ p.name }}</span>
+                        <span class="shrink-0 text-[10px] tabular-nums text-ink-faint">{{ p.level }}</span>
+                      </a>
+                    </li>
+                  </ul>
+                </template>
               </UiDropdown>
 
               <!-- 分类选择：标签图标 -->
-              <UiDropdown align="center" :close-on-select="false" aria-label="分类" panel-class="glass-card menu rounded-2xl p-2">
+              <UiDropdown align="center" :close-on-select="false" aria-label="分类" panel-class="glass-card menu w-48 rounded-2xl p-2">
                 <template #trigger>
-                  <label class="btn-soft flex h-8 w-8 items-center justify-center p-2">
+                  <label class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2">
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
                     </svg>
@@ -151,7 +157,7 @@
                       <div class="flex w-full items-center rounded-lg hover:bg-secondary">
                         <a
                             @click="chooseCategory(category, close)"
-                            class="flex-1 px-2 py-1"
+                            class="flex-1 whitespace-nowrap px-2 py-1"
                         >{{ category }}</a>
                         <button
                             type="button"
@@ -181,16 +187,29 @@
                 </template>
               </UiDropdown>
 
+              <!-- 提醒设置：智能 / 多闹钟（百分比·提前分钟·指定时刻）/ 不提醒 -->
+              <ReminderPicker
+                  variant="icon"
+                  :mode="currentMode"
+                  :rules="rulesList"
+                  :has-due="!!todo.dueDate"
+                  :smart-hint="smartHint"
+                  :disabled="reminderDisabled"
+                  @update:mode="onReminderMode"
+                  @update:rules="onReminderRules"
+              />
+
               <!-- 删除按钮：红色垃圾桶 -->
               <button
                   @click="deleteTodo($event)"
                   class="btn-soft flex h-8 w-8 items-center justify-center p-2 text-danger hover:bg-danger/10"
               >
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                </svg>
-              </button>
-            </div>
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                  </button>
+
+                </div>
           </div>
         </div>
       </div>
@@ -245,8 +264,11 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import type {Todo} from "~/src/Entities";
 import HighlightText from "~/components/mainpage/HighlightText.vue";
+import ReminderPicker from "~/components/todo/ReminderPicker.vue";
+import type { ReminderRule } from "~/src/Entities";
 import {formatDate} from "~/src/utils/formatDate";
 import { useNow } from "~/composables/useNow";
+import { useTodoPriorities } from "~/composables/useTodoPriorities";
 
 
 const props = defineProps<{
@@ -263,8 +285,9 @@ const emit = defineEmits<{
   (e: 'toggle', id: string): void
   (e: 'update', id: string, updates: Partial<Todo>): void
   (e: 'delete', id: string, rect?: DOMRect): void
-  (e: 'priority-change', id: string, priority: Todo['priority']): void
+  (e: 'priority-level-change', id: string, level: number): void
   (e: 'category-change', id: string, category: string): void
+  (e: 'reminder-change', id: string, mode: Todo['remindMode'], remindAt?: string): void
   (e: 'category-delete', name: string, rect?: DOMRect): void
   (e: 'select'): void
 }>()
@@ -290,10 +313,14 @@ watch(() => props.editSignal, (signal, old) => {
   })
 })
 
-const priorityLabels = {
-  high: '高',
-  medium: '中',
-  low: '低'
+/** 优先级徽章/快捷选择：数值等级系统（0-255），定义见 useTodoPriorities */
+const { levels: priorityLevels, getLevelInfo } = useTodoPriorities()
+const pLevel = computed(() => getLevelInfo(props.todo.priorityLevel))
+const currentLevel = computed(() => pLevel.value.level)
+
+const choosePriorityLevel = (level: number, close: () => void) => {
+  emit('priority-level-change', props.todo.id, level)
+  close()
 }
 
 /** 响应式当前时间，用于截止时间到达时自动刷新逾期状态 */
@@ -303,10 +330,7 @@ const now = useNow()
 const { categories, addCategory, removeCategory } = useCategories()
 const newCategory = ref('')
 
-// 优先级/分类下拉：UiDropdown 统一管理开关（点击开/关、外部点击与 Escape 收起）
-const choosePriority = (priority: Todo['priority']) => {
-  emit('priority-change', props.todo.id, priority)
-}
+// 分类下拉：UiDropdown 统一管理开关（点击开/关、外部点击与 Escape 收起）
 
 /** 选择分类后收起面板（close 由 UiDropdown 提供） */
 const chooseCategory = (category: string, close: () => void) => {
@@ -330,6 +354,39 @@ const addNewCategory = async (close: () => void) => {
 const onDeleteCategory = (name: string, e?: MouseEvent) => {
   const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null
   emit('category-delete', name, btn?.getBoundingClientRect())
+}
+
+// ===== 提醒设置（铃铛）：智能 / 多闹钟（百分比·提前分钟·指定时刻）/ 不提醒 =====
+/** 当前生效模式：未设置（undefined）视为智能 */
+const currentMode = computed<'smart' | 'off' | 'custom'>(() => props.todo.remindMode || 'smart')
+/** 自定义闹钟规则列表（DB 读取时已折算旧 remindAt） */
+const rulesList = computed<ReminderRule[]>(() => props.todo.remindRules ?? [])
+/** 逾期/已完成的待办不再提供提醒设置 */
+const reminderDisabled = computed(() => props.todo.completed === 1 || (isOverdue.value && !visualCompleted.value))
+/** 自定义闹钟生效时铃铛金色高亮 */
+const reminderActive = computed(() => currentMode.value === 'custom' && rulesList.value.length > 0)
+
+/** 智能策略摘要：与 reminderPolicy 的分档口径一致（创建距截止 ≥1h → 30/10 分钟，否则 5 分钟） */
+const smartHint = computed(() => {
+  const due = props.todo.dueDate ? new Date(props.todo.dueDate).getTime() : NaN
+  if (!Number.isFinite(due)) return '未设截止时间'
+  const created = Number(props.todo.created_at)
+  const base = Number.isFinite(created) && created > 0 ? created : Date.now()
+  return due - base >= 60 * 60 * 1000 ? '提前 30/10 分钟' : '提前 5 分钟'
+})
+
+const reminderTip = computed(() => {
+  if (currentMode.value === 'off') return '提醒：已关闭（点击开启）'
+  if (currentMode.value === 'custom') return `提醒：${rulesList.value.length} 个自定义闹钟（点击修改）`
+  return `提醒：智能（${smartHint.value}）`
+})
+
+function onReminderMode(mode: 'smart' | 'off' | 'custom') {
+  emit('reminder-change', props.todo.id, mode, rulesList.value)
+}
+
+function onReminderRules(rules: ReminderRule[]) {
+  emit('reminder-change', props.todo.id, 'custom', rules)
 }
 
 const startEditing = () => {

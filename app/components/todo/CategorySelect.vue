@@ -2,7 +2,7 @@
 /**
  * 分类选择器（CategorySelect）
  *
- * 基于 UiDropdown teleport 模式：面板 fixed 定位到 body，避免被调用方容器裁切；
+ * 基于 UiDropdown：面板 Teleport 到 body + fixed 定位，避免被调用方容器裁切；
  * 空间不足自动上翻、越界收进视口。
  * 面板含删除按钮与新增输入框（交互中不应收起），故 close-on-select=false，
  * 选择/新增成功后通过受控 open 收起。
@@ -65,9 +65,7 @@ watch(open, (v) => {
   <UiDropdown
       v-model:open="open"
       class="w-40"
-      teleport
       align="start"
-      direction="auto"
       :close-on-select="false"
       aria-label="分类"
       panel-class="glass-card w-40 rounded-xl p-1 shadow-float"
@@ -92,7 +90,7 @@ watch(open, (v) => {
         >
           <button
               type="button"
-              class="flex-1 px-2 py-1.5 text-left"
+              class="flex-1 whitespace-nowrap px-2 py-1.5 text-left"
               @click="select(c)"
           >
             {{ c }}

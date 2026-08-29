@@ -123,12 +123,23 @@
                 <div class="flex flex-nowrap items-center gap-4 min-w-0">
                   <div class="flex items-center gap-2">
                     <label class="whitespace-nowrap text-sm text-ink-faint">优先级</label>
-                    <PrioritySelect v-model="newTodo.priority" class="w-16" />
+                    <PrioritySelect v-model="newTodo.priorityLevel" class="w-24" />
                   </div>
 
                   <div class="flex items-center gap-2">
                     <label class="whitespace-nowrap text-sm text-ink-faint">截止日期</label>
                     <DueTimeSelect v-model="newTodo.dueDate" placeholder="截止时间" class="w-36" />
+                  </div>
+
+                  <div class="flex items-center gap-2">
+                    <label class="whitespace-nowrap text-sm text-ink-faint">提醒</label>
+                    <ReminderPicker
+                        v-model:mode="newTodo.remindMode"
+                        v-model:rules="newTodo.remindRules"
+                        variant="field"
+                        :has-due="!!newTodo.dueDate"
+                        class="w-32"
+                    />
                   </div>
 
                   <div class="flex items-center gap-2">
@@ -179,8 +190,9 @@
             @toggle="toggleTodo"
             @update="updateTodo"
             @delete="deleteTodo"
-            @priority-change="changePriority"
+            @priority-level-change="changePriorityLevel"
             @category-change="changeCategory"
+            @reminder-change="changeReminder"
             @category-delete="handleCategoryDelete"
             @select="selectTodoIndex(index)"
         />
@@ -212,17 +224,18 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import TodoItem from './Todoitem.vue'
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
-import type {Todo} from '~/src/Entities'
+import type {Todo, ReminderRule} from '~/src/Entities'
 import {isTauri} from "~/src/utils/env"
 import statsService from "~/src/statistics/statsService"
 import DueTimeSelect from '~/components/todo/DueTimeSelect.vue'
 import CategorySelect from '~/components/todo/CategorySelect.vue'
+import ReminderPicker from '~/components/todo/ReminderPicker.vue'
 import PrioritySelect from '~/components/todo/PrioritySelect.vue'
 import { useSearchHighlight } from "~/composables/useSearchHighlight"
 import { useCategories } from "~/composables/useCategories"
+import { useTodoPriorities } from "~/composables/useTodoPriorities"
 import { useDueDateMemory } from "~/composables/useDueDateMemory"
-import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
-import { playNotificationSound } from '~/src/utils/notifySound'
+import reminderService from '~/src/todo/reminderService'
 import DeleteConfirm from '~/components/common/DeleteConfirm.vue'
 import { useNow } from '~/composables/useNow'
 import { todoList, selectedTodoIndex, editSignal, selectTodo } from '~/src/commands/local/todoStore'
@@ -234,10 +247,15 @@ const showAddForm = ref(false)
 const newTodo = ref({
   title: '',
   description: '',
-  priority: 'medium' as Todo['priority'],
+  priorityLevel: 127,
   category: '其他',
-  dueDate: ''
+  dueDate: '',
+  remindMode: 'smart' as Todo['remindMode'],
+  remindRules: [] as ReminderRule[]
 })
+
+// ===== 优先级等级系统（0-255）：选择/排序/筛选/删除等级后的自动重映射 =====
+const { levels: priorityLevels, nearestLevel } = useTodoPriorities()
 
 const searchQuery = ref('')
 /** 搜索框 ref：Ctrl+F 聚焦使用 */
@@ -271,51 +289,9 @@ const sortOptions = [
 /** 筛选按钮显示的中文标签：value→label 映射（避免点击后显示英文 value） */
 const currentFilterLabel = computed(() => filters.find(f => f.value === currentFilter.value)?.label ?? currentFilter.value)
 
-// 逾期通知调度：为每个"未完成且有截止时间"的待办，精确在截止时刻用 setTimeout 触发一次系统通知。
-// 任务新增/更新/删除时维护这些定时器，取代原先的每秒轮询检查。
-const overdueTimers = new Map<string, ReturnType<typeof setTimeout>>()
-/** 首次从数据库加载完成后才进行整体调度，避免轮询刷新时反复重建定时器 */
-let scheduleInitialized = false
-
-/** 取消某个任务的逾期通知定时器 */
-function clearOverdueTimer(id: string) {
-  const t = overdueTimers.get(id)
-  if (t !== undefined) {
-    clearTimeout(t)
-    overdueTimers.delete(id)
-  }
-}
-
-/** 为单个任务建立/重建逾期通知定时器（completed 或 无截止时间 的任务不建立） */
-function scheduleOverdue(todo: Todo) {
-  clearOverdueTimer(todo.id)
-  if (todo.completed === 1 || !todo.dueDate) return
-  const dueTime = new Date(todo.dueDate).getTime()
-  const delay = dueTime - Date.now()
-  if (delay <= 0) return // 已逾期：不补发历史通知
-  const timer = setTimeout(() => {
-    overdueTimers.delete(todo.id)
-    // 触发时再核一次最新状态（任务可能已被完成 / 截止时间被改）
-    const current = todos.value.find(t => t.id === todo.id)
-    if (!current || current.completed === 1 || !current.dueDate) return
-    const currentDue = new Date(current.dueDate).getTime()
-    const remaining = currentDue - Date.now()
-    // 若截止时间被改到更远的未来，重新调度；setTimeout 不保证精确到毫秒，
-    // 允许最多提前 1 秒触发，避免"时间到了但没通知"。
-    if (remaining > 1000) {
-      scheduleOverdue(current)
-      return
-    }
-    void sendSystemNotification('任务已逾期', `任务 "${current.title}" 已到达截止时间，请尽快处理。`)
-  }, delay)
-  overdueTimers.set(todo.id, timer)
-}
-
-/** 依据当前任务列表重建全部定时器（仅首次加载后调用一次） */
-function rescheduleAll() {
-  for (const id of [...overdueTimers.keys()]) clearOverdueTimer(id)
-  for (const t of todos.value) scheduleOverdue(t)
-}
+// 提醒调度：统一由 reminderService 负责（智能提前提醒 30/10/5 分钟、自定义提醒、到期通知）。
+// 服务挂载在主窗口（app.vue 启动），切换 Tab 卸载本组件不影响定时器；
+// 本组件只负责在数据变化后把最新列表同步给服务。
 
 // 计算属性
 const pendingCount = computed(() => todos.value.filter(t => !t.completed).length)
@@ -361,7 +337,7 @@ const filteredAndSortedTodos = computed(() => {
   } else if (currentFilter.value === 'completed') {
     filtered = filtered.filter(t => t.completed)
   } else if (currentFilter.value === 'high') {
-    filtered = filtered.filter(t => t.priority === 'high')
+    filtered = filtered.filter(t => (t.priorityLevel ?? 127) >= 128)
   }
 
   return [...filtered].sort((a, b) => {
@@ -371,8 +347,8 @@ const filteredAndSortedTodos = computed(() => {
       case 'date-desc':
         return (parseInt(b.created_at || '0') || 0) - (parseInt(a.created_at || '0') || 0)
       case 'priority':
-        const priorityOrder = { high: 0, medium: 1, low: 2 }
-        return priorityOrder[a.priority] - priorityOrder[b.priority]
+        // 数值优先级：越大越优先，降序
+        return (b.priorityLevel ?? 127) - (a.priorityLevel ?? 127)
       case 'name':
         return a.title.localeCompare(b.title)
       default:
@@ -409,21 +385,24 @@ const toggleAddForm = () => {
 const addTodo = async () => {
   if (!newTodo.value.title.trim()) return
 
+  const nowMs = Date.now()
   const todo: Todo = {
     id: uuidv4(),
     title: newTodo.value.title.trim(),
     description: newTodo.value.description.trim(),
     completed: 0,
-    priority: newTodo.value.priority,
+    priorityLevel: newTodo.value.priorityLevel,
     category: newTodo.value.category,
     dueDate: newTodo.value.dueDate,
-    created_at: new Date().toString(),
-    updated_at: new Date().toString()
+    remindMode: newTodo.value.remindMode,
+    remindRules: newTodo.value.remindRules,
+    created_at: String(nowMs),
+    updated_at: String(nowMs)
   }
 
   await clipboardService.insertTodo(todo)
   todos.value.unshift(todo)
-  scheduleOverdue(todo)
+  void reminderService.sync(todos.value)
   resetForm()
 
   showAddForm.value = false
@@ -433,9 +412,11 @@ const resetForm = () => {
   newTodo.value = {
     title: '',
     description: '',
-    priority: 'medium',
+    priorityLevel: 127,
     category: '其他',
-    dueDate: ''
+    dueDate: '',
+    remindMode: 'smart',
+    remindRules: []
   }
 }
 
@@ -444,10 +425,10 @@ const toggleTodo = async (id: string) => {
   if (todo) {
     const completing = todo.completed === 0
     todo.completed = todo.completed === 0 ? 1 : 0
-    todo.updated_at = new Date().toString()
+    todo.updated_at = String(Date.now())
     await clipboardService.updateTodo(todo)
-    // 完成状态变化会影响是否需要逾期通知，重建该任务的定时器
-    scheduleOverdue(todo)
+    // 完成状态变化影响提醒计划，同步给调度服务（完成 → 撤销其全部提醒）
+    void reminderService.sync(todos.value)
     // 统计埋点（fire-and-forget）：仅"切换为完成"时 +1
     if (completing) void statsService.record({ todo_completed: 1 })
   }
@@ -456,10 +437,10 @@ const toggleTodo = async (id: string) => {
 const updateTodo = async (id: string, updates: Partial<Todo>) => {
   const todo = todos.value.find(t => t.id === id)
   if (todo) {
-    Object.assign(todo, updates, { updated_at: new Date().toString() })
+    Object.assign(todo, updates, { updated_at: String(Date.now()) })
     await clipboardService.updateTodo(todo)
-    // 截止时间或完成状态可能被修改，重建该任务的逾期通知定时器
-    scheduleOverdue(todo)
+    // 截止时间/提醒设置/完成状态可能变化，同步给调度服务重排
+    void reminderService.sync(todos.value)
   }
 }
 
@@ -474,31 +455,56 @@ const deleteTodo = (id: string, rect?: DOMRect) => {
 
 /** 确认后真正执行待办删除 */
 async function executeTodoDelete(id: string) {
-  const todo = todos.value.find(t => t.id === id)
-  clearOverdueTimer(id)
   await clipboardService.deleteTodo(id)
   const index = todos.value.findIndex(t => t.id === id)
   if (index > -1) {
     todos.value.splice(index, 1)
   }
+  void reminderService.sync(todos.value)
 }
 
-const changePriority = async (id: string, priority: Todo['priority']) => {
+/** 优先级等级变更：持久化后由 sync/徽章响应式跟随 */
+const changePriorityLevel = async (id: string, level: number) => {
   const todo = todos.value.find(t => t.id === id)
   if (todo) {
-    todo.priority = priority
-    todo.updated_at = new Date().toString()
+    todo.priorityLevel = level
+    todo.updated_at = String(Date.now())
     await clipboardService.updateTodo(todo)
   }
 }
+
+/** 等级列表被管理器修改后：把引用了已删档位的待办重映射到最近档位 */
+watch(priorityLevels, async (levels) => {
+  const ls = levels.map(l => l.level)
+  const changed: Todo[] = []
+  for (const t of todos.value) {
+    if (!ls.includes(t.priorityLevel ?? 127)) {
+      t.priorityLevel = nearestLevel(t.priorityLevel ?? 127)
+      t.updated_at = String(Date.now())
+      changed.push(t)
+    }
+  }
+  if (changed.length > 0) {
+    await Promise.all(changed.map(t => clipboardService.updateTodo(t)))
+  }
+})
 
 const changeCategory = async (id: string, category: string) => {
   const todo = todos.value.find(t => t.id === id)
   if (todo) {
     todo.category = category
-    todo.updated_at = new Date().toString()
+    todo.updated_at = String(Date.now())
     await clipboardService.updateTodo(todo)
   }
+}
+
+/** 提醒设置（智能 / 多闹钟规则 / 不提醒）：持久化后同步调度服务重排 */
+const changeReminder = async (id: string, mode: Todo['remindMode'], rules: ReminderRule[]) => {
+  await updateTodo(id, {
+    remindMode: mode || 'smart',
+    remindRules: rules || [],
+    remindAt: ''
+  })
 }
 
 /** 分类列表（含用户增删后的状态） */
@@ -568,56 +574,20 @@ const setSort = (sort: string) => {
 
 const fetchTodos = async () => {
   try {
+    // 确保调度服务已启动（幂等；正常由 app.vue 更早启动，此处兜底覆盖"直达待办 Tab"的场景）
+    await reminderService.start()
     const fetchedTodos = await clipboardService.fetchTodos({ value: { searchContent: '' } });
     todos.value = fetchedTodos;
-    // 首次加载完成后整体调度一次逾期通知定时器（已逾期/已完成的任务不会建立定时器，故不会补发历史通知）
-    if (!scheduleInitialized) {
-      scheduleInitialized = true
-      rescheduleAll()
-    }
+    // 把最新列表同步给调度服务（内部按计划 diff，仅增删变化的定时器；首个 sync 处于补发阶段）
+    void reminderService.sync(todos.value)
   } catch (error) {
     console.error("Failed to fetch todos:", error);
   }
 }
 
-// 发送系统原生通知（Tauri）+ 自定义提示音
-const sendSystemNotification = async (title: string, body: string) => {
-  // 始终播放自定义提示音（合成，不依赖系统默认通知音）
-  playNotificationSound()
-
-  if (!isTauri()) return
-
-  try {
-    let permissionGranted = await isPermissionGranted()
-    if (!permissionGranted) {
-      const permission = await requestPermission()
-      permissionGranted = permission === 'granted'
-    }
-    if (permissionGranted) {
-      sendNotification({ title, body })
-    }
-  } catch (error) {
-    console.error('发送系统通知失败:', error)
-  }
-}
-
-// 请求通知权限
-const requestNotificationPermission = async () => {
-  if (!isTauri()) return
-  try {
-    let permissionGranted = await isPermissionGranted()
-    if (!permissionGranted) {
-      await requestPermission()
-    }
-  } catch (error) {
-    console.error('请求通知权限失败:', error)
-  }
-}
-
 // 生命周期
 onMounted(async () => {
-  void requestNotificationPermission() // 请求通知权限
-  await fetchTodos() // 先完成首次加载并调度历史任务的逾期通知
+  await fetchTodos() // 先完成首次加载并进入调度（含启动补发汇总）
 
   // Ctrl+F：聚焦待办搜索框
   window.addEventListener('focus-search', onFocusSearch)
@@ -625,7 +595,7 @@ onMounted(async () => {
   // Ctrl+Enter：进入选中待办的编辑态
   window.addEventListener('todo:edit-request', onEditRequest)
 
-  // 仅在 Tauri 桌面容器内定时从数据库刷新列表（数据同步用；逾期通知由精确定时器负责，不再轮询检查）
+  // 仅在 Tauri 桌面容器内定时从数据库刷新列表（数据同步用；提醒由调度服务的精确定时器负责）
   if (isTauri()) {
     pollTimer = setInterval(() => {
       void fetchTodos()
@@ -638,8 +608,7 @@ onBeforeUnmount(() => {
     clearInterval(pollTimer)
     pollTimer = null
   }
-  // 清理所有逾期通知定时器，避免组件卸载后误触发
-  for (const id of [...overdueTimers.keys()]) clearOverdueTimer(id)
+  // 提醒定时器由主窗口的 reminderService 持有，切 Tab 卸载本组件不影响提醒
   window.removeEventListener('focus-search', onFocusSearch)
   window.removeEventListener('todo:edit-request', onEditRequest)
 })

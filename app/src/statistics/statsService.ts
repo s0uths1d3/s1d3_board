@@ -21,7 +21,7 @@ import { isTauri } from "~/src/utils/env";
 /** 统计维度字段（与 daily_stat 各列同名） */
 export type StatField =
   | 'clip_text' | 'clip_image' | 'clip_use' | 'clip_chars'
-  | 'todo_added' | 'todo_completed' | 'todo_deleted' | 'todo_chars'
+  | 'todo_added' | 'todo_completed' | 'todo_deleted' | 'todo_chars' | 'todo_reminded'
   | 'note_added' | 'note_deleted' | 'favorite_toggle'
   | 'usage_seconds' | 'shortcut_count'
   | 'tab_clip' | 'tab_todo' | 'tab_note' | 'tab_pinned'
@@ -45,7 +45,7 @@ export const TREND_DOWNSAMPLE_DAYS = 92;
 /** 区间聚合默认查询的字段（§14.3 查询裁剪：不含动态扩展列） */
 const DEFAULT_RANGE_FIELDS: StatField[] = [
   'clip_text', 'clip_image', 'clip_use', 'clip_chars',
-  'todo_added', 'todo_completed', 'todo_deleted', 'todo_chars',
+  'todo_added', 'todo_completed', 'todo_deleted', 'todo_chars', 'todo_reminded',
   'note_added', 'note_deleted', 'favorite_toggle',
   'usage_seconds', 'shortcut_count',
   'tab_clip', 'tab_todo', 'tab_note', 'tab_pinned', 'tab_setting', 'tab_statistics',
