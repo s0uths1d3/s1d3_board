@@ -244,7 +244,7 @@ watch(activeSetting, async (val) => {
 
 // ===== 关于（版本 / 描述 / 作者 / 主页 / 检查更新）=====
 /** 版本单一来源：tauri.conf.json 的 version（经 getVersion 读取）；纯 Web 环境回退到该常量 */
-const FALLBACK_VERSION = '0.2.0';
+const FALLBACK_VERSION = '0.2.1';
 const APP_REPO = 'https://github.com/s0uths1d3/s1d3_board';
 const APP_RELEASES_API = 'https://api.github.com/repos/s0uths1d3/s1d3_board/releases/latest';
 const APP_AUTHOR = 's1d3';

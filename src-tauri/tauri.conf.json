@@ -1,11 +1,11 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "s1d3_board",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "S1d3Board",
   "build": {
     "frontendDist": "../.output/public",
-    "devUrl": "http://localhost:12912",
+    "devUrl": "http://localhost:54900",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run generate"
   },
