@@ -68,14 +68,16 @@
         />
       </div>
 
-      <!-- 流式加载 sentinel：滚动接近底部时加载下一批便签 -->
+      <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载" -->
       <div
-          v-if="visibleCount < notes.length"
-          ref="loadMoreEl"
-          class="flex items-center justify-center py-6 text-xs text-ink-faint"
+          v-if="hasMore && notes.length"
+          ref="sentinel"
+          class="flex items-center justify-center gap-2 py-6 text-xs text-ink-faint"
       >
-        加载更多…
+        <span v-if="loading">加载中…</span>
+        <span v-else>继续向下滚动加载更多</span>
       </div>
+      <div v-else-if="notes.length" class="py-6 text-center text-xs text-ink-faint">已全部加载</div>
 
       <div v-if="notes.length === 0" class="py-20 text-center">
         <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -118,12 +120,25 @@ import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { matchesKeyId } from "~/utils/shortcutFormat";
 import { findNearestInDirection } from "~/utils/focusNavigation";
 import { useSearchHighlight } from "~/composables/useSearchHighlight";
+import { useInfiniteList } from "~/composables/useInfiniteList";
 
 interface StickyNote extends Note {
   position?: { x: number; y: number }
 }
 
-const notes = ref<StickyNote[]>([])
+/** 流式加载：首屏只加载第一页，滚动到底部自动加载下一页；
+ *  轮询/操作后仅刷新已加载范围（签名一致时跳过整表替换，避免无谓重渲染） */
+const {
+  items: notes, loading, hasMore, sentinel,
+  loadMore, reload, refreshLoaded, replace, prepend, remove: removeNote,
+} = useInfiniteList<StickyNote>({
+  // 分页始终不带搜索词：搜索由前端过滤"已加载范围"（current 范围语义），
+  // 避免带 LIKE 的分页 offset 与已加载条数错位导致跳过/重复匹配项
+  fetchPage: (offset, limit) =>
+    clipboardService.fetchNotes({ value: { searchContent: '' } }, { offset, limit }),
+  pageSize: 40,
+  signatureOf: (n) => `${n.id}:${n.updated_at}`,
+})
 
 // 键盘选择态（响应式网格，列数动态获取）
 const selectedIndex = ref(0)
@@ -144,32 +159,14 @@ const matchCount = computed(() => (noteSearch.value.trim() ? displayNotes.value.
 /** 当前高亮位置：在匹配结果中的 0-based 索引 */
 const currentMatchIndex = computed(() => Math.min(selectedIndex.value, Math.max(0, matchCount.value - 1)))
 
-// ===== 流式/分批渲染：首屏渲染一批，滚动接近底部时追加下一批 =====
-const BATCH_SIZE = 40
-const visibleCount = ref(BATCH_SIZE)
+/** 展示列表：搜索态按关键词前端过滤（current=已加载范围；all=notes 已是全库搜索结果）；非搜索态=已加载全部 */
 const displayNotes = computed(() => {
   const q = noteSearch.value.trim().toLowerCase()
-  // 搜索态：按范围过滤并一次性展示全部匹配（不分批）
   if (q) {
-    const pool = searchScope.value === 'all' ? notes.value : notes.value.slice(0, visibleCount.value)
-    return pool.filter(n => (n.content || '').toLowerCase().includes(q))
+    return notes.value.filter(n => (n.content || '').toLowerCase().includes(q))
   }
-  // 非搜索态：保持原本的分批流式加载
-  return notes.value.slice(0, visibleCount.value)
+  return notes.value
 })
-const loadMoreEl = ref<HTMLElement>()
-let loadMoreObserver: IntersectionObserver | null = null
-
-/** 观察底部 sentinel，进入视口时加载下一批 */
-function setupLoadMore() {
-  loadMoreObserver?.disconnect()
-  loadMoreObserver = new IntersectionObserver((entries) => {
-    if (entries[0]?.isIntersecting) {
-      visibleCount.value = Math.min(notes.value.length, visibleCount.value + BATCH_SIZE)
-    }
-  }, { rootMargin: '300px 0px' })
-  if (loadMoreEl.value) loadMoreObserver.observe(loadMoreEl.value)
-}
 
 /** 搜索范围切换到"全部"时：重新查库，确保涵盖未加载的便签；清空搜索时恢复全量。
  *  加 300ms trailing 防抖：此前每个按键立即查库，连续输入 = 连续 SQL */
@@ -177,27 +174,40 @@ let searchFetchTimer: ReturnType<typeof setTimeout> | null = null
 watch([searchScope, noteSearch], async ([scope, q]) => {
   if (searchFetchTimer) clearTimeout(searchFetchTimer)
   if (q.trim() && scope === 'all') {
+    // "全部"范围搜索：一次性查库全部匹配（涵盖未加载便签），300ms 防抖避免连续输入连续 SQL
     searchFetchTimer = setTimeout(() => {
       searchFetchTimer = null
-      void fetchNotesByScope(q)
+      void fetchNotesByScope(q.trim())
     }, 300)
   } else if (!q.trim()) {
-    // 清空搜索：立即恢复全量加载（重置分批）
-    await fetchNotes()
+    // 清空搜索：重置为流式第一页（此前为全量恢复，改为分页重置）
+    await reloadNotes()
   }
 })
 
-/** 按"全部"范围查库刷新搜索结果 */
+/** 按"全部"范围查库刷新搜索结果（一次性展示全部匹配，不再流式） */
 async function fetchNotesByScope(q: string) {
   try {
     const fetched = await clipboardService.fetchNotes({ value: { searchContent: q } })
-    notes.value = fetched
-    visibleCount.value = fetched.length
+    replace(fetched)
     if (selectedIndex.value > fetched.length - 1) {
       selectedIndex.value = Math.max(0, fetched.length - 1)
     }
   } catch (e) {
     console.error('搜索便签失败:', e)
+  }
+}
+
+/** 重置为流式第一页（清空搜索/切回"当前"范围时），并修正选中索引 */
+async function reloadNotes() {
+  // 等待轮询中的刷新结束，再重置（busy 互斥导致跳过时最多重试 2 秒）
+  while (noteFetching) await new Promise(r => setTimeout(r, 50))
+  for (let i = 0; i < 20; i++) {
+    if (await reload()) break
+    await new Promise(r => setTimeout(r, 100))
+  }
+  if (selectedIndex.value > notes.value.length - 1) {
+    selectedIndex.value = Math.max(0, notes.value.length - 1)
   }
 }
 
@@ -210,13 +220,6 @@ const jumpToFirstMatch = () => {
   // 保持搜索框焦点，便于连续 Enter 跳转（当前实现为跳首个；焦点保留以继续输入）
   nextTick(() => noteSearchInput.value?.focus())
 }
-
-// 选中项移动时确保其卡片已渲染（未加载则扩展可见数量）
-watch(selectedIndex, (idx) => {
-  if (idx + 1 > visibleCount.value) {
-    visibleCount.value = Math.min(notes.value.length, idx + 1)
-  }
-})
 
 /** 新建便签快捷键是否为 Ctrl+N（默认配置或被污染为无修饰 N）——此时由页面捕获兜底直接新建 */
 const ctrlNIsCreateShortcut = computed(() => {
@@ -238,9 +241,8 @@ const createNote = async () => {
     updated_at: String(Date.now())
   }
   await clipboardService.insertNote(newNote)
-  notes.value.unshift(newNote)
+  prepend(newNote)
   editingId.value = newNote.id
-  nextTick(setupLoadMore)
   showHint('已新建便签，输入内容自动保存')
 }
 
@@ -304,11 +306,8 @@ const cancelDelete = () => {
 }
 
 const deleteNote = async (id: string) => {
-  const index = notes.value.findIndex(n => n.id === id)
   await clipboardService.deleteNote(id)
-  if (index > -1) {
-    notes.value.splice(index, 1)
-  }
+  removeNote((n) => n.id === id)
   // 若删除的是正在编辑的项，退出编辑态
   if (editingId.value === id) editingId.value = null
   // 删除后修正选中索引，避免越界
@@ -432,35 +431,39 @@ async function onKeydown(e: KeyboardEvent) {
   if (handled) {
     e.preventDefault()
     e.stopPropagation()
-    if (e.key !== 'Delete' && e.key !== 'Backspace') await scrollSelectedIntoView()
+    if (e.key !== 'Delete' && e.key !== 'Backspace') {
+      // 方向键移动到已加载末尾时预加载下一页（滚动加载之外的无缝衔接）
+      if (selectedIndex.value >= notes.value.length - 1 && hasMore.value) {
+        void loadMore()
+      }
+      await scrollSelectedIntoView()
+    }
   }
 }
 
+/** 轮询/切回刷新：搜索"全部"范围时全量查库；其余情况仅刷新已加载范围（签名一致时跳过整表替换） */
+let noteFetching = false
 const fetchNotes = async () => {
+  if (noteFetching) return
+  noteFetching = true
   try {
-    // 轮询时也应用当前搜索条件，避免覆盖搜索结果（全部模式下按搜索词查库）
     const q = noteSearch.value.trim()
-    const fetched = await clipboardService.fetchNotes({ value: { searchContent: q } })
-    // 签名比对：无变化时跳过整表替换，避免每秒轮询触发全部卡片无谓重渲染
-    // （此前与 TodoList/主页不同，这里没有任何去重，空闲时每秒全量重渲染一轮）
-    const signature = fetched.map(n => `${n.id}:${n.updated_at}`).join(',')
-    if (signature === lastSignature) return
-    lastSignature = signature
-    notes.value = fetched
-    if (!q) visibleCount.value = BATCH_SIZE
-    else visibleCount.value = fetched.length
+    if (q && searchScope.value === 'all') {
+      await fetchNotesByScope(q)
+      return
+    }
+    await refreshLoaded()
     // 修正选中索引，避免列表刷新后越界
     if (selectedIndex.value > notes.value.length - 1) {
       selectedIndex.value = Math.max(0, notes.value.length - 1)
     }
-    // 数据刷新后 sentinel 可能重新出现/消失，重新建立观察
-    nextTick(setupLoadMore)
   } catch (error) {
     console.error("Failed to fetch notes:", error);
+  } finally {
+    noteFetching = false
   }
 };
 
-let lastSignature = '';
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
@@ -478,7 +481,6 @@ onMounted(() => {
   window.addEventListener('create-note', onCreateNote)
   // Ctrl+F：聚焦便签搜索框（FocusSearchCommand 派发）
   window.addEventListener('focus-search', onFocusSearch)
-  nextTick(setupLoadMore)
 });
 
 onBeforeUnmount(() => {
@@ -487,8 +489,7 @@ onBeforeUnmount(() => {
     intervalId = null;
   }
   if (hintTimer) clearTimeout(hintTimer)
-  loadMoreObserver?.disconnect();
-  loadMoreObserver = null;
+  if (searchFetchTimer) clearTimeout(searchFetchTimer)
   window.removeEventListener('keydown', onKeydown, true);
   window.removeEventListener('create-note', onCreateNote);
   window.removeEventListener('focus-search', onFocusSearch);

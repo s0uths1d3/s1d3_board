@@ -61,6 +61,21 @@ function escapeLike(input: string): string {
     return input.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+/**
+ * 流式分页参数：offset 起始偏移，limit 页大小。
+ * 传入后查询追加 `LIMIT limit OFFSET offset`；不传则保持原有全量行为。
+ */
+export interface PageQuery {
+    offset: number;
+    limit: number;
+}
+
+/** 追加 LIMIT/OFFSET 到查询尾部（$1/$2 参数化，配合 params 数组） */
+function withPage(page: PageQuery | undefined, params: unknown[]): { sql: string; params: unknown[] } {
+    if (!page) return { sql: '', params };
+    return { sql: ' LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2), params: [...params, page.limit, page.offset] };
+}
+
 class DatabaseService {
     private static instance: DatabaseService;
     private db: Database | undefined;
@@ -227,7 +242,7 @@ class DatabaseService {
         }
     }
 
-    public async fetchClipboardData(filter: any): Promise<ClipboardData[]> {
+    public async fetchClipboardData(filter: any, page?: PageQuery): Promise<ClipboardData[]> {
         await this.ensureDbInitialized();
 
         const favorite: number = filter.value.favorite;
@@ -260,18 +275,29 @@ class DatabaseService {
 
         const whereSql = conds.length ? `WHERE ${conds.join(' AND ')}` : 'WHERE 1=1';
 
-        // 查询上限随「剪贴板最大存储数量」（max_save_count）动态调整；
+        // 全量查询的上限随「剪贴板最大存储数量」（max_save_count）动态调整；
         // 收藏列表仍保持 100 条上限；未设置时回退默认值。上限钳制到 1 万，
         // 防止极端配置一次性把全表（含图片 base64）拉进内存。
+        // 传入 page 时为流式分页查询：以 page.limit 为准（收藏列表受 100 条上限约束），
+        // 避免每次滚动把全表（含图片 base64）拉进内存。
         let limit = favorite === 1 ? 100 : 500;
-        const maxRaw = await this.getKeyValue('max_save_count');
-        const parsed = parseInt(maxRaw ?? '', 10);
-        if (parsed > 0) {
-            limit = favorite === 1 ? Math.min(parsed, 100) : Math.min(parsed, 10000);
+        if (page) {
+            limit = favorite === 1 ? Math.min(page.limit, 100 - page.offset) : page.limit;
+            if (limit <= 0) return [];
+        } else {
+            const maxRaw = await this.getKeyValue('max_save_count');
+            const parsed = parseInt(maxRaw ?? '', 10);
+            if (parsed > 0) {
+                limit = favorite === 1 ? Math.min(parsed, 100) : Math.min(parsed, 10000);
+            }
         }
 
-        const sql = `SELECT * FROM clipboard ${whereSql} ORDER BY updated_at DESC LIMIT ${limit}`;
-        return await this.db!.select(sql, params) as ClipboardData[];
+        const baseSql = `SELECT * FROM clipboard ${whereSql} ORDER BY updated_at DESC, id DESC`;
+        if (page) {
+            const { sql, params: pageParams } = withPage(page, params);
+            return await this.db!.select(baseSql + sql, pageParams) as ClipboardData[];
+        }
+        return await this.db!.select(baseSql + ` LIMIT ${limit}`, params) as ClipboardData[];
     }
 
     public async fetchClipboardSingleData(id: number): Promise<ClipboardData | undefined> {
@@ -303,16 +329,20 @@ class DatabaseService {
     // ===== 常用剪贴（pinned_clip）=====
 
     /**
-     * 获取常用剪贴列表（最多 10 条）。
+     * 获取常用剪贴列表（不限量，可无限存储；传 page 时按流式分页返回）。
      * 排序：置顶项优先（按置顶时间倒序），其余按时间倒序（最新在前）。
      */
-    public async fetchPinnedClips(): Promise<PinnedClip[]> {
+    public async fetchPinnedClips(page?: PageQuery): Promise<PinnedClip[]> {
         await this.ensureDbInitialized();
-        return await this.db!.select(
+        const baseSql =
             "SELECT * FROM pinned_clip ORDER BY " +
             "CASE WHEN pinned_at IS NOT NULL AND pinned_at != '' THEN 1 ELSE 0 END DESC, " +
-            "pinned_at DESC, created_at DESC, id DESC LIMIT 10"
-        ) as PinnedClip[];
+            "pinned_at DESC, created_at DESC, id DESC";
+        if (page) {
+            const { sql, params } = withPage(page, []);
+            return await this.db!.select(baseSql + sql, params) as PinnedClip[];
+        }
+        return await this.db!.select(baseSql) as PinnedClip[];
     }
 
     /** 获取单个常用剪贴项 */
@@ -324,7 +354,7 @@ class DatabaseService {
 
     /**
      * 新增常用剪贴项（最新一条排最前）。
-     * 超过 10 条时自动删除最旧（未置顶的最旧优先）记录。
+     * 常用剪贴不限量存储：不会自动裁剪旧数据。
      */
     public async insertPinnedClip(content: string, type: 'text' | 'image', name?: string, source?: string): Promise<void> {
         await this.ensureDbInitialized();
@@ -332,13 +362,6 @@ class DatabaseService {
         await this.db!.execute(
             "INSERT INTO pinned_clip (content, type, name, source, sort_order, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
             [content, type, name || '', source || '', 0, now, now]
-        );
-        // 超限裁剪：保留按展示顺序的前 10 条（置顶优先，再按时间倒序）
-        await this.db!.execute(
-            "DELETE FROM pinned_clip WHERE id NOT IN (" +
-            "SELECT id FROM pinned_clip ORDER BY " +
-            "CASE WHEN pinned_at IS NOT NULL AND pinned_at != '' THEN 1 ELSE 0 END DESC, " +
-            "pinned_at DESC, created_at DESC, id DESC LIMIT 10)"
         );
     }
 
@@ -375,15 +398,9 @@ class DatabaseService {
         );
     }
 
-    /** 删除常用剪贴项 */
-    public async deletePinnedClip(id: number): Promise<void> {
-        await this.ensureDbInitialized();
-        await this.db!.execute("DELETE FROM pinned_clip WHERE id = $1", [id]);
-    }
-
     /**
      * 清空业务数据（剪贴板 / 便签 / 待办），保留配置表（settings、shortcut_binding）
-     * 以及常用剪贴（pinned_clip）与统计数据（daily_stat）。
+     * 以及常用剪贴（pinned_clip，不可删除）与统计数据（daily_stat）。
      * 同时重置各表的自增主键计数。
      */
     public async clearDatabase(): Promise<void> {
@@ -475,15 +492,19 @@ class DatabaseService {
         void statsService.record({ note_deleted: 1 });
     }
 
-    public async fetchNotes(filter: any): Promise<Note[]> {
+    public async fetchNotes(filter: any, page?: PageQuery): Promise<Note[]> {
         await this.ensureDbInitialized();
 
         const content: string = filter.value.searchContent;
+        const baseSql = "SELECT * FROM note WHERE content LIKE $1 ESCAPE '\\' ORDER BY updated_at DESC, id DESC";
+        const params = [`%${escapeLike(content)}%`];
 
-        return await this.db!.select(
-            "SELECT * FROM note WHERE content LIKE $1 ESCAPE '\\' ORDER BY updated_at DESC LIMIT 500",
-            [`%${escapeLike(content)}%`]
-        ) as Note[];
+        if (page) {
+            const { sql, params: pageParams } = withPage(page, params);
+            return await this.db!.select(baseSql + sql, pageParams) as Note[];
+        }
+        // 未传分页（全量查询，用于搜索"全部范围"等场景）：保留 500 条上限防止极端数据拉爆内存
+        return await this.db!.select(baseSql + " LIMIT 500", params) as Note[];
     }
 
     public async fetchSingleNote(noteId: string): Promise<Note | undefined> {
@@ -523,15 +544,21 @@ class DatabaseService {
         void statsService.record({ todo_deleted: 1 });
     }
 
-    public async fetchTodos(filter: any): Promise<Todo[]> {
+    public async fetchTodos(filter: any, page?: PageQuery): Promise<Todo[]> {
         await this.ensureDbInitialized();
 
         const content: string = filter.value.searchContent;
+        const baseSql = "SELECT * FROM todo WHERE title LIKE $1 ESCAPE '\\' ORDER BY updated_at DESC, id DESC";
+        const params = [`%${escapeLike(content)}%`];
 
-        const rows = await this.db!.select(
-            "SELECT * FROM todo WHERE title LIKE $1 ESCAPE '\\' ORDER BY updated_at DESC LIMIT 500",
-            [`%${escapeLike(content)}%`]
-        ) as Todo[];
+        let rows: Todo[];
+        if (page) {
+            const { sql, params: pageParams } = withPage(page, params);
+            rows = await this.db!.select(baseSql + sql, pageParams) as Todo[];
+        } else {
+            // 未传分页（全量查询，用于提醒调度 sync 等场景）：保留 500 条上限
+            rows = await this.db!.select(baseSql + " LIMIT 500", params) as Todo[];
+        }
         return rows.map(mapTodoRemindRules);
     }
 

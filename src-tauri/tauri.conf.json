@@ -5,7 +5,7 @@
   "identifier": "S1d3Board",
   "build": {
     "frontendDist": "../.output/public",
-    "devUrl": "http://localhost:54900",
+    "devUrl": "http://localhost:12321",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run generate"
   },

@@ -25,12 +25,21 @@ export function selectTodo(index: number) {
   }
 }
 
+/** 流式加载钩子（由 TodoList.vue 注册）：下移到已加载末尾时触发加载下一页 */
+let onReachEnd: (() => void) | null = null;
+export function setTodoLoadMoreHook(fn: (() => void) | null) {
+  onReachEnd = fn;
+}
+
 /** 方向键上下移动选中项（-1 上移，+1 下移） */
 export function moveTodoSelection(direction: -1 | 1) {
   const newIndex = selectedTodoIndex.value + direction;
   if (newIndex >= 0 && newIndex < todoList.value.length) {
     selectedTodoIndex.value = newIndex;
     scrollToSelectedTodo();
+  } else if (direction === 1 && newIndex >= todoList.value.length) {
+    // 下移到已加载末尾：触发加载下一页（流式加载）
+    onReachEnd?.();
   }
 }
 

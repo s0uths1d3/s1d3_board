@@ -6,7 +6,10 @@ import {
   selectedRowIndex,
   selectRow
 } from '~/src/commands/local/clipboardStore';
-import { data, filter, fetchData, getSelectedItem, moveSelection } from '~/src/commands/local/clipboardStore';
+import {
+  data, filter, dataLength, hasMore, loadingMore,
+  fetchData, getSelectedItem, moveSelection, loadMoreClips, resetClips,
+} from '~/src/commands/local/clipboardStore';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {isTauri} from "~/utils/env";
 import clipboardService from "~/src/db/dbService";
@@ -39,6 +42,34 @@ const highlightContent = ref('')
 
 watch(highlightContent, (newValue, oldValue) => {
   filter.value.searchContent = newValue;
+});
+
+// 流式加载：搜索词变化 → 防抖后重置为第一页重新查询；收藏/类型筛选变化 → 立即重置
+let searchResetTimer: ReturnType<typeof setTimeout> | null = null;
+watch(() => filter.value.searchContent, () => {
+  if (searchResetTimer) clearTimeout(searchResetTimer);
+  searchResetTimer = setTimeout(() => void resetClips(), 300);
+});
+watch(() => [filter.value.favorite, filter.value.type], () => {
+  void resetClips();
+});
+
+// 流式加载 sentinel：进入视口触发加载下一页（列表底部占位元素）
+const clipLoadMoreEl = ref<HTMLElement | null>(null);
+let clipObserver: IntersectionObserver | null = null;
+function setupClipObserver() {
+  clipObserver?.disconnect();
+  clipObserver = null;
+  const el = clipLoadMoreEl.value;
+  if (!el) return;
+  clipObserver = new IntersectionObserver((entries) => {
+    if (entries[0]?.isIntersecting) void loadMoreClips();
+  }, { rootMargin: '200px 0px' });
+  clipObserver.observe(el);
+}
+// sentinel 挂载/卸载（v-if 随 hasMore/data 变化）时自动重建观察
+watch(clipLoadMoreEl, () => {
+  if (activeTab.value === 'clip') nextTick(setupClipObserver);
 });
 
 // 切换 tab 时隐藏 tooltip（clip 列表随 tab 卸载，tooltip 需同步关闭）
@@ -223,6 +254,10 @@ function onListKeydown(e: KeyboardEvent) {
   } else if (e.key === 'ArrowDown') {
     e.preventDefault();
     e.stopPropagation();
+    // 方向键下移到列表末尾且还有未加载数据时，先触发加载下一页
+    if (selectedRowIndex.value >= dataLength.value - 1 && hasMore.value) {
+      void loadMoreClips();
+    }
     moveSelection(1);
   } else if (e.key === 'Delete') {
     // 直接响应 Delete 键：停止冒泡避免 ShortcutManager 的 delete_item 重复触发，并弹出删除确认框
@@ -335,6 +370,10 @@ onMounted(async () => {
   }
   if (searchInput.value) {
     searchInput.value.focus();
+  }
+  // 流式加载：初始处于剪贴板 Tab 时建立 sentinel 观察（其余 Tab 由 watch(clipLoadMoreEl) 处理）
+  if (activeTab.value === 'clip') {
+    nextTick(setupClipObserver);
   }
   // 窗口被 Ctrl+I 唤出后，自动聚焦搜索框：直接输入字符即可搜索，无需点击
   window.addEventListener('window-shown', onMainWindowShown);
@@ -458,6 +497,10 @@ onBeforeUnmount(async () => {
     clearInterval(updateInterval);
     updateInterval = null;
   }
+  // 流式加载 sentinel 观察清理
+  clipObserver?.disconnect();
+  clipObserver = null;
+  if (searchResetTimer) clearTimeout(searchResetTimer);
 });
 
 async function favorite(id: number, value: number) {
@@ -882,6 +925,17 @@ async function openImageViewer(item: ClipboardData) {
                   </button>
                 </li>
               </ul>
+
+              <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载" -->
+              <div
+                  v-if="hasMore && data.length"
+                  ref="clipLoadMoreEl"
+                  class="flex items-center justify-center gap-2 py-4 text-xs text-ink-faint"
+              >
+                <span v-if="loadingMore">加载中…</span>
+                <span v-else>继续向下滚动加载更多</span>
+              </div>
+              <div v-else-if="data.length" class="py-4 text-center text-xs text-ink-faint">已全部加载</div>
 
               <!-- 添加到常用剪贴板的即时反馈 -->
               <div

@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import clipboardService from '~/src/db/dbService';
 import type { PinnedClip } from '~/src/entities';
 import { formatDate } from '~/utils/formatDate';
 import { findNearestInDirection } from '~/utils/focusNavigation';
-import DeleteConfirm from '~/components/common/DeleteConfirm.vue';
+import { useInfiniteList } from '~/composables/useInfiniteList';
 
-/** 常用剪贴管理页：最多 10 条，瀑布流卡片，左滑删除 / 右滑置顶，时间倒序（置顶优先） */
-const clips = ref<PinnedClip[]>([]);
-const loading = ref(false);
+/** 常用剪贴管理页：不限量存储、不可删除，瀑布流卡片，右滑置顶，时间倒序（置顶优先）。
+ *  仅前 10 条支持 Ctrl+1~0 快捷粘贴（对应卡片角标序号）。
+ *  流式加载：首屏只加载第一页，滚动到底部自动加载下一页（pinned 无轮询，仅在操作后刷新已加载范围）。 */
+const { items: clips, loading, hasMore, sentinel, refreshLoaded } = useInfiniteList<PinnedClip>({
+  fetchPage: (offset, limit) => clipboardService.fetchPinnedClips({ offset, limit }),
+  pageSize: 40,
+  onError: () => { errorMsg.value = '加载常用剪贴失败'; },
+});
+
 const errorMsg = ref('');
 const hint = ref('');
 let hintTimer: ReturnType<typeof setTimeout> | null = null;
@@ -43,21 +49,14 @@ function showHint(msg: string) {
   hintTimer = setTimeout(() => { hint.value = ''; }, 2000);
 }
 
+/** 刷新已加载范围（初次进入/编辑/置顶等操作后调用；不会预取未加载数据） */
 async function load() {
-  loading.value = true;
   // 先清空错误：此前失败文案从不重置，首次失败后错误提示会与正常列表同时显示
   errorMsg.value = '';
-  try {
-    clips.value = await clipboardService.fetchPinnedClips();
-    // 修正选中索引，避免列表刷新后越界
-    if (selectedIndex.value >= clips.value.length) {
-      selectedIndex.value = Math.max(0, clips.value.length - 1);
-    }
-  } catch (e) {
-    console.error('加载常用剪贴失败:', e);
-    errorMsg.value = '加载常用剪贴失败';
-  } finally {
-    loading.value = false;
+  await refreshLoaded();
+  // 修正选中索引，避免列表刷新后越界
+  if (selectedIndex.value >= clips.value.length) {
+    selectedIndex.value = Math.max(0, clips.value.length - 1);
   }
 }
 
@@ -88,54 +87,6 @@ function cancelEdit() {
   editingId.value = null;
 }
 
-/** 删除常用剪贴项 */
-async function removeClip(id: number) {
-  try {
-    await clipboardService.deletePinnedClip(id);
-  } catch (e) {
-    console.error('删除常用剪贴失败:', e);
-    showHint('删除失败，请重试');
-    return;
-  }
-  // 删除后修正选中索引
-  if (selectedIndex.value >= clips.value.length - 1) {
-    selectedIndex.value = Math.max(0, clips.value.length - 2);
-  }
-  await load();
-  showHint('已删除');
-}
-
-// ===== 删除确认（DeleteConfirm 共享组件，样式/操作与便签一致）=====
-/** 待删除项（存在时显示内联确认框） */
-const deleteConfirmTarget = ref<PinnedClip | null>(null);
-/** 触发删除按钮的位置（供 DeleteConfirm 就近定位） */
-const deleteConfirmAnchor = ref<DOMRect | null>(null);
-const deleteConfirmMessage = computed(() =>
-    deleteConfirmTarget.value?.type === 'image' ? '确定要删除该图片吗？' : '确定要删除该项吗？');
-
-/** 请求删除：弹出内联确认框并记录触发位置 */
-function requestDelete(item: PinnedClip, e?: MouseEvent) {
-  if (!item) return;
-  deleteConfirmTarget.value = item;
-  const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null;
-  deleteConfirmAnchor.value = btn?.getBoundingClientRect() ?? null;
-}
-
-/** 确认删除 */
-async function confirmDelete() {
-  const target = deleteConfirmTarget.value;
-  if (!target) return;
-  deleteConfirmTarget.value = null;
-  deleteConfirmAnchor.value = null;
-  await removeClip(target.id);
-}
-
-/** 取消删除 */
-function cancelDelete() {
-  deleteConfirmTarget.value = null;
-  deleteConfirmAnchor.value = null;
-}
-
 /** 置顶/取消置顶 */
 async function togglePin(item: PinnedClip) {
   try {
@@ -156,16 +107,10 @@ async function scrollSelectedIntoView() {
   el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-/** 键盘交互：方向键移动选择，Delete 删除选中项；Ctrl 组合键（切换标签）交还给全局快捷键 */
+/** 键盘交互：方向键移动选择（常用剪贴不可删除，故不再响应 Delete/Backspace）；Ctrl 组合键（切换标签）交还给全局快捷键 */
 async function onKeydown(e: KeyboardEvent) {
   // 处于编辑态时，方向键/删除交给输入框处理，不拦截
   if (editingId.value != null) return;
-
-  // 删除确认框打开时：键盘操作（Enter/Esc/方向键）由 DeleteConfirm 组件统一处理，
-  // 这里直接交还控制权，避免与组件键盘监听冲突。
-  if (deleteConfirmTarget.value) {
-    return;
-  }
 
   // Ctrl/Meta 组合（如 Ctrl+←/→ 切换标签）不在此处理
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -197,20 +142,16 @@ async function onKeydown(e: KeyboardEvent) {
       break;
     }
     case 'Delete':
-    case 'Backspace': {
-      // 与主剪贴板一致：弹出独立删除确认窗口
-      const item = clips.value[selectedIndex.value];
-      if (item) await requestDelete(item);
-      break;
-    }
+    case 'Backspace':
     default:
+      // 常用剪贴不可删除：Delete/Backspace 不执行任何操作
       handled = false;
   }
 
   if (handled) {
     e.preventDefault();
     e.stopPropagation();
-    if (e.key !== 'Delete' && e.key !== 'Backspace') await scrollSelectedIntoView();
+    await scrollSelectedIntoView();
   }
 }
 
@@ -227,7 +168,7 @@ onUnmounted(() => {
   <div id="pinned-clip-root" class="mx-auto max-w-6xl p-4">
     <div class="rounded-2xl p-4">
       <p v-if="errorMsg" class="mb-2 text-sm text-danger">{{ errorMsg }}</p>
-      <p v-if="loading" class="mb-2 text-sm text-ink-faint">加载中…</p>
+      <p v-if="loading && clips.length === 0" class="mb-2 text-sm text-ink-faint">加载中…</p>
       <p v-if="!loading && clips.length === 0" class="mb-2 text-sm text-ink-faint">
         暂无常用剪贴。可在剪贴板列表项右键「添加到常用剪贴」。
       </p>
@@ -248,9 +189,9 @@ onUnmounted(() => {
           >
             <!-- 卡片主体 -->
             <div class="relative select-none">
-              <!-- 序号角标 + 置顶标识 -->
+              <!-- 序号角标 + 置顶标识（仅前 10 条支持 Ctrl+1~0 快捷粘贴，故只显示前 10 条角标） -->
               <div class="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-1">
-                <span class="rounded-full bg-gold/15 px-2 py-0.5 text-[10px] font-bold text-gold">Ctrl+{{ slotKey(idx) }}</span>
+                <span v-if="idx < 10" class="rounded-full bg-gold/15 px-2 py-0.5 text-[10px] font-bold text-gold">Ctrl+{{ slotKey(idx) }}</span>
                 <svg v-if="item.pinned_at" class="size-3 text-gold" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
                 </svg>
@@ -317,7 +258,7 @@ onUnmounted(() => {
                   <span v-if="item.source" class="max-w-[8em] truncate">{{ item.source }}</span>
                 </div>
 
-                <!-- 操作按钮（编辑/替换图片/置顶/删除） -->
+                <!-- 操作按钮（编辑/置顶；常用剪贴不可删除） -->
                 <div class="flex items-center gap-1 border-t border-accent/50 px-3 py-2">
                   <button type="button" class="btn-soft btn-circle p-1.5" v-tip="'编辑'" @click="startEdit(item)" @pointerdown.stop.prevent>
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
@@ -327,25 +268,23 @@ onUnmounted(() => {
                       <path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
                     </svg>
                   </button>
-                  <span class="flex-1"></span>
-                  <button type="button" class="btn-soft btn-circle p-1.5 text-danger" v-tip="'删除'" @click="requestDelete(item, $event)" @pointerdown.stop.prevent>
-                    <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14" /></svg>
-                  </button>
                 </div>
               </template>
             </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- 删除确认框：与全局一致的 DeleteConfirm 组件（就近定位、键盘操作一致） -->
-    <DeleteConfirm
-        :visible="!!deleteConfirmTarget"
-        :message="deleteConfirmMessage"
-        :anchor="deleteConfirmAnchor"
-        @confirm="confirmDelete"
-        @cancel="cancelDelete"
-    />
+      <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载" -->
+      <div
+          v-if="hasMore && clips.length"
+          ref="sentinel"
+          class="flex items-center justify-center gap-2 py-4 text-xs text-ink-faint"
+      >
+        <span v-if="loading">加载中…</span>
+        <span v-else>继续向下滚动加载更多</span>
+      </div>
+      <div v-else-if="clips.length" class="py-4 text-center text-xs text-ink-faint">已全部加载</div>
+    </div>
   </div>
 </template>

@@ -3,12 +3,8 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-05-15',
   devtools: { enabled: true },
   ssr: false,
-  // Tauri devUrl 固定指向 http://localhost:54900（见 tauri.conf.json），
-  // 端口必须一致且不可漂移，因此 strictPort 开启、端口统一由 TAURI_DEV_PORT 提供。
-  devServer: {
-    host: process.env.TAURI_DEV_HOST || 'localhost',
-    port: Number(process.env.TAURI_DEV_PORT) || 54900,
-  },
+  // 开发端口 12321 由 dev script 显式指定（nuxt dev --port 12321，见 package.json），
+  // Nuxt 4 新 CLI 的端口由命令行层管理；此处与 tauri.conf.json 的 devUrl 必须一致。
   modules: ['@nuxtjs/tailwindcss'],
   css: ['~/assets/css/main.css'],
   vite: {

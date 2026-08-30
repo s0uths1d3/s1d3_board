@@ -20,6 +20,9 @@ import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { writeText } from 'tauri-plugin-clipboard-api';
 import appIcon from '~/assets/icon/icon.png';
+// ShortcutRow 位于 components/setting/ 下，Nuxt 自动注册名为 SettingShortcutRow，
+// 此处显式导入并按模板中的 <ShortcutRow> 名称使用（否则组件解析失败、列表渲染为空）
+import ShortcutRow from '~/components/setting/ShortcutRow.vue';
 
 const osType = ref('');
 

@@ -197,12 +197,23 @@
         />
       </div>
 
+      <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载" -->
+      <div
+          v-if="hasMore && todos.length"
+          ref="sentinel"
+          class="flex items-center justify-center gap-2 py-4 text-xs text-ink-faint"
+      >
+        <span v-if="loadingMore">加载中…</span>
+        <span v-else>继续向下滚动加载更多</span>
+      </div>
+      <div v-else-if="todos.length" class="py-4 text-center text-xs text-ink-faint">已全部加载</div>
+
       <div v-if="filteredAndSortedTodos.length === 0" class="py-20 text-center">
         <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
         </svg>
         <p class="text-lg text-ink-faint">
-          {{ todos.length === 0 ? '还没有任务，添加第一个任务吧！' : '没有符合条件的任务' }}
+          {{ !searchQuery.trim() && todos.length === 0 ? '还没有任务，添加第一个任务吧！' : '没有符合条件的任务' }}
         </p>
       </div>
 
@@ -238,16 +249,34 @@ import reminderService from '~/src/todo/reminderService'
 import { isTodoOverdue } from '~/src/todo/overdue'
 import DeleteConfirm from '~/components/common/DeleteConfirm.vue'
 import { useNow } from '~/composables/useNow'
-import { todoList, selectedTodoIndex, editSignal, selectTodo } from '~/src/commands/local/todoStore'
+import { todoList, selectedTodoIndex, editSignal, selectTodo, setTodoLoadMoreHook } from '~/src/commands/local/todoStore'
+import { useInfiniteList } from '~/composables/useInfiniteList'
 
-const todos = ref<Todo[]>([])
+/** 流式加载：首屏只加载第一页，滚动到底部自动加载下一页；
+ *  轮询/操作后仅刷新已加载范围（签名一致时跳过整表替换，避免全列表重渲染） */
+const {
+  items: todos, hasMore, loading: loadingMore, sentinel,
+  loadMore, reload, replace, prepend, remove: removeTodo, refreshLoaded,
+} = useInfiniteList<Todo>({
+  fetchPage: (offset, limit) =>
+    clipboardService.fetchTodos({ value: { searchContent: '' } }, { offset, limit }),
+  pageSize: 50,
+  signatureOf: (t) => `${t.id}:${t.updated_at}:${t.completed}`,
+})
+
+/** 全量待办集合（轮询全量查询结果）：仅用于统计卡片与提醒调度，不参与列表渲染 */
+const statsTodos = ref<Todo[]>([])
 let pollTimer: ReturnType<typeof setInterval> | null = null
 /** 轮询请求去重：上一轮未完成时跳过，避免 DB 慢时请求堆积 */
 let fetching = false
 /** 写库进行中计数：>0 时轮询跳过，防止拿旧数据覆盖乐观更新（竞态根源） */
 let pendingWrites = 0
-/** 上次抓取的列表签名（id:updated_at:completed）：无变化时不整表替换，避免全列表重渲染 */
-let lastSignature = ''
+
+/** 乐观更新同步到统计全量集合（statsTodos 可能比已加载列表大，需单独同步） */
+function applyToStats(todo: Todo) {
+  const t = statsTodos.value.find(x => x.id === todo.id)
+  if (t) Object.assign(t, todo)
+}
 
 const showAddForm = ref(false)
 const newTodo = ref({
@@ -305,16 +334,16 @@ const highLevel = computed(() => {
 // 服务挂载在主窗口（app.vue 启动），切换 Tab 卸载本组件不影响定时器；
 // 本组件只负责在数据变化后把最新列表同步给服务。
 
-// 计算属性
-const completedCount = computed(() => todos.value.filter(t => t.completed).length)
+// 计算属性（统计基于全量集合 statsTodos，流式加载下仍保证数字准确）
+const completedCount = computed(() => statsTodos.value.filter(t => t.completed).length)
 const completionRate = computed(() => {
-  if (todos.value.length === 0) return 0
-  return Math.round((completedCount.value / todos.value.length) * 100)
+  if (statsTodos.value.length === 0) return 0
+  return Math.round((completedCount.value / statsTodos.value.length) * 100)
 })
 
 /** 准时率：在「已完成且有截止时间」的任务中，按时（截止前）完成的比例；无样本时显示 0% */
 const onTimeRate = computed(() => {
-  const finishedWithDue = todos.value.filter(t => t.completed && t.dueDate)
+  const finishedWithDue = statsTodos.value.filter(t => t.completed && t.dueDate)
   if (finishedWithDue.length === 0) return 0
   const onTime = finishedWithDue.filter(t => !isOverdueTodo(t)).length
   return Math.round((onTime / finishedWithDue.length) * 100)
@@ -431,9 +460,9 @@ const addTodo = async () => {
 
   const ok = await withDbWrite(() => clipboardService.insertTodo(todo))
   if (!ok) return
-  todos.value.unshift(todo)
-  lastSignature = '' // 本地新增后强制下一轮轮询重建签名
-  void reminderService.sync(todos.value)
+  prepend(todo)
+  statsTodos.value.unshift(todo)
+  void reminderService.sync(statsTodos.value)
   resetForm()
 
   showAddForm.value = false
@@ -467,7 +496,8 @@ const toggleTodo = async (id: string) => {
       return
     }
     // 完成状态变化影响提醒计划，同步给调度服务（完成 → 撤销其全部提醒）
-    void reminderService.sync(todos.value)
+    applyToStats(todo)
+    void reminderService.sync(statsTodos.value)
     // 统计埋点（fire-and-forget）：仅"切换为完成"时 +1
     if (completing) void statsService.record({ todo_completed: 1 })
   }
@@ -480,7 +510,8 @@ const updateTodo = async (id: string, updates: Partial<Todo>) => {
     const ok = await withDbWrite(() => clipboardService.updateTodo(todo))
     if (!ok) return
     // 截止时间/提醒设置/完成状态可能变化，同步给调度服务重排
-    void reminderService.sync(todos.value)
+    applyToStats(todo)
+    void reminderService.sync(statsTodos.value)
   }
 }
 
@@ -497,12 +528,9 @@ const deleteTodo = (id: string, rect?: DOMRect) => {
 async function executeTodoDelete(id: string) {
   const ok = await withDbWrite(() => clipboardService.deleteTodo(id))
   if (!ok) return
-  const index = todos.value.findIndex(t => t.id === id)
-  if (index > -1) {
-    todos.value.splice(index, 1)
-  }
-  lastSignature = ''
-  void reminderService.sync(todos.value)
+  removeTodo(t => t.id === id)
+  statsTodos.value = statsTodos.value.filter(t => t.id !== id)
+  void reminderService.sync(statsTodos.value)
 }
 
 /** 优先级等级变更：持久化后由 sync/徽章响应式跟随 */
@@ -512,6 +540,7 @@ const changePriorityLevel = async (id: string, level: number) => {
     todo.priorityLevel = level
     todo.updated_at = String(Date.now())
     await withDbWrite(() => clipboardService.updateTodo(todo))
+    applyToStats(todo)
   }
 }
 
@@ -528,6 +557,7 @@ watch(priorityLevels, async (levels) => {
   }
   if (changed.length > 0) {
     await withDbWrite(async () => { await Promise.all(changed.map(t => clipboardService.updateTodo(t))) })
+    changed.forEach(applyToStats)
   }
 })
 
@@ -537,6 +567,7 @@ const changeCategory = async (id: string, category: string) => {
     todo.category = category
     todo.updated_at = String(Date.now())
     await withDbWrite(() => clipboardService.updateTodo(todo))
+    applyToStats(todo)
   }
 }
 
@@ -604,6 +635,7 @@ async function executeCategoryDelete(name: string) {
       todo.category = fallback
       todo.updated_at = String(Date.now())
       await withDbWrite(() => clipboardService.updateTodo(todo))
+      applyToStats(todo)
     }
   }
   if (newTodo.value.category === name) newTodo.value.category = fallback
@@ -627,14 +659,24 @@ const fetchTodos = async (opts?: { force?: boolean }) => {
   try {
     // 确保调度服务已启动（幂等；正常由 app.vue 更早启动，此处兜底覆盖"直达待办 Tab"的场景）
     await reminderService.start()
+    // 全量查询（500 条上限）仅用于统计卡片与提醒调度，不参与列表渲染
     const fetchedTodos = await clipboardService.fetchTodos({ value: { searchContent: '' } });
-    // 签名比对：无变化时不整表替换（避免全列表重渲染 + 全量提醒重算的空转）
-    const signature = fetchedTodos.map(t => `${t.id}:${t.updated_at}:${t.completed}`).join(',')
-    if (signature === lastSignature) return
-    lastSignature = signature
-    todos.value = fetchedTodos;
+    statsTodos.value = fetchedTodos
     // 把最新列表同步给调度服务（内部按计划 diff，仅增删变化的定时器；首个 sync 处于补发阶段）
-    void reminderService.sync(todos.value)
+    void reminderService.sync(fetchedTodos)
+    // 搜索态：保持搜索结果的实时刷新（全量 LIKE 查询，一次性展示全部匹配），不被普通列表覆盖
+    const q = searchQuery.value.trim()
+    if (q) {
+      try {
+        const matches = await clipboardService.fetchTodos({ value: { searchContent: q } })
+        replace(matches)
+      } catch (e) {
+        console.error('搜索任务失败:', e)
+      }
+      return
+    }
+    // UI 仅刷新已加载范围（与 loadMore/reload 互斥；签名一致时跳过整表替换，避免全列表重渲染）
+    await refreshLoaded()
   } catch (error) {
     console.error("Failed to fetch todos:", error);
   } finally {
@@ -642,9 +684,37 @@ const fetchTodos = async (opts?: { force?: boolean }) => {
   }
 }
 
+// ===== 搜索：全量查库一次性展示全部匹配（涵盖未加载任务）；清空搜索重置为流式第一页 =====
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(searchQuery, (q) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => void onSearchQueryChange(q.trim()), 300)
+})
+
+async function onSearchQueryChange(q: string) {
+  if (!q) {
+    // 等待轮询中的全量刷新结束再重置（busy 互斥导致跳过时最多重试 2 秒）
+    while (fetching) await new Promise(r => setTimeout(r, 50))
+    for (let i = 0; i < 20; i++) {
+      if (await reload()) break
+      await new Promise(r => setTimeout(r, 100))
+    }
+    return
+  }
+  try {
+    const matches = await clipboardService.fetchTodos({ value: { searchContent: q } })
+    replace(matches)
+  } catch (e) {
+    console.error('搜索任务失败:', e)
+  }
+}
+
 // 生命周期
 onMounted(async () => {
   await fetchTodos() // 先完成首次加载并进入调度（含启动补发汇总）
+
+  // 方向键下移到已加载末尾时，触发加载下一页（todoStore 由全局方向键命令驱动）
+  setTodoLoadMoreHook(() => { if (hasMore.value) void loadMore() })
 
   // Ctrl+F：聚焦待办搜索框
   window.addEventListener('focus-search', onFocusSearch)
@@ -675,6 +745,8 @@ onBeforeUnmount(() => {
   }
   document.removeEventListener('visibilitychange', onVisibilityChange)
   // 提醒定时器由主窗口的 reminderService 持有，切 Tab 卸载本组件不影响提醒
+  setTodoLoadMoreHook(null)
+  if (searchTimer) clearTimeout(searchTimer)
   window.removeEventListener('focus-search', onFocusSearch)
   window.removeEventListener('todo:edit-request', onEditRequest)
 })
