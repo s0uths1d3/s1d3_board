@@ -89,6 +89,33 @@ watch(clipLoadMoreEl, () => {
   if (activeTab.value === 'clip') nextTick(setupClipObserver);
 });
 
+// ===== 图片懒渲染：进入视口才真正渲染 <img> =====
+// 图片条目 content 是 base64 dataURL，首屏数十条同时解码（decode + 光栅化）
+// 会长时间阻塞主线程，表现为"首次加载极慢"；改为先渲染占位骨架，
+// 进入视口（含 200px 预取）后再替换为真实 <img>，dataURL 已在内存、无二次请求。
+const visibleImageIds = ref(new Set<number>());
+let imageObserver: IntersectionObserver | null = null;
+
+function ensureImageObserver(): IntersectionObserver | null {
+  if (imageObserver || typeof IntersectionObserver === 'undefined') return imageObserver;
+  imageObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const id = Number((entry.target as HTMLElement).dataset.imageId);
+      if (Number.isFinite(id)) visibleImageIds.value.add(id);
+      imageObserver?.unobserve(entry.target);
+    }
+  }, { rootMargin: '200px 0px' });
+  return imageObserver;
+}
+
+/** 占位元素的函数 ref：登记观察，进入视口后由模板替换为真实 <img> */
+function observeImagePlaceholder(el: unknown, id: number) {
+  if (!(el instanceof HTMLElement)) return;
+  el.dataset.imageId = String(id);
+  ensureImageObserver()?.observe(el);
+}
+
 // 切换 tab 时隐藏 tooltip（clip 列表随 tab 卸载，tooltip 需同步关闭）
 watch(activeTab, () => {
   if (hideTimer) {
@@ -301,8 +328,10 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
   const rect = el.getBoundingClientRect();
 
   // 构建 tooltip 内容：图片项展示放大预览 + 元信息；文本项展示多行文本 + 元信息
-  // 元信息统一为单行，显示在 tooltip 底部
-  const isImageItem = !!el.querySelector('img');
+  // 元信息统一为单行，显示在 tooltip 底部。
+  // 用 item.type 判定而非 DOM 内是否含 <img>：图片懒渲染下未进入视口的项是占位骨架，
+  // 此时 DOM 无 <img>，但 hover 到该项时应按图片项展示（content 已在内存中）。
+  const isImageItem = (item.type ?? 'text') === 'image';
   const meta = `创建时间${formatDate(parseInt(item.created_at))} · 使用次数:${item.count} · 最后使用:${formatDate(parseInt(item.updated_at))}`;
   let payload: { text?: string; image?: string; meta?: string; x: number; y: number; top: number; bottom: number };
   if (isImageItem) {
@@ -384,6 +413,10 @@ onMounted(async () => {
   }
   // 流式加载：初始处于剪贴板 Tab 时建立 sentinel 观察（其余 Tab 由 watch(clipLoadMoreEl) 处理）
   if (activeTab.value === 'clip') {
+    // 首屏预加载：启动时若已处于剪贴板 Tab（默认），立即拉取第一页。
+    // 此前由每秒轮询顺带完成首屏加载，改为事件驱动后必须显式触发——
+    // 否则首屏数据要等到首次复制事件（或切走再切回 Tab）才出现。
+    void fetchData();
     nextTick(setupClipObserver);
   }
   // 窗口被 Ctrl+I 唤出后，自动聚焦搜索框：直接输入字符即可搜索，无需点击
@@ -512,6 +545,9 @@ onBeforeUnmount(async () => {
   // 流式加载 sentinel 观察清理
   clipObserver?.disconnect();
   clipObserver = null;
+  // 图片懒渲染观察清理
+  imageObserver?.disconnect();
+  imageObserver = null;
   if (searchResetTimer) clearTimeout(searchResetTimer);
 });
 
@@ -894,13 +930,19 @@ async function openImageViewer(item: ClipboardData) {
                   <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 }}</div>
                   <div class="list-col-grow flex min-w-0 flex-col">
                     <div class="relative min-h-0 overflow-hidden" @mouseenter="showTooltip(index, item, $event)" @mouseleave="hideTooltip">
-                      <!-- 图片条目 -->
+                      <!-- 图片条目：进入视口后渲染真实 <img>（懒解码，避免首屏同时解码数十张） -->
                       <img
-                        v-if="item.type === 'image'"
+                        v-if="item.type === 'image' && visibleImageIds.has(item.id)"
                         :src="item.content"
                         alt="clipboard image"
                         class="max-h-[3.6em] max-w-[6em] rounded-md object-contain"
                       />
+                      <!-- 未进入视口：占位骨架（同时作为懒渲染观察目标） -->
+                      <div
+                        v-else-if="item.type === 'image'"
+                        :ref="(el) => observeImagePlaceholder(el, item.id)"
+                        class="h-[3.6em] w-[6em] rounded-md bg-surface-field"
+                      ></div>
                       <!-- 文本条目 -->
                       <span
                         v-else
