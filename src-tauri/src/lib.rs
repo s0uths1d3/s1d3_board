@@ -361,7 +361,7 @@ UPDATE settings SET value = 'system', description = '配色模式' WHERE key = '
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![paste])
+        .invoke_handler(tauri::generate_handler![paste, set_menu_theme, quit_app])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -396,4 +396,75 @@ async fn paste() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(paste_blocking)
         .await
         .map_err(|e| format!("粘贴任务执行失败: {e}"))?
+}
+
+/// 真正退出程序（托盘「退出」菜单项调用）：直接结束整个进程。
+/// 不能用窗口 close/destroy——标题栏 x 的 close 请求已被前端拦截为「隐藏到托盘」，
+/// 且 destroy 主窗口在存在子窗口（图片查看器等）时不会结束进程；exit(0) 全部终结。
+/// 统计落库由前端在调用本命令前完成（process exit 不触发 beforeunload）。
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+/// Windows 原生菜单（托盘右键菜单等）的主题由进程级 PreferredAppMode 决定，
+/// 默认跟随系统"应用模式"（系统深色 → 菜单暗色），window.setTheme 对其无效。
+/// 应用配色切换时前端调用此命令强制菜单深浅色，使托盘菜单跟随应用配色。
+/// 实现使用 uxtheme.dll 未公开导出 SetPreferredAppMode（ordinal 135，Win10 1809+ 稳定）；
+/// 非 Windows 平台为 no-op（原生菜单本就跟随系统）。
+#[tauri::command]
+fn set_menu_theme(theme: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        // PreferredAppMode 枚举值（undocumented，与微软官方内部定义一致）
+        const DEFAULT_MODE: i32 = 0;
+        const ALLOW_DARK: i32 = 1;
+        const FORCE_DARK: i32 = 2;
+        const FORCE_LIGHT: i32 = 3;
+
+        let mode: i32 = match theme.as_str() {
+            "dark" => FORCE_DARK,
+            "light" => FORCE_LIGHT,
+            "system" => ALLOW_DARK,
+            _ => DEFAULT_MODE,
+        };
+
+        apply_preferred_app_mode(mode);
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = theme;
+        Ok(())
+    }
+}
+
+/// Windows: 动态加载 uxtheme.dll 的 SetPreferredAppMode（ordinal 135）并调用。
+/// 函数指针用 OnceLock 缓存（库句柄由进程持有不卸载，指针长期有效）；解析失败静默忽略。
+#[cfg(target_os = "windows")]
+fn apply_preferred_app_mode(mode: i32) {
+    use std::sync::OnceLock;
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+
+    type SetPreferredAppModeFn = unsafe extern "system" fn(i32) -> i32;
+    static SET_PREFERRED_APP_MODE: OnceLock<Option<SetPreferredAppModeFn>> = OnceLock::new();
+
+    let f = *SET_PREFERRED_APP_MODE.get_or_init(|| unsafe {
+        // uxtheme 可能尚未被进程加载，先 GetModuleHandleW 再回退 LoadLibraryW（Win32_Foundation）
+        let name: Vec<u16> = "uxtheme.dll\0".encode_utf16().collect();
+        let mut handle = GetModuleHandleW(name.as_ptr());
+        if handle.is_null() {
+            handle = windows_sys::Win32::System::LibraryLoader::LoadLibraryW(name.as_ptr());
+        }
+        if handle.is_null() {
+            return None;
+        }
+        // 序号 135：MAKEINTRESOURCEA(135) 等价于把序号转为伪指针
+        let addr = GetProcAddress(handle, 135 as *const u8);
+        addr.map(|a| std::mem::transmute::<unsafe extern "system" fn() -> isize, SetPreferredAppModeFn>(a))
+    });
+
+    if let Some(f) = f {
+        unsafe { f(mode) };
+    }
 }

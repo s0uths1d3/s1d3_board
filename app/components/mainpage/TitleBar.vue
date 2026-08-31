@@ -58,7 +58,7 @@ async function close() {
 // 窗口控制：始终置顶（pin）—— 共享状态/逻辑，供标题栏按钮与 Ctrl+T 快捷键共用
 const { alwaysOnTop, toggleAlwaysOnTop } = useAlwaysOnTop();
 
-// ===== 快速切换配色：标题栏按钮循环 跟随系统→琥珀→浅色→深色，与 Ctrl+Alt+C 快捷键共用同一状态 =====
+// ===== 快速切换配色：标题栏按钮循环 跟随系统→琥珀→浅色→深色，与配色快捷键（默认不绑定）共用同一状态 =====
 const { scheme, resolvedScheme } = useColorScheme();
 /** 各模式的小色点预览；system 为深浅对半，直观表达"跟随系统" */
 const schemeDot: Record<ColorSchemeMode, string> = {
@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
       </TransitionGroup>
     </nav>
 
-    <!-- 右侧：快速切换配色（跟随系统→琥珀→浅色→深色循环，Ctrl+Alt+C 同效）+ 窗口控制按钮 -->
+    <!-- 右侧：快速切换配色（跟随系统→琥珀→浅色→深色循环）+ 窗口控制按钮 -->
     <div class="no-drag flex items-center gap-2">
       <button
           class="relative flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"

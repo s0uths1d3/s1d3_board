@@ -48,8 +48,10 @@ const open = defineModel<boolean>('open', { default: false });
 const rootEl = ref<HTMLDivElement | null>(null);
 const triggerEl = ref<HTMLDivElement | null>(null);
 const panelEl = ref<HTMLElement | null>(null);
-/** 面板 fixed 定位样式（由触发器矩形计算，含视口收进） */
-const panelStyle = ref<Record<string, string>>({});
+/** 面板 fixed 定位样式（由触发器矩形计算，含视口收进）。
+ *  初始 visibility:hidden：面板先挂载测尺寸、定位成功后再显示，
+ *  避免首次打开时闪现在未定位/错位的坐标上 */
+const panelStyle = ref<Record<string, string>>({ visibility: 'hidden' });
 
 const MARGIN = 8;
 
@@ -94,6 +96,7 @@ function positionPanel() {
       left: `${Math.round(left)}px`,
       top: `${Math.round(top)}px`,
       ...(props.matchTriggerWidth ? { width: `${Math.round(rect.width)}px` } : {}),
+      visibility: 'visible',
       '--pop-origin': up ? 'bottom' : 'top',
       '--pop-shift': up ? '-6px' : '6px',
     };
@@ -130,6 +133,17 @@ function onViewportChange() {
   if (open.value) positionPanel();
 }
 
+/** 面板尺寸变化（首次打开触发字体/样式加载、内容动态变化等）时自动重定位：
+ *  只重定位不闪错位，配合初始 visibility:hidden 根除"第一次打开位置错误" */
+let panelResizeObserver: ResizeObserver | null = null;
+
+function observePanelSize() {
+  if (!panelEl.value || !('ResizeObserver' in window)) return;
+  panelResizeObserver?.disconnect();
+  panelResizeObserver = new ResizeObserver(() => positionPanel());
+  panelResizeObserver.observe(panelEl.value);
+}
+
 watch(open, (v) => {
   if (props.disabled && v) {
     open.value = false;
@@ -137,7 +151,12 @@ watch(open, (v) => {
   }
   if (v) {
     emit('open');
-    nextTick(() => positionPanel());
+    // 双帧定位：nextTick 首算 + 下一帧复核，覆盖首帧字体加载/过渡导致的测量偏差
+    nextTick(() => {
+      positionPanel();
+      observePanelSize();
+      requestAnimationFrame(() => positionPanel());
+    });
     window.addEventListener('resize', onViewportChange);
     document.addEventListener('scroll', onViewportChange, true);
     document.addEventListener('pointerdown', onDocPointerDown);
@@ -148,6 +167,10 @@ watch(open, (v) => {
     document.removeEventListener('scroll', onViewportChange, true);
     document.removeEventListener('pointerdown', onDocPointerDown);
     document.removeEventListener('keydown', onDocKeydown);
+    panelResizeObserver?.disconnect();
+    panelResizeObserver = null;
+    // 重置为隐藏：下次打开先隐藏、定位成功后再显示
+    panelStyle.value = { visibility: 'hidden' };
   }
 });
 
@@ -156,6 +179,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('scroll', onViewportChange, true);
   document.removeEventListener('pointerdown', onDocPointerDown);
   document.removeEventListener('keydown', onDocKeydown);
+  panelResizeObserver?.disconnect();
+  panelResizeObserver = null;
 });
 </script>
 

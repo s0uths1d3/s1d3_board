@@ -162,12 +162,26 @@ onMounted(async () => {
   window.addEventListener('beforeunload', flushStatsOnExit);
   if (isTauri()) {
     getCurrentWindow().onCloseRequested(async (event) => {
-      // 等待统计落库完成后再放行关闭：fire-and-forget 的 flush 会被窗口销毁中断，丢失当日数据
+      // 标题栏 x = 隐藏到托盘（不退出程序；退出请用托盘右键菜单的「退出」）。
+      // 不复用 tryHideMainWindow：它带 viewer/置顶/tooltip 等豁免分支，
+      // 显式点击 x 应无条件隐藏（含关闭查看器等子窗口）。
+      // 统计先落库再隐藏（fire-and-forget 的 flush 会被窗口销毁中断，丢失当日数据）。
       event.preventDefault();
       try {
         await statsService.flush();
       } finally {
-        await getCurrentWindow().destroy();
+        try {
+          const windows = await getAllWindows();
+          for (const w of windows) {
+            try {
+              if (w.label === 'main') continue;
+              if (await w.isVisible()) await w.close();
+            } catch { /* 忽略单窗关闭失败 */ }
+          }
+          await savePopupLastPosition().catch(() => {});
+        } finally {
+          await getCurrentWindow().hide();
+        }
       }
     });
   }

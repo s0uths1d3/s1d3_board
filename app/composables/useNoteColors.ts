@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import dbService from '~/src/db/dbService'
+import type { ColorScheme } from '~/composables/useColorScheme'
 
 /**
  * 便签配色（自定义名称 + 颜色）
@@ -58,6 +59,66 @@ export function resolveNoteColor(color?: string): string {
 function normalize(hex?: string): string {
   const s = (hex || '').trim()
   return /^#[0-9a-fA-F]{6}$/.test(s) ? s.toLowerCase() : '#dcc88a'
+}
+
+// ===== 主题适配：便签颜色按当前配色转换 =====
+
+/** #rrggbb → HSL（h: 0-360，s/l: 0-1） */
+function hexToHsl(hex: string): { h: number; s: number; l: number } {
+  const r = parseInt(hex.slice(1, 3), 16) / 255
+  const g = parseInt(hex.slice(3, 5), 16) / 255
+  const b = parseInt(hex.slice(5, 7), 16) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  if (max === min) return { h: 0, s: 0, l }
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  let h: number
+  if (max === r) h = (g - b) / d + (g < b ? 6 : 0)
+  else if (max === g) h = (b - r) / d + 2
+  else h = (r - g) / d + 4
+  return { h: h * 60, s, l }
+}
+
+/** HSL → #rrggbb（s/l: 0-1） */
+function hslToHex(h: number, s: number, l: number): string {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const hp = (((h % 360) + 360) % 360) / 60
+  const x = c * (1 - Math.abs((hp % 2) - 1))
+  let rgb: [number, number, number] = [0, 0, 0]
+  if (hp < 1) rgb = [c, x, 0]
+  else if (hp < 2) rgb = [x, c, 0]
+  else if (hp < 3) rgb = [0, c, x]
+  else if (hp < 4) rgb = [0, x, c]
+  else if (hp < 5) rgb = [x, 0, c]
+  else rgb = [c, 0, x]
+  const m = l - c / 2
+  const to = (v: number) =>
+    Math.round(Math.min(1, Math.max(0, v + m)) * 255)
+      .toString(16)
+      .padStart(2, '0')
+  return `#${to(rgb[0]!)}${to(rgb[1]!)}${to(rgb[2]!)}`
+}
+
+/**
+ * 便签颜色按主题适配：
+ * - 琥珀（default）：原样使用——暖彩色板与暖米色主题是最佳搭配；
+ * - 浅色（黑白灰）：保留色相、去饱和约 65%，融入中性环境；
+ * - 暗黑（Darcula）：去饱和 + 压暗为深色卡片底，描边用稍亮的同相灰，
+ *   避免浅彩色块在深灰环境突兀、并保证浅色文字的可读性。
+ * 仅用于卡片着色；配色选中判断/色板展示仍用原色（resolveNoteColor）。
+ */
+export function adaptNoteColorToScheme(hex: string, scheme: ColorScheme): { bg: string; border: string } {
+  if (scheme === 'default') return { bg: hex, border: hex }
+  const { h, s, l } = hexToHsl(hex)
+  if (scheme === 'light') {
+    const c = hslToHex(h, s * 0.35, l)
+    return { bg: c, border: c }
+  }
+  const bg = hslToHex(h, s * 0.3, Math.min(Math.max(l * 0.3, 0.1), 0.2))
+  const border = hslToHex(h, s * 0.4, 0.3)
+  return { bg, border }
 }
 
 async function load(): Promise<void> {

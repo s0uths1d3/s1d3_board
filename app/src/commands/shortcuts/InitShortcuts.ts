@@ -37,7 +37,7 @@ const contextEditCommand = new ContextEditCommand()
 const createNoteCommand = new CreateNoteCommand()
 // Ctrl+F：聚焦当前标签页的搜索框（clip / todo 等）
 const focusSearchCommand = new FocusSearchCommand()
-// Ctrl+Alt+C：循环切换配色（默认 → 浅色 → 深色）
+// 切换配色快捷键（默认不绑定，可在设置页录制）
 const cycleColorSchemeCommand = new CycleColorSchemeCommand()
 // Ctrl+1~Ctrl+0：常用剪贴前 10 项快捷粘贴（槽位序号 1~10）
 const pinnedClipCommands = Array.from({ length: 10 }, (_, i) => new PinnedClipPasteCommand(i + 1))
@@ -167,11 +167,13 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
     },
     {
         id: 'cycle_color_scheme',
-        key: 'Control+Alt+C',
-        defaultKey: 'Control+Alt+C',
+        // 默认不绑定任何按键（空 key 不注册），需要时在设置页录制；
+        // 旧版本默认 Control+Alt+C，升级后由下方恢复逻辑迁移为未绑定
+        key: '',
+        defaultKey: '',
         scope: 'local',
         command: cycleColorSchemeCommand,
-        title: '切换配色（默认/浅色/深色）',
+        title: '切换配色',
         enabled: true
     },
     {
@@ -264,6 +266,13 @@ export async function initShortcuts() {
                     await dbService.saveShortcutSetting(target.id, target.defaultKey, target.scope, target.title);
                     continue;
                 }
+            }
+            // 默认不绑定的快捷键（defaultKey 为空）：数据库里的旧默认值（升级前 persist 写入的
+            // Control+Alt+C）不算用户自定义，忽略并清理，使升级后默认未绑定；用户后来显式
+            // 绑定的其他键位则正常恢复。重绑回旧默认键的极端情况会被视为未绑定，可接受。
+            if (!target.defaultKey && normalizeShortcutKey(item.value) === normalizeShortcutKey('Control+Alt+C')) {
+                await dbService.saveShortcutSetting(target.id, '', target.scope, target.title);
+                continue;
             }
             if (!findShortcutConflict(item.value, target.id)) {
                 target.key = item.value;

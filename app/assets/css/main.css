@@ -4,7 +4,8 @@
 
 /* ===== 配色系统 =====
    颜色以 RGB 通道组变量定义（供 Tailwind 以 rgb(var(--x) / <alpha>) 消费），
-   三套配色：default = 琥珀（当前暖米色）/ light（标准浅色）/ dark（暖深色）。
+   三套配色：default = 琥珀（暖米色，唯一保留金色品牌点缀）/ light = 中性白灰（IDEA 风）/
+   dark = 中性暗黑（IDEA Darcula 风，黑白灰）；--c-gold 在后两套中充当中性强调色。
    切换配色 = 在 <html> 上设置 data-scheme 属性，只换变量组，组件零改动。 */
 
 :root {
@@ -43,7 +44,7 @@
   --tip-text: 245 239 227;
 }
 
-/* 标准浅色：中性白灰基底，金色加深保证白底对比度 */
+/* 标准浅色：IDEA 风格中性白灰，强调色为石墨（黑白灰，无品牌金） */
 [data-scheme='light'] {
   color-scheme: light;
   --c-primary: 245 246 248;
@@ -52,57 +53,58 @@
   --c-surface: 255 255 255;
   --c-surface-field: 247 248 250;
   --c-line: 207 212 220;
-  --c-gold: 169 126 79;
-  --c-gold-soft: 201 168 120;
+  --c-gold: 62 65 70;
+  --c-gold-soft: 96 100 106;
   --c-on-gold: 255 255 255;
-  --c-ink: 43 47 54;
-  --c-ink-soft: 86 93 104;
-  --c-ink-faint: 139 147 160;
-  --c-danger: 178 62 62;
-  --c-success: 74 124 89;
+  --c-ink: 31 33 36;
+  --c-ink-soft: 101 105 111;
+  --c-ink-faint: 144 148 154;
+  --c-danger: 205 68 68;
+  --c-success: 76 138 92;
   --c-shadow: 40 50 70;
-  --bg-a: 247 248 250;
-  --bg-b: 238 241 246;
-  --bg-c: 229 233 240;
-  --glow-a: 169 126 79;
-  --glow-a-alpha: 0.3;
-  --glow-b: 160 170 190;
+  --bg-a: 246 247 249;
+  --bg-b: 240 242 246;
+  --bg-c: 232 235 240;
+  --glow-a: 62 65 70;
+  --glow-a-alpha: 0.12;
+  --glow-b: 150 156 164;
   --glow-b-alpha: 0.3;
   --glass-bg: 255 255 255;
   --glass-bg-alpha: 0.6;
   --glass-border-alpha: 0.65;
 }
 
-/* 暖深色：暖褐基底 + 提亮的金色/文字；v-tip 气泡反转为浅色保证对比 */
+/* 暗色：IDEA Darcula 风格纯中性深灰（黑白灰，无品牌金/暖褐）；
+   强调色为银灰；v-tip 气泡反转为浅色保证对比 */
 [data-scheme='dark'] {
   color-scheme: dark;
-  --c-primary: 42 39 35;
-  --c-secondary: 52 48 42;
-  --c-accent: 69 64 58;
-  --c-surface: 50 46 41;
-  --c-surface-field: 60 55 49;
-  --c-line: 86 80 67;
-  --c-gold: 207 174 126;
-  --c-gold-soft: 224 198 156;
-  --c-on-gold: 58 52 42;
-  --c-ink: 236 229 216;
-  --c-ink-soft: 181 172 156;
-  --c-ink-faint: 133 125 110;
-  --c-danger: 216 118 108;
-  --c-success: 128 168 106;
+  --c-primary: 30 31 34;
+  --c-secondary: 43 45 48;
+  --c-accent: 58 60 64;
+  --c-surface: 43 45 48;
+  --c-surface-field: 53 55 59;
+  --c-line: 66 69 74;
+  --c-gold: 176 179 184;
+  --c-gold-soft: 210 213 218;
+  --c-on-gold: 27 28 30;
+  --c-ink: 223 225 229;
+  --c-ink-soft: 167 170 176;
+  --c-ink-faint: 122 125 131;
+  --c-danger: 219 92 92;
+  --c-success: 108 168 118;
   --c-shadow: 0 0 0;
-  --bg-a: 38 35 31;
-  --bg-b: 45 41 37;
-  --bg-c: 53 48 42;
-  --glow-a: 207 174 126;
-  --glow-a-alpha: 0.14;
-  --glow-b: 120 100 70;
-  --glow-b-alpha: 0.14;
+  --bg-a: 30 31 34;
+  --bg-b: 39 41 44;
+  --bg-c: 48 50 54;
+  --glow-a: 160 163 168;
+  --glow-a-alpha: 0.08;
+  --glow-b: 96 99 104;
+  --glow-b-alpha: 0.08;
   --glass-bg: 255 255 255;
-  --glass-bg-alpha: 0.05;
+  --glass-bg-alpha: 0.04;
   --glass-border-alpha: 0.08;
-  --tip-bg: 236 229 216;
-  --tip-text: 58 52 42;
+  --tip-bg: 223 225 229;
+  --tip-text: 30 31 34;
 }
 
 /* 全局背景：斜向渐变 + 两处大尺寸光晕（颜色随配色切换） */

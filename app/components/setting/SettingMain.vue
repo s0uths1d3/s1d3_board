@@ -41,7 +41,7 @@ interface SettingGroup {
 // 各设置项的响应式状态（直接承载值，并通过 watch 实时持久化，无需“应用”按钮）
 const apiKey = ref('');
 const maxLimit = ref('');
-// ===== 配色：琥珀（当前暖米色）/ 跟随系统 / 浅色 / 深色，与标题栏按钮、Ctrl+Alt+C 快捷键共用同一状态 =====
+// ===== 配色：琥珀（当前暖米色）/ 跟随系统 / 浅色 / 深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 =====
 const { scheme } = useColorScheme();
 const colorSchemeOptions = COLOR_SCHEME_ORDER.map(value => ({ value, label: COLOR_SCHEME_LABELS[value] }));
 const colorSchemeLabel = computed(() => COLOR_SCHEME_LABELS[scheme.value]);
@@ -433,7 +433,7 @@ const shortcutItems = computed(() =>
       label: s.title,
       key: s.key,
       scope: s.scope,
-      display: formatShortcutForDisplay(s.key),
+      display: s.key ? formatShortcutForDisplay(s.key) : '未绑定',
       isModified: s.key !== s.defaultKey,
       enabled: s.enabled,
       group,
@@ -854,7 +854,7 @@ onMounted(async () => {
                       label="窗口弹出位置"
                       @update:model-value="selectPopupPosition"
                   />
-                  <!-- 配色：琥珀/跟随系统/浅色/深色，与标题栏按钮、Ctrl+Alt+C 快捷键共用同一状态 -->
+                  <!-- 配色：琥珀/跟随系统/浅色/深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 -->
                   <UiDropdown
                       v-else-if="item.type === 'select'"
                       class="w-full"

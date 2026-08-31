@@ -153,6 +153,8 @@ class DatabaseService {
         await onTextUpdate(async (newText) => {
             try {
                 await this.saveClipboard(newText, 'text');
+                // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
+                window.dispatchEvent(new CustomEvent('clipboard:changed'));
             } catch (err) {
                 console.error('保存剪贴板文本失败:', err);
             }
@@ -170,6 +172,8 @@ class DatabaseService {
                     ? base64
                     : `data:image/png;base64,${base64}`;
                 await this.saveClipboard(dataUrl, 'image');
+                // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
+                window.dispatchEvent(new CustomEvent('clipboard:changed'));
             } catch (err) {
                 console.error('读取剪贴板图片失败:', err);
             }

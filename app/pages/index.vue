@@ -35,7 +35,24 @@ const listElement = ref<HTMLElement | null>(null);
 const { tooltipEnabled } = useTooltipEnabled();
 const searchInput = ref<HTMLElement | null>(null);
 
-let updateInterval: ReturnType<typeof setInterval> | null = null;
+/** 剪贴板写库事件的去抖合并计时器（连续复制时避免频繁查库） */
+let clipChangeEventTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * 剪贴板内容入库事件（dbService 监听回调写库成功后派发）：
+ * 去抖 150ms 后刷新列表，实现复制后近实时更新（取代每秒轮询）。
+ * - 非 clip Tab 跳过（切回时已有补拉取）；
+ * - 窗口隐藏时不跳过：后台保持列表最新，唤出窗口即所见即最新；
+ * - fetchData 自带 inFlight 互斥与签名去重，事件重复触发安全。
+ */
+function onClipboardChanged() {
+  if (activeTab.value !== 'clip') return;
+  if (clipChangeEventTimer) return;
+  clipChangeEventTimer = setTimeout(() => {
+    clipChangeEventTimer = null;
+    void fetchData();
+  }, 150);
+}
 
 const { searchHighlightEnabled } = useSearchHighlight();
 const highlightContent = ref('')
@@ -359,15 +376,9 @@ onMounted(async () => {
   console.log('mounting...')
 
   // 全局快捷键已在 app.vue 统一注册；列表项的本地 keydown 仍绑定在 <ul> 上
-  // 仅在 Tauri 桌面容器内启用轮询（Web 端无数据，避免空转）。
-  // 仅在窗口可见且处于剪贴板 Tab 时轮询：托盘驻留/其他 Tab 期间不做每秒查询
-  if (isTauri()) {
-    updateInterval = setInterval(() => {
-      if (document.hidden) return;
-      if (activeTab.value !== 'clip') return;
-      void fetchData();
-    }, 1000);
-  }
+  // 剪贴板列表更新改为事件驱动：dbService 剪贴板监听写库成功后派发
+  // clipboard:changed，这里去抖后立即刷新（不再每秒轮询；Web 端无该事件无影响）
+  window.addEventListener('clipboard:changed', onClipboardChanged);
   if (searchInput.value) {
     searchInput.value.focus();
   }
@@ -493,9 +504,10 @@ onBeforeUnmount(async () => {
   unlistenCommandResults.forEach((u) => u());
   unlistenCommandResults = [];
   window.removeEventListener('delete-request', onDeleteRequest);
-  if (updateInterval) {
-    clearInterval(updateInterval);
-    updateInterval = null;
+  window.removeEventListener('clipboard:changed', onClipboardChanged);
+  if (clipChangeEventTimer) {
+    clearTimeout(clipChangeEventTimer);
+    clipChangeEventTimer = null;
   }
   // 流式加载 sentinel 观察清理
   clipObserver?.disconnect();

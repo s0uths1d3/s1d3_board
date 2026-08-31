@@ -7,7 +7,11 @@ export class ShortcutManager {
     private localHandlers: (() => void)[] = [];
 
     async register(config: ShortcutConfig) {
-        // 单独禁用的快捷键不注册/不响应
+        // 未绑定（空 key）或单独禁用的快捷键不注册/不响应
+        if (!config.key) {
+            console.log(`[Shortcut Unbound] ${config.id}`);
+            return;
+        }
         if (config.enabled === false) {
             console.log(`[Shortcut Disabled] ${config.id}`);
             return;

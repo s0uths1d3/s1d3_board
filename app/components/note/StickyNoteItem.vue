@@ -146,7 +146,8 @@
 <script setup lang="ts">
 import UiDropdown from '~/components/ui/UiDropdown.vue';
 import UiColorPicker from '~/components/ui/UiColorPicker.vue';
-import { useNoteColors, resolveNoteColor, NOTE_COLOR_PRESETS, type NoteColor } from '~/composables/useNoteColors';
+import { useNoteColors, resolveNoteColor, adaptNoteColorToScheme, NOTE_COLOR_PRESETS, type NoteColor } from '~/composables/useNoteColors';
+import { useColorScheme } from '~/composables/useColorScheme';
 import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
 import type { Note } from '~/src/entities';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
@@ -227,12 +228,17 @@ onBeforeUnmount(() => {
 const { colors: noteColors, replaceColors } = useNoteColors()
 
 /** 卡片着色：低透明底 + 同色描边（旧名称存储自动解析为 hex）。
+ *  颜色按主题适配：琥珀原色，浅色/暗黑自动转为灰彩/深色（见 adaptNoteColorToScheme）。
  *  选中态的边框高亮由模板里的选中类（!border-gold + ring）统一处理，与待办选中样式一致 */
+const { resolvedScheme } = useColorScheme()
 const noteColorHex = computed(() => resolveNoteColor(props.note.color))
-const noteStyle = computed(() => ({
-  backgroundColor: noteColorHex.value + '8c',
-  borderColor: noteColorHex.value + '80',
-}))
+const noteStyle = computed(() => {
+  const { bg, border } = adaptNoteColorToScheme(noteColorHex.value, resolvedScheme.value)
+  return {
+    backgroundColor: bg + '8c',
+    borderColor: border + '80',
+  }
+})
 
 // 管理器：本地草稿，完成后整表提交
 const managingColors = ref(false)

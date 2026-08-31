@@ -1,5 +1,6 @@
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { listen, emit } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import dbService from '~/src/db/dbService';
 import { isTauri } from '~/utils/env';
 
@@ -84,6 +85,18 @@ export function useColorScheme() {
         mode.value = ev.payload;
         applyScheme(resolvedScheme.value);
       }).catch(() => { /* 监听失败仅影响跨窗口同步 */ });
+    }
+    // 原生 UI（托盘右键菜单等）跟随应用配色：解析配色变化时（模式切换/系统深浅色变化/启动恢复）
+    // 通知 Rust 侧强制原生菜单深浅色（Windows SetPreferredAppMode；其他平台 no-op 跟随系统）；
+    // 同时派发事件让 init.ts 重建托盘菜单——菜单窗口在创建时快照主题，
+    // 仅改 PreferredAppMode 对已存在的菜单不生效，必须重建才能实时跟随。
+    if (isTauri()) {
+      watch(resolvedScheme, (s) => {
+        invoke('set_menu_theme', { theme: s === 'dark' ? 'dark' : 'light' }).catch(() => { /* 菜单主题跟随失败不影响应用 */ });
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('resolved-scheme-changed'));
+        }
+      }, { immediate: true });
     }
   }
   return { scheme: mode, resolvedScheme };

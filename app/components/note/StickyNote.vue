@@ -35,14 +35,15 @@
               <path d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
-          <!-- 当前/全部 分段切换：仅显示数字（当前高亮位置 / 总数），无搜索时显示 — -->
+          <!-- 当前/全部 分段切换：仅搜索态显示（左=当前匹配位置，右=匹配总数），非搜索态整体隐藏 -->
           <UiSegmented
+              v-if="noteSearch.trim()"
               class="h-8 shrink-0"
               size="sm"
               :model-value="searchScope"
               :options="[
-                { value: 'current', label: matchCount > 0 ? `${currentMatchIndex + 1}/${matchCount}` : '—', tip: '仅在当前便签内搜索' },
-                { value: 'all', label: matchCount > 0 ? String(matchCount) : '—', tip: '在全部便签中搜索' },
+                { value: 'current', label: positionLabel, tip: '当前位置 · 仅在当前便签内搜索' },
+                { value: 'all', label: totalLabel, tip: '总数 · 在全部便签中搜索' },
               ]"
               label="搜索范围"
               @update:model-value="searchScope = $event as 'current' | 'all'"
@@ -154,10 +155,6 @@ const noteSearchInput = ref<HTMLInputElement | null>(null)
 const { searchHighlightEnabled } = useSearchHighlight()
 /** 仅当输入非空且全局高亮开启时高亮匹配 */
 const highlightActive = computed(() => !!searchHighlightEnabled.value && noteSearch.value.trim() !== '')
-/** 搜索态下：高亮匹配总数（非搜索态为 0，不显示数字） */
-const matchCount = computed(() => (noteSearch.value.trim() ? displayNotes.value.length : 0))
-/** 当前高亮位置：在匹配结果中的 0-based 索引 */
-const currentMatchIndex = computed(() => Math.min(selectedIndex.value, Math.max(0, matchCount.value - 1)))
 
 /** 展示列表：搜索态按关键词前端过滤（current=已加载范围；all=notes 已是全库搜索结果）；非搜索态=已加载全部 */
 const displayNotes = computed(() => {
@@ -167,6 +164,13 @@ const displayNotes = computed(() => {
   }
   return notes.value
 })
+
+/** 左侧标签：当前位置数字（1-based，钳制到匹配范围内）；控件仅搜索态渲染 */
+const positionLabel = computed(() =>
+    displayNotes.value.length ? String(Math.min(selectedIndex.value + 1, displayNotes.value.length)) : '—',
+)
+/** 右侧标签：匹配总数；控件仅搜索态渲染 */
+const totalLabel = computed(() => (displayNotes.value.length ? String(displayNotes.value.length) : '—'))
 
 /** 搜索范围切换到"全部"时：重新查库，确保涵盖未加载的便签；清空搜索时恢复全量。
  *  加 300ms trailing 防抖：此前每个按键立即查库，连续输入 = 连续 SQL */
