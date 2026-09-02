@@ -88,7 +88,7 @@
 
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-3 text-xs text-ink-faint">
-              <span>{{ formatDate(Number(todo.created_at) || 0)}}</span>
+              <span>{{ formatDateLocalized(Number(todo.created_at) || 0)}}</span>
               <span
                   v-if="todo.dueDate"
                   class="flex items-center gap-1"
@@ -117,7 +117,7 @@
               </button>
 
               <!-- 优先级选择：三层递减线表示高/中/低优先级 -->
-              <UiDropdown align="center" :aria-label="t('todo.priority')" panel-class="glass-card menu w-32 rounded-2xl p-2">
+              <UiDropdown align="center" :aria-label="t('todo.priority')" panel-class="glass-card menu w-max min-w-44 rounded-2xl p-2">
                 <template #trigger>
                   <label class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2">
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -126,7 +126,7 @@
                   </label>
                 </template>
                 <template #default="{ close }">
-                  <ul class="menu max-h-60 w-44 overflow-y-auto p-2">
+                  <ul class="menu max-h-60 w-full overflow-y-auto p-2">
                     <li v-for="p in priorityLevels" :key="p.level">
                       <a
                           @click="choosePriorityLevel(p.level, close)"
@@ -134,7 +134,7 @@
                           :class="currentLevel === p.level ? 'bg-gold/20 font-semibold' : ''"
                       >
                         <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ backgroundColor: p.color }" />
-                        <span class="flex-1">{{ priorityName(p) }}</span>
+                        <span class="flex-1 whitespace-nowrap">{{ priorityName(p) }}</span>
                         <span class="shrink-0 text-[10px] tabular-nums text-ink-faint">{{ p.level }}</span>
                       </a>
                     </li>
@@ -143,7 +143,7 @@
               </UiDropdown>
 
               <!-- 分类选择：标签图标 -->
-              <UiDropdown align="center" :close-on-select="false" aria-label="分类" panel-class="glass-card menu w-48 rounded-2xl p-2">
+              <UiDropdown align="center" :close-on-select="false" aria-label="分类" panel-class="glass-card menu w-max min-w-48 max-w-80 rounded-2xl p-2">
                 <template #trigger>
                   <label class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2">
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -157,7 +157,7 @@
                       <div class="flex w-full items-center rounded-lg hover:bg-secondary">
                         <a
                             @click="chooseCategory(category, close)"
-                            class="flex-1 whitespace-nowrap px-2 py-1"
+                            class="flex-1 truncate whitespace-nowrap px-2 py-1"
                         >{{ categoryName(category) }}</a>
                         <button
                             type="button"
@@ -267,13 +267,14 @@ import { useI18n } from '~/composables/useI18n';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import ReminderPicker from "~/components/todo/ReminderPicker.vue";
 import type { ReminderRule } from "~/src/entities";
-import {formatDate} from "~/utils/formatDate";
+import { useFormatDate } from "~/composables/useFormatDate";
 import { useNow } from "~/composables/useNow";
 import { useTodoPriorities } from "~/composables/useTodoPriorities";
 import { useDisplayNames } from "~/composables/useDisplayNames";
 
 const { t } = useI18n();
 const { priorityName, categoryName } = useDisplayNames();
+const formatDateLocalized = useFormatDate();
 import { describeSmartPlan } from "~/src/todo/reminderPolicy";
 import { isTodoOverdue } from "~/src/todo/overdue";
 

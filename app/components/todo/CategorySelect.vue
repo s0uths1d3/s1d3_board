@@ -80,7 +80,7 @@ watch(open, (v) => {
       align="start"
       :close-on-select="false"
       aria-label="分类"
-      panel-class="glass-card w-40 rounded-xl p-1 shadow-float"
+      panel-class="glass-card w-max min-w-40 max-w-64 rounded-xl p-1 shadow-float"
   >
     <template #trigger="{ open: isOpen }">
       <label
@@ -102,7 +102,7 @@ watch(open, (v) => {
         >
           <button
               type="button"
-              class="flex-1 whitespace-nowrap px-2 py-1.5 text-left"
+              class="flex-1 truncate whitespace-nowrap px-2 py-1.5 text-left"
               @click="select(c)"
           >
             {{ categoryName(c) }}
@@ -128,7 +128,7 @@ watch(open, (v) => {
             type="text"
             :placeholder="t('todo.newCategoryPlaceholder')"
             maxlength="10"
-            class="w-full rounded-md border border-accent bg-surface-field px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+            class="w-36 rounded-md border border-accent bg-surface-field px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             @keydown.enter.prevent="submitNew"
         />
       </li>

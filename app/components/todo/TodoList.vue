@@ -49,7 +49,7 @@
                 class="todo-search-input min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             />
 
-            <UiDropdown align="center" :aria-label="t('todo.filter')" panel-class="glass-card menu w-32 rounded-2xl p-2">
+            <UiDropdown align="center" :aria-label="t('todo.filter')" panel-class="glass-card menu w-max min-w-32 rounded-2xl p-2">
               <template #trigger="{ open }">
                 <label class="btn-soft flex shrink-0 cursor-pointer items-center">
                   {{ currentFilterLabel }}
@@ -60,12 +60,12 @@
               </template>
               <ul class="menu p-2">
                 <li v-for="filter in filters" :key="filter.value">
-                  <a @click="setFilter(filter.value)" class="cursor-pointer rounded-lg hover:bg-secondary">{{ filter.label }}</a>
+                  <a @click="setFilter(filter.value)" class="cursor-pointer whitespace-nowrap rounded-lg hover:bg-secondary">{{ filter.label }}</a>
                 </li>
               </ul>
             </UiDropdown>
 
-            <UiDropdown align="center" :aria-label="t('todo.sort')" panel-class="glass-card menu w-40 rounded-2xl p-2">
+            <UiDropdown align="center" :aria-label="t('todo.sort')" panel-class="glass-card menu w-max min-w-40 rounded-2xl p-2">
               <template #trigger="{ open }">
                 <label class="btn-soft flex cursor-pointer items-center">
                   {{ t('todo.sort') }}
@@ -76,7 +76,7 @@
               </template>
               <ul class="menu p-2">
                 <li v-for="sort in sortOptions" :key="sort.value">
-                  <a @click="setSort(sort.value)" class="cursor-pointer rounded-lg hover:bg-secondary">{{ sort.label }}</a>
+                  <a @click="setSort(sort.value)" class="cursor-pointer whitespace-nowrap rounded-lg hover:bg-secondary">{{ sort.label }}</a>
                 </li>
               </ul>
             </UiDropdown>

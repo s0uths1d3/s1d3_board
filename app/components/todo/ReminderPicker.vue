@@ -49,11 +49,11 @@ const MODE_OPTIONS = computed(() => [
   { value: 'off', label: t('reminder.off'), tip: t('reminder.offTip') },
 ])
 
-/** 触发器文案（field 形态） */
+/** 触发器文案（field 形态）：外层已有「提醒」标签，值使用不带前缀的短文案 */
 const fieldLabel = computed(() => {
-  if (props.mode === 'off') return t('reminder.triggerOff')
-  if (props.mode === 'custom') return t('reminder.triggerCustom', { n: props.rules.length })
-  return t('reminder.triggerSmart')
+  if (props.mode === 'off') return t('reminder.stateOff')
+  if (props.mode === 'custom') return t('reminder.stateCustom', { n: props.rules.length })
+  return t('reminder.stateSmart')
 })
 
 const iconTip = computed(() => {

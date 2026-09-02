@@ -2,7 +2,6 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import clipboardService from '~/src/db/dbService';
 import type { PinnedClip } from '~/src/entities';
-import { formatDate } from '~/utils/formatDate';
 import { useFormatDate } from '~/composables/useFormatDate';
 import { findNearestInDirection } from '~/utils/focusNavigation';
 import { useInfiniteList } from '~/composables/useInfiniteList';

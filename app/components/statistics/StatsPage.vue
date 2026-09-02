@@ -353,23 +353,28 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
 <template>
   <div class="space-y-4 pb-8">
     <!-- ===== 范围切换栏（§7.2）===== -->
-    <div class="glass-card rounded-2xl p-4">
-      <div class="flex flex-wrap items-center gap-2">
+    <div class="glass-card card-lift rounded-2xl p-4">
+      <!-- 默认窗口尺寸下始终单行：禁用换行，靠紧凑间距 + 日期控件定宽保证 -->
+      <div class="flex flex-nowrap items-center gap-2">
         <button
           v-for="opt in rangeOptions"
           :key="opt.key"
           type="button"
-          class="btn-soft px-3 py-1.5 text-sm"
+          class="btn-soft shrink-0 whitespace-nowrap px-2.5 py-1.5 text-sm"
           :class="range === opt.key ? 'border-gold bg-secondary text-gold' : ''"
           @click="selectRange(opt.key)"
         >
           {{ opt.name }}
         </button>
-        <div class="ml-auto flex items-center gap-2 text-xs text-ink-faint">
-          <span v-if="range === 'custom'" class="flex items-center gap-1">
-            <DatePicker v-model="customFrom" :placeholder="t('statistics.fromDate')" :max="customTo || undefined" />
+        <div class="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-ink-faint">
+          <span v-if="range === 'custom'" class="flex min-w-0 items-center gap-1">
+            <span class="w-36 min-w-0">
+              <DatePicker v-model="customFrom" :placeholder="t('statistics.fromDate')" :max="customTo || undefined" />
+            </span>
             <span class="text-ink-faint">—</span>
-            <DatePicker v-model="customTo" :placeholder="t('statistics.toDate')" :min="customFrom || undefined" />
+            <span class="w-36 min-w-0">
+              <DatePicker v-model="customTo" :placeholder="t('statistics.toDate')" :min="customFrom || undefined" />
+            </span>
           </span>
           <!-- 阶段切换箭头：左右选择上一阶段/下一阶段，无可用方向时置灰禁用 -->
           <div class="flex items-center gap-1">
@@ -386,7 +391,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
                 <path d="M15 18l-6-6 6-6" />
               </svg>
             </button>
-            <span class="min-w-[9.5rem] text-center tabular-nums">{{ rangeDates.from }} ~ {{ rangeDates.to }}</span>
+            <span class="min-w-[8.5rem] max-w-full truncate whitespace-nowrap text-center tabular-nums">{{ rangeDates.from }} ~ {{ rangeDates.to }}</span>
             <button
               type="button"
               class="flex h-8 w-8 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
@@ -432,7 +437,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
           </svg>
         </div>
         <p class="text-lg text-ink">{{ t('statistics.noStatsData') }}</p>
-        <p class="mt-1 text-sm text-ink-faint">复制、粘贴、使用待办/便签等操作后，这里将展示你的使用画像</p>
+        <p class="mt-1 text-sm text-ink-faint">{{ t('statistics.noStatsDataDesc') }}</p>
       </div>
 
       <template v-else>
@@ -469,7 +474,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         </div>
 
         <!-- ===== 我的标签（§7.8，受区间跨度门槛控制：跨度 < 15 天时整块不显示）===== -->
-        <div v-if="tagSpanOK" class="glass-card rounded-2xl p-4">
+        <div v-if="tagSpanOK" class="glass-card card-lift rounded-2xl p-4">
           <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.myTags') }}</h2>
           <div v-if="tags.length === 0" class="rounded-xl border border-dashed border-accent px-4 py-3 text-sm text-ink-faint">
             {{ t('statistics.noTags') }}
@@ -495,7 +500,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
           <div
             v-for="card in metricCards"
             :key="card.name"
-            class="glass-card group rounded-2xl p-4 transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
+            class="glass-card card-lift group rounded-2xl p-4"
           >
             <div class="mb-2 flex items-center justify-between">
               <svg class="h-5 w-5 text-gold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -513,14 +518,14 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         <LazySection :key="`fun-${lazyKey}`" skeleton-class="h-44">
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
           <!-- 打字量 -->
-          <div class="glass-card rounded-2xl p-4">
+          <div class="glass-card card-lift rounded-2xl p-4">
             <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.typingTitle') }}</div>
             <div class="mt-1 text-2xl font-semibold text-ink tabular-nums">{{ typingChars }}</div>
             <div class="mt-1 text-xs text-ink-faint">{{ t('statistics.typingDesc') }}</div>
           </div>
 
           <!-- 复制之王 -->
-          <div class="glass-card rounded-2xl p-4">
+          <div class="glass-card card-lift rounded-2xl p-4">
             <div class="flex items-center justify-between">
               <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.copyKing') }}</span>
               <span v-if="kingClip" class="text-xs text-gold tabular-nums">{{ t('statistics.usedTimes', { n: kingClip.count }) }}</span>
@@ -532,7 +537,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
           </div>
 
           <!-- 最长连续使用 -->
-          <div class="glass-card rounded-2xl p-4">
+          <div class="glass-card card-lift rounded-2xl p-4">
             <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.longestStreak') }}</div>
             <div class="mt-1 text-2xl font-semibold text-ink tabular-nums">
               {{ longestStreakLabel }}
@@ -541,7 +546,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
           </div>
 
           <!-- 时长换算 -->
-          <div class="glass-card rounded-2xl p-4">
+          <div class="glass-card card-lift rounded-2xl p-4">
             <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.durationEquiv') }}</div>
             <div class="mt-1 text-2xl font-semibold text-ink tabular-nums">
               {{ movieEquiv > 0 ? t('statistics.movieEq', { n: movieEquiv }) : t('statistics.movieLess') }}
@@ -553,7 +558,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
 
         <!-- ===== 活跃时段（§7.5）· 流式加载 ===== -->
         <LazySection :key="`period-${lazyKey}`" skeleton-class="h-44">
-          <div class="glass-card rounded-2xl p-4">
+          <div class="glass-card card-lift rounded-2xl p-4">
             <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.periodTitle') }}</h2>
           <div class="space-y-2.5">
             <div v-for="p in periodDist" :key="p.name" class="flex items-center gap-3">
@@ -577,7 +582,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
 
         <!-- ===== Tab 访问分布（§7.4）· 流式加载 ===== -->
         <LazySection :key="`tabs-${lazyKey}`" skeleton-class="h-44">
-          <div class="glass-card rounded-2xl p-4">
+          <div class="glass-card card-lift rounded-2xl p-4">
             <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.tabDistTitle') }}</h2>
           <div v-if="tabDist.length === 0" class="text-sm text-ink-faint">{{ t('statistics.noTabDist') }}</div>
           <div v-else class="space-y-2">
@@ -598,7 +603,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
 
         <!-- ===== 每日趋势（§7.6）· 流式加载（「每日」范围仅 1 天，趋势无意义，隐藏）===== -->
         <LazySection v-if="range !== 'day'" :key="`trend-${lazyKey}`" skeleton-class="h-52">
-          <div class="glass-card rounded-2xl p-4">
+          <div class="glass-card card-lift rounded-2xl p-4">
           <div class="mb-3 flex flex-wrap items-center gap-2">
             <h2 class="gold-bar mr-2 text-sm font-semibold text-ink">{{ t('statistics.dailyTrend') }}</h2>
             <button

@@ -161,6 +161,11 @@ body::after {
     box-shadow: 0 4px 16px rgb(var(--c-shadow) / 0.14);
   }
 
+  /* 内容卡片悬停轻微上浮：位移 + 阴影同步加深（仅用于静态展示卡，勿用于下拉面板） */
+  .card-lift {
+    @apply transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float;
+  }
+
   /* 金色激活指示线（导航 tab、按钮） */
   .gold-underline {
     @apply relative;

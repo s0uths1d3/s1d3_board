@@ -152,7 +152,6 @@ import { useI18n } from '~/composables/useI18n';
 import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
 import type { Note } from '~/src/entities';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
-import {formatDate} from "~/utils/formatDate";
 import { useFormatDate } from "~/composables/useFormatDate";
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { formatShortcutForDisplay, matchesKeyId } from "~/utils/shortcutFormat";

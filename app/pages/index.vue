@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type {ClipboardData} from '~/src/entities';
-import {formatDate} from "~/utils/formatDate";
 import { useFormatDate } from "~/composables/useFormatDate";
 import {
   getSelectedRowIndex,
