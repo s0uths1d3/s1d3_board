@@ -6,7 +6,7 @@
             @click="createNote"
             class="btn-gold flex h-10 items-center shadow-soft transition-all duration-300 ease-soft hover:shadow-float"
         >
-          新建便签
+          {{ t('note.newNote') }}
           <svg class="ml-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
           </svg>
@@ -21,14 +21,14 @@
               ref="noteSearchInput"
               v-model="noteSearch"
               type="text"
-              placeholder="搜索便签内容 · Enter 跳转到首个匹配"
+              :placeholder="t('note.searchPlaceholder')"
               class="h-full min-w-0 flex-1 bg-transparent text-ink placeholder:text-ink-faint focus:outline-none"
               @keydown.enter.prevent="jumpToFirstMatch"
           />
           <button
               type="button"
               class="btn-soft btn-circle flex h-8 w-8 items-center justify-center p-0"
-              v-tip="'清空搜索'"
+              v-tip="t('note.clearSearch')"
               @click="noteSearch = ''"
           >
             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -42,10 +42,10 @@
               size="sm"
               :model-value="searchScope"
               :options="[
-                { value: 'current', label: positionLabel, tip: '当前位置 · 仅在当前便签内搜索' },
-                { value: 'all', label: totalLabel, tip: '总数 · 在全部便签中搜索' },
+                { value: 'current', label: positionLabel, tip: t('note.currentTip') },
+                { value: 'all', label: totalLabel, tip: t('note.allTip') },
               ]"
-              label="搜索范围"
+              :label="t('note.searchScope')"
               @update:model-value="searchScope = $event as 'current' | 'all'"
           />
         </div>
@@ -75,16 +75,16 @@
           ref="sentinel"
           class="flex items-center justify-center gap-2 py-6 text-xs text-ink-faint"
       >
-        <span v-if="loading">加载中…</span>
-        <span v-else>继续向下滚动加载更多</span>
+        <span v-if="loading">{{ t('note.loadingMore') }}</span>
+        <span v-else>{{ t('clip.scrollMore') }}</span>
       </div>
-      <div v-else-if="notes.length" class="py-6 text-center text-xs text-ink-faint">已全部加载</div>
+      <div v-else-if="notes.length" class="py-6 text-center text-xs text-ink-faint">{{ t('clip.noMore') }}</div>
 
       <div v-if="notes.length === 0" class="py-20 text-center">
         <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
         </svg>
-        <p class="text-lg text-ink-faint">还没有便签，点击上方按钮创建第一个便签吧！</p>
+        <p class="text-lg text-ink-faint">{{ t('note.empty') }}</p>
       </div>
     </div>
 
@@ -99,7 +99,6 @@
     <!-- 删除确认框：与全局一致的 DeleteConfirm 组件（就近定位、键盘操作一致） -->
     <DeleteConfirm
         :visible="!!deleteConfirmTarget"
-        message="确定要删除吗？"
         :anchor="confirmAnchor"
         @confirm="confirmDelete"
         @cancel="cancelDelete"
@@ -119,6 +118,7 @@ import type { Note } from "~/src/entities";
 import {isTauri} from "~/utils/env";
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { matchesKeyId } from "~/utils/shortcutFormat";
+import { useI18n } from "~/composables/useI18n";
 import { findNearestInDirection } from "~/utils/focusNavigation";
 import { useSearchHighlight } from "~/composables/useSearchHighlight";
 import { useInfiniteList } from "~/composables/useInfiniteList";
@@ -140,6 +140,8 @@ const {
   pageSize: 40,
   signatureOf: (n) => `${n.id}:${n.updated_at}`,
 })
+
+const { t } = useI18n();
 
 // 键盘选择态（响应式网格，列数动态获取）
 const selectedIndex = ref(0)
@@ -247,7 +249,7 @@ const createNote = async () => {
   await clipboardService.insertNote(newNote)
   prepend(newNote)
   editingId.value = newNote.id
-  showHint('已新建便签，输入内容自动保存')
+  showHint(t('note.newCreatedHint'))
 }
 
 /** Ctrl+N 新建便签（CreateNoteCommand 派发 create-note 事件） */
@@ -283,7 +285,7 @@ const updateNote = async (id: string, content: string) => {
       await clipboardService.updateNote(note)
     } catch (e) {
       console.error('保存便签失败:', e)
-      showHint('保存失败，请重试')
+      showHint(t('note.saveFailed'))
     }
   }
 }
@@ -296,10 +298,10 @@ const confirmDelete = async () => {
   confirmAnchor.value = null
   try {
     await deleteNote(target.id)
-    showHint('已删除')
+    showHint(t('note.deleted'))
   } catch (e) {
     console.error('删除便签失败:', e)
-    showHint('删除失败，请重试')
+    showHint(t('note.deleteFailed'))
   }
 }
 
@@ -329,7 +331,7 @@ const changeNoteColor = async (id: string, color: string) => {
       await clipboardService.updateNote(note)
     } catch (e) {
       console.error('保存便签配色失败:', e)
-      showHint('配色保存失败，请重试')
+      showHint(t('note.colorSaveFailed'))
     }
   }
 }

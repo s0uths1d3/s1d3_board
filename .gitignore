@@ -21,6 +21,9 @@ logs
 # CodeBuddy workspace data
 .codebuddy
 
+# CLI tool artifacts
+.playwright-cli/
+
 # IDE workspace data
 .zcode
 

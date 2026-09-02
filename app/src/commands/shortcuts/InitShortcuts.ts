@@ -29,22 +29,16 @@ const switchNextTabCommand = new SwitchTabCommand(1)
 const delCommand = new DelCommand();
 const favoriteCommand = new FavoriteCommand()
 const toggleAlwaysOnTopCommand = new ToggleAlwaysOnTopCommand()
-// Ctrl+U：将当前选中的剪贴项添加为常用剪贴（已存在则忽略）
 const addToPinnedCommand = new AddToPinnedCommand()
-// Ctrl+Enter：保存当前编辑中的便签
 const contextEditCommand = new ContextEditCommand()
 // Ctrl+N：新建便签
 const createNoteCommand = new CreateNoteCommand()
-// Ctrl+F：聚焦当前标签页的搜索框（clip / todo 等）
 const focusSearchCommand = new FocusSearchCommand()
-// 切换配色快捷键（默认不绑定，可在设置页录制）
 const cycleColorSchemeCommand = new CycleColorSchemeCommand()
-// Ctrl+1~Ctrl+0：常用剪贴前 10 项快捷粘贴（槽位序号 1~10）
 const pinnedClipCommands = Array.from({ length: 10 }, (_, i) => new PinnedClipPasteCommand(i + 1))
-// Ctrl+Shift+1~Ctrl+Shift+0：主剪贴板列表前 10 项快捷粘贴（槽位序号 1~10）
+
 const clipboardSlotCommands = Array.from({ length: 10 }, (_, i) => new ClipboardSlotPasteCommand(i + 1))
 
-/** 默认快捷键定义（id 用于唯一标识，defaultKey 用于重置） */
 const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
     {
         id: 'toggle_window',
@@ -52,7 +46,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'CommandOrControl+I',
         scope: 'global',
         command: toggleWindowCommand,
-        title: '显示与隐藏窗口',
+        title: 'shortcut.toggle_window',
         enabled: true
     },
     {
@@ -61,7 +55,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'Escape',
         scope: 'local',
         command: hideWindowCommand,
-        title: '隐藏窗口',
+        title: 'shortcut.hide_window',
         enabled: true
     },
     {
@@ -70,7 +64,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'ArrowUp',
         scope: 'local',
         command: arrowUpCursorMoveCommand,
-        title:'选择上一项',
+        title: 'shortcut.select_prev',
         enabled: true
     },
     {
@@ -79,7 +73,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'ArrowDown',
         scope: 'local',
         command: arrowDownCursorMoveCommand,
-        title:'选择下一项',
+        title: 'shortcut.select_next',
         enabled: true
     },
     {
@@ -88,7 +82,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'Enter',
         scope: 'local',
         command: pasteCommand,
-        title: '粘贴选中项',
+        title: 'shortcut.paste',
         enabled: true
     },
     {
@@ -97,7 +91,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'Control+ArrowLeft',
         scope: 'local',
         command: switchPrevTabCommand,
-        title: '上一个标签页',
+        title: 'shortcut.switch_prev_tab',
         enabled: true
     },
     {
@@ -106,7 +100,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'Control+ArrowRight',
         scope: 'local',
         command: switchNextTabCommand,
-        title: '下一个标签页',
+        title: 'shortcut.switch_next_tab',
         enabled: true
     },
     {
@@ -115,7 +109,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'Delete',
         scope: 'local',
         command: delCommand,
-        title:'删除选择项',
+        title: 'shortcut.delete_item',
         enabled: true
     },
     {
@@ -124,7 +118,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'Control+L',
         scope: 'local',
         command: favoriteCommand,
-        title: '收藏选中项',
+        title: 'shortcut.favorite_item',
         enabled: true
     },
     {
@@ -133,7 +127,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'Control+T',
         scope: 'local',
         command: toggleAlwaysOnTopCommand,
-        title: '切换窗口置顶',
+        title: 'shortcut.toggle_always_on_top',
         enabled: true
     },
     {
@@ -142,7 +136,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'Control+U',
         scope: 'local',
         command: addToPinnedCommand,
-        title: '添加选中项为常用剪贴',
+        title: 'shortcut.add_to_pinned',
         enabled: true
     },
     {
@@ -151,29 +145,25 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'Control+N',
         scope: 'local',
         command: createNoteCommand,
-        title: '新建便签',
+        title: 'shortcut.create_note',
         enabled: true
     },
     {
         id: 'find_in_tab',
         key: 'CommandOrControl+F',
         defaultKey: 'CommandOrControl+F',
-        // 聚焦搜索框是窗口内语义（窗口隐藏时 dispatchEvent 无意义），
-        // 注册为 global 会在应用驻留托盘时劫持全系统其他应用的 Ctrl+F
         scope: 'local',
         command: focusSearchCommand,
-        title: '聚焦当前页搜索框',
+        title: 'shortcut.find_in_tab',
         enabled: true
     },
     {
         id: 'cycle_color_scheme',
-        // 默认不绑定任何按键（空 key 不注册），需要时在设置页录制；
-        // 旧版本默认 Control+Alt+C，升级后由下方恢复逻辑迁移为未绑定
         key: '',
         defaultKey: '',
         scope: 'local',
         command: cycleColorSchemeCommand,
-        title: '切换配色',
+        title: 'shortcut.cycle_color_scheme',
         enabled: true
     },
     {
@@ -182,7 +172,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: 'Control+Enter',
         scope: 'local',
         command: contextEditCommand,
-        title: '保存便签（编辑中）',
+        title: 'shortcut.save_note',
         enabled: true
     },
     // Ctrl+1~Ctrl+0：粘贴常用剪贴列表第 N 项（第 10 项对应 0），全局生效
@@ -192,7 +182,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: `CommandOrControl+${i + 1 === 10 ? 0 : i + 1}`,
         scope: 'global' as const,
         command: pinnedClipCommands[i]!,
-        title: `粘贴常用剪贴第 ${i + 1} 项`,
+        title: 'shortcut.pinned_paste',
         enabled: true
     })),
     // Ctrl+Shift+1~Ctrl+Shift+0：粘贴主剪贴板列表第 N 项（第 10 项对应 0），全局生效
@@ -202,7 +192,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         defaultKey: `CommandOrControl+Shift+${i + 1 === 10 ? 0 : i + 1}`,
         scope: 'global' as const,
         command: clipboardSlotCommands[i]!,
-        title: `粘贴剪贴板第 ${i + 1} 项`,
+        title: 'shortcut.slot_paste',
         enabled: true
     }))
 ];

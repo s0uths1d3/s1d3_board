@@ -12,8 +12,6 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 应用只允许运行一个实例。二次启动时唤醒已有实例的主窗口：
-            // 主窗口可能处于隐藏（后台驻留）或最小化状态，需 show + unminimize + set_focus
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.unminimize();
@@ -366,18 +364,15 @@ UPDATE settings SET value = 'system', description = '配色模式' WHERE key = '
         .expect("error while running tauri application");
 }
 
-/// 在阻塞线程中模拟 Ctrl/Cmd+V；任何失败都以 Result 返回前端，而非 panic 整个进程。
 fn paste_blocking() -> Result<(), String> {
     use enigo::{
         Direction::{Click, Press, Release},
         Enigo, Key, Keyboard, Settings,
     };
 
-    // 等待前端完成"写系统剪贴板 → 隐藏窗口 → 焦点落回目标应用"后，再发送粘贴键
     std::thread::sleep(Duration::from_millis(300));
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| format!("初始化输入模拟失败: {e}"))?;
 
-    // 跨平台粘贴：macOS 使用 Command(meta)+V，其余使用 Ctrl+V
     #[cfg(target_os = "macos")]
     let modifier = Key::Meta;
     #[cfg(not(target_os = "macos"))]
@@ -389,8 +384,7 @@ fn paste_blocking() -> Result<(), String> {
     Ok(())
 }
 
-/// async 命令在 Tauri 的异步线程池执行（而非主线程），配合 spawn_blocking
-/// 保证 300ms 等待不阻塞 UI 事件循环；失败信息可被前端 invoke 的 catch 捕获。
+
 #[tauri::command]
 async fn paste() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(paste_blocking)
@@ -398,25 +392,16 @@ async fn paste() -> Result<(), String> {
         .map_err(|e| format!("粘贴任务执行失败: {e}"))?
 }
 
-/// 真正退出程序（托盘「退出」菜单项调用）：直接结束整个进程。
-/// 不能用窗口 close/destroy——标题栏 x 的 close 请求已被前端拦截为「隐藏到托盘」，
-/// 且 destroy 主窗口在存在子窗口（图片查看器等）时不会结束进程；exit(0) 全部终结。
-/// 统计落库由前端在调用本命令前完成（process exit 不触发 beforeunload）。
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
-/// Windows 原生菜单（托盘右键菜单等）的主题由进程级 PreferredAppMode 决定，
-/// 默认跟随系统"应用模式"（系统深色 → 菜单暗色），window.setTheme 对其无效。
-/// 应用配色切换时前端调用此命令强制菜单深浅色，使托盘菜单跟随应用配色。
-/// 实现使用 uxtheme.dll 未公开导出 SetPreferredAppMode（ordinal 135，Win10 1809+ 稳定）；
-/// 非 Windows 平台为 no-op（原生菜单本就跟随系统）。
+
 #[tauri::command]
 fn set_menu_theme(theme: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        // PreferredAppMode 枚举值（undocumented，与微软官方内部定义一致）
         const DEFAULT_MODE: i32 = 0;
         const ALLOW_DARK: i32 = 1;
         const FORCE_DARK: i32 = 2;
@@ -439,8 +424,6 @@ fn set_menu_theme(theme: String) -> Result<(), String> {
     }
 }
 
-/// Windows: 动态加载 uxtheme.dll 的 SetPreferredAppMode（ordinal 135）并调用。
-/// 函数指针用 OnceLock 缓存（库句柄由进程持有不卸载，指针长期有效）；解析失败静默忽略。
 #[cfg(target_os = "windows")]
 fn apply_preferred_app_mode(mode: i32) {
     use std::sync::OnceLock;
@@ -450,7 +433,6 @@ fn apply_preferred_app_mode(mode: i32) {
     static SET_PREFERRED_APP_MODE: OnceLock<Option<SetPreferredAppModeFn>> = OnceLock::new();
 
     let f = *SET_PREFERRED_APP_MODE.get_or_init(|| unsafe {
-        // uxtheme 可能尚未被进程加载，先 GetModuleHandleW 再回退 LoadLibraryW（Win32_Foundation）
         let name: Vec<u16> = "uxtheme.dll\0".encode_utf16().collect();
         let mut handle = GetModuleHandleW(name.as_ptr());
         if handle.is_null() {
@@ -459,7 +441,6 @@ fn apply_preferred_app_mode(mode: i32) {
         if handle.is_null() {
             return None;
         }
-        // 序号 135：MAKEINTRESOURCEA(135) 等价于把序号转为伪指针
         let addr = GetProcAddress(handle, 135 as *const u8);
         addr.map(|a| std::mem::transmute::<unsafe extern "system" fn() -> isize, SetPreferredAppModeFn>(a))
     });

@@ -39,8 +39,8 @@ export interface DueGroup {
   hidden: boolean
 }
 
-/** 内置分组定义 */
-const BUILTIN_GROUPS: DueGroup[] = [
+/** 内置分组定义（导出供显示层做 i18n 名称映射） */
+export const BUILTIN_DUE_GROUPS: DueGroup[] = [
   { id: 'recent', name: '之前选择', builtin: true, hidden: false },
   { id: 'duration', name: '常用时长', builtin: true, hidden: false },
   { id: 'date', name: '常用日期', builtin: true, hidden: false },
@@ -114,7 +114,7 @@ async function ensureLoaded(): Promise<void> {
         }
       } catch { /* 忽略读取失败 */ }
       // 确保内置分组始终存在（合并，保留持久化的 name/hidden）
-      for (const b of BUILTIN_GROUPS) {
+      for (const b of BUILTIN_DUE_GROUPS) {
         if (!groups.value.find(g => g.id === b.id)) groups.value.push({ ...b })
       }
 

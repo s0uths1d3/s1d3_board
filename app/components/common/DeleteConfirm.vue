@@ -9,17 +9,21 @@
  *
  * 通过 Teleport 挂到 body，避免被调用方容器裁切。
  */
-import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
+import { useI18n } from '~/composables/useI18n'
 
-const props = withDefaults(defineProps<{
+const { t } = useI18n()
+
+const props = defineProps<{
   visible: boolean
   message?: string
   /** 触发删除按钮在视口内的位置（DOMRect）；缺省时屏幕居中 */
   anchor?: DOMRect | null
-}>(), {
-  message: '确定要删除吗？',
-  anchor: null,
-})
+}>()
+
+// prop 默认值会被编译提升到 setup() 外部，无法引用局部 t，
+// 故改用 computed 提供缺省文案
+const displayMessage = computed(() => props.message ?? t('common.deleteConfirm'))
 
 const emit = defineEmits<{
   (e: 'confirm'): void
@@ -114,13 +118,13 @@ onBeforeUnmount(() => {
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
-        <div class="flex-1 font-bold text-ink">{{ message }}</div>
+        <div class="flex-1 font-bold text-ink">{{ displayMessage }}</div>
       </div>
       <div class="flex w-full justify-center gap-4">
         <button ref="cancelBtn" type="button" class="btn-soft outline-none focus:ring-2 focus:ring-gold/60"
-                @click="emit('cancel')">取消</button>
+                @click="emit('cancel')">{{ t('common.cancel') }}</button>
         <button ref="okBtn" type="button" class="btn-gold outline-none focus:ring-2 focus:ring-gold/60"
-                @click="emit('confirm')">确定</button>
+                @click="emit('confirm')">{{ t('common.confirm') }}</button>
       </div>
     </div>
   </Teleport>

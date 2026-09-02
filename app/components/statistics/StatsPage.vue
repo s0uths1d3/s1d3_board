@@ -7,6 +7,7 @@
  * - 性能：聚合结果用 shallowRef；趋势超 92 天自动按月降采样（§14.4）；组件卸载清理定时器与监听（§14.5）
  */
 import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { useI18n } from '~/composables/useI18n';
 import statsService, { daySpan, TREND_DOWNSAMPLE_DAYS, type StatsSummary, type StatField } from '~/src/statistics/statsService';
 import {
   computeTags, computeUniqueTitle, computeTitleScores, tagsSpanEnough,
@@ -16,15 +17,17 @@ import { toDateString } from '~/utils/datetime';
 import DatePicker from '~/components/common/DatePicker.vue';
 import LazySection from '~/components/statistics/LazySection.vue';
 
+const { t, tName } = useI18n();
+
 type RangeKey = 'day' | 'week' | 'month' | 'year' | 'custom';
 
-const rangeOptions: { key: RangeKey; name: string }[] = [
-  { key: 'day', name: '每日' },
-  { key: 'week', name: '每周' },
-  { key: 'month', name: '每月' },
-  { key: 'year', name: '年度' },
-  { key: 'custom', name: '自定义' },
-];
+const rangeOptions = computed<{ key: RangeKey; name: string }[]>(() => [
+  { key: 'day', name: t('statistics.day') },
+  { key: 'week', name: t('statistics.week') },
+  { key: 'month', name: t('statistics.month') },
+  { key: 'year', name: t('statistics.year') },
+  { key: 'custom', name: t('statistics.custom') },
+]);
 
 const range = ref<RangeKey>('month');
 const customFrom = ref('');
@@ -102,15 +105,15 @@ const title = ref<UserTag | null>(null);
 const titleScores = ref<{ name: string; score: number }[]>([]);
 const kingClip = ref<{ content: string; count: number } | null>(null);
 
-const trendOptions: { key: string; name: string; fields: StatField[] }[] = [
-  { key: 'activity', name: '剪贴活动', fields: ['clip_text', 'clip_image', 'clip_use'] },
-  { key: 'clip_use', name: '粘贴', fields: ['clip_use'] },
-  { key: 'usage', name: '时长', fields: ['usage_seconds'] },
-  { key: 'shortcut', name: '快捷键', fields: ['shortcut_count'] },
-  { key: 'todo', name: '待办', fields: ['todo_added', 'todo_completed', 'todo_reminded'] },
-  { key: 'todo_chars', name: '待办内容量', fields: ['todo_chars'] },
-  { key: 'note', name: '便签', fields: ['note_added'] },
-];
+const trendOptions = computed<{ key: string; name: string; fields: StatField[] }[]>(() => [
+  { key: 'activity', name: t('statistics.trendActivity'), fields: ['clip_text', 'clip_image', 'clip_use'] },
+  { key: 'clip_use', name: t('statistics.trendPaste'), fields: ['clip_use'] },
+  { key: 'usage', name: t('statistics.trendDuration'), fields: ['usage_seconds'] },
+  { key: 'shortcut', name: t('statistics.trendShortcut'), fields: ['shortcut_count'] },
+  { key: 'todo', name: t('todo.title'), fields: ['todo_added', 'todo_completed', 'todo_reminded'] },
+  { key: 'todo_chars', name: t('statistics.trendTodoChars'), fields: ['todo_chars'] },
+  { key: 'note', name: t('note.title'), fields: ['note_added'] },
+]);
 
 /** 标签区是否达到展示门槛（§7.8.5：跨度 ≥ 15 天） */
 const tagSpanOK = computed(() => tagsSpanEnough(rangeDates.value.from, rangeDates.value.to));
@@ -206,71 +209,26 @@ const hasData = computed(() => {
 /** 使用时长格式化：xx 小时 xx 分 / xx 分钟 / xx 秒（§7.3） */
 function formatDuration(seconds: number): string {
   const sec = Math.round(seconds || 0);
-  if (sec < 60) return `${sec} 秒`;
+  if (sec < 60) return t('statistics.durSec', { n: sec });
   const minutes = Math.floor(sec / 60);
-  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 60) return t('statistics.durMin', { n: minutes });
   const hours = Math.floor(minutes / 60);
   const restMin = minutes % 60;
-  return restMin > 0 ? `${hours} 小时 ${restMin} 分` : `${hours} 小时`;
+  return restMin > 0 ? t('statistics.durHourMin', { n: hours, m: restMin }) : t('statistics.durHour', { n: hours });
 }
 
 const metricCards = computed(() => {
   const s = stats.value;
   return [
-    {
-      name: '剪贴总数',
-      value: (s.clip_text ?? 0) + (s.clip_image ?? 0),
-      hint: '新增文本 + 图片',
-      icon: 'clip',
-    },
-    {
-      name: '图片剪贴',
-      value: s.clip_image ?? 0,
-      hint: '新增图片',
-      icon: 'image',
-    },
-    {
-      name: '粘贴使用',
-      value: s.clip_use ?? 0,
-      hint: 'Enter / Ctrl+数字',
-      icon: 'paste',
-    },
-    {
-      name: '待办操作',
-      value: (s.todo_added ?? 0) + (s.todo_completed ?? 0),
-      hint: '新增 + 完成',
-      icon: 'todo',
-    },
-    {
-      name: '待办内容量',
-      value: fmtNum(s.todo_chars ?? 0),
-      hint: '标题 + 描述字符数',
-      icon: 'todo_text',
-    },
-    {
-      name: '便签新增',
-      value: s.note_added ?? 0,
-      hint: '新建便签',
-      icon: 'note',
-    },
-    {
-      name: '收藏切换',
-      value: s.favorite_toggle ?? 0,
-      hint: '收藏/取消收藏',
-      icon: 'star',
-    },
-    {
-      name: '使用时长',
-      value: formatDuration(s.usage_seconds ?? 0),
-      hint: '可见 + 聚焦',
-      icon: 'clock',
-    },
-    {
-      name: '快捷键',
-      value: s.shortcut_count ?? 0,
-      hint: '全局 + 局部命中',
-      icon: 'keyboard',
-    },
+    { name: t('statistics.metricClipTotal'), value: (s.clip_text ?? 0) + (s.clip_image ?? 0), hint: t('statistics.metricClipTotalHint'), icon: 'clip' },
+    { name: t('statistics.metricImage'), value: s.clip_image ?? 0, hint: t('statistics.metricImageHint'), icon: 'image' },
+    { name: t('statistics.metricPaste'), value: s.clip_use ?? 0, hint: t('statistics.metricPasteHint'), icon: 'paste' },
+    { name: t('statistics.metricTodoOps'), value: (s.todo_added ?? 0) + (s.todo_completed ?? 0), hint: t('statistics.metricTodoOpsHint'), icon: 'todo' },
+    { name: t('statistics.metricTodoChars'), value: fmtNum(s.todo_chars ?? 0), hint: t('statistics.metricTodoCharsHint'), icon: 'todo_text' },
+    { name: t('statistics.metricNote'), value: s.note_added ?? 0, hint: t('statistics.metricNoteHint'), icon: 'note' },
+    { name: t('statistics.metricFavorite'), value: s.favorite_toggle ?? 0, hint: t('statistics.metricFavoriteHint'), icon: 'star' },
+    { name: t('statistics.metricUsage'), value: formatDuration(s.usage_seconds ?? 0), hint: t('statistics.metricUsageHint'), icon: 'clock' },
+    { name: t('statistics.metricShortcut'), value: s.shortcut_count ?? 0, hint: t('statistics.metricShortcutHint'), icon: 'keyboard' },
   ];
 });
 
@@ -278,12 +236,12 @@ const metricCards = computed(() => {
 const tabDist = computed(() => {
   const s = stats.value;
   const items = [
-    { key: '剪贴板', value: s.tab_clip ?? 0 },
-    { key: '待办', value: s.tab_todo ?? 0 },
-    { key: '便签', value: s.tab_note ?? 0 },
-    { key: '常用剪贴板', value: s.tab_pinned ?? 0 },
-    { key: '设置', value: s.tab_setting ?? 0 },
-    { key: '统计', value: s.tab_statistics ?? 0 },
+    { key: t('titlebar.clip'), value: s.tab_clip ?? 0 },
+    { key: t('titlebar.todo'), value: s.tab_todo ?? 0 },
+    { key: t('titlebar.note'), value: s.tab_note ?? 0 },
+    { key: t('titlebar.pinned'), value: s.tab_pinned ?? 0 },
+    { key: t('titlebar.setting'), value: s.tab_setting ?? 0 },
+    { key: t('titlebar.statistics'), value: s.tab_statistics ?? 0 },
   ].filter(i => i.value > 0);
   const total = items.reduce((sum, i) => sum + i.value, 0);
   return items.map(i => ({ ...i, pct: total > 0 ? (i.value / total) * 100 : 0 }));
@@ -294,7 +252,7 @@ const tabDist = computed(() => {
 /** 打字量（复制字符总量）→ "约 X 万字" */
 const typingChars = computed(() => {
   const chars = stats.value.clip_chars ?? 0;
-  return chars > 0 ? `${(chars / 10000).toFixed(1)} 万字` : '0 字';
+  return chars > 0 ? t('statistics.typingWan', { n: (chars / 10000).toFixed(1) }) : t('statistics.typingZero');
 });
 
 /** 最长连续使用天数（基于趋势序列的日期集合）；月降采样时单位为"月" */
@@ -322,17 +280,17 @@ const longestStreak = computed(() => {
 
 /** 展示文案：降采样视图统计的是"连续活跃月"，单位不能仍写"天" */
 const longestStreakLabel = computed(() =>
-  isDownsampled.value ? `${longestStreak.value} 个月` : `${longestStreak.value} 天`
+  isDownsampled.value ? t('statistics.streakMonths', { n: longestStreak.value }) : t('statistics.streakDays', { n: longestStreak.value })
 );
 
 /** 活跃时段分布（4 段条形，最高高亮，§7.5） */
 const periodDist = computed(() => {
   const s = stats.value;
   const items = [
-    { name: '清晨', time: '05-08时', value: s.active_dawn ?? 0 },
-    { name: '白天', time: '09-17时', value: s.active_day ?? 0 },
-    { name: '晚间', time: '18-22时', value: s.active_evening ?? 0 },
-    { name: '深夜', time: '23-04时', value: s.active_night ?? 0 },
+    { name: t('statistics.periodDawn'), time: t('statistics.periodDawnHours'), value: s.active_dawn ?? 0 },
+    { name: t('statistics.periodDay'), time: t('statistics.periodDayHours'), value: s.active_day ?? 0 },
+    { name: t('statistics.periodEvening'), time: t('statistics.periodEveningHours'), value: s.active_evening ?? 0 },
+    { name: t('statistics.periodNight'), time: t('statistics.periodNightHours'), value: s.active_night ?? 0 },
   ];
   const total = items.reduce((sum, i) => sum + i.value, 0);
   const max = Math.max(...items.map(i => i.value), 0);
@@ -353,12 +311,12 @@ const movieEquiv = computed(() => {
 const kingPreview = computed(() => {
   const c = kingClip.value?.content ?? '';
   const clean = c.replace(/\s+/g, ' ').trim();
-  return clean.length > 20 ? `${clean.slice(0, 20)}…` : (clean || '暂无复制记录');
+  return clean.length > 20 ? `${clean.slice(0, 20)}…` : (clean || t('statistics.noCopyRecord'));
 });
 
 /** 图标渲染 */
 const icons: Record<string, string> = {
-  clip: 'M8 7h12m0 0-4-4m4 4-4 4m4 4H8m0 0 4 4m-4-4 4-4m-5 4H3',
+  clip: 'M8 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2M4 8h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z',
   image: 'M4 16l4.586-4.586a2 2 0 0 1 2.828 0L16 16m-2-2 1.586-1.586a2 2 0 0 1 2.828 0L20 14m-6-6h.01M6 20h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z',
   paste: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2',
   todo: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4',
@@ -409,9 +367,9 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         </button>
         <div class="ml-auto flex items-center gap-2 text-xs text-ink-faint">
           <span v-if="range === 'custom'" class="flex items-center gap-1">
-            <DatePicker v-model="customFrom" placeholder="开始日期" :max="customTo || undefined" />
+            <DatePicker v-model="customFrom" :placeholder="t('statistics.fromDate')" :max="customTo || undefined" />
             <span class="text-ink-faint">—</span>
-            <DatePicker v-model="customTo" placeholder="结束日期" :min="customFrom || undefined" />
+            <DatePicker v-model="customTo" :placeholder="t('statistics.toDate')" :min="customFrom || undefined" />
           </span>
           <!-- 阶段切换箭头：左右选择上一阶段/下一阶段，无可用方向时置灰禁用 -->
           <div class="flex items-center gap-1">
@@ -420,7 +378,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
               class="flex h-8 w-8 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
               :class="leftDisabled ? 'cursor-not-allowed text-ink-faint/40' : 'text-gold hover:bg-secondary'"
               :disabled="leftDisabled"
-              v-tip="'上一个阶段'"
+              v-tip="t('statistics.prevPhase')"
               @click="shiftRange(-1)"
             >
               <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -434,7 +392,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
               class="flex h-8 w-8 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
               :class="rightDisabled ? 'cursor-not-allowed text-ink-faint/40' : 'text-gold hover:bg-secondary'"
               :disabled="rightDisabled"
-              v-tip="'下一阶段'"
+              v-tip="t('statistics.nextPhase')"
               @click="shiftRange(1)"
             >
               <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -457,10 +415,10 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
     <template v-else>
       <!-- 查询失败态（与"暂无数据"空态区分，提供重试入口） -->
       <div v-if="loadError" class="glass-card rounded-2xl p-12 text-center">
-        <p class="text-lg text-ink">统计数据加载失败</p>
-        <p class="mt-1 text-sm text-ink-faint">请检查数据库是否可用后重试</p>
+        <p class="text-lg text-ink">{{ t('statistics.loadFailed') }}</p>
+        <p class="mt-1 text-sm text-ink-faint">{{ t('statistics.statLoadFailedDesc') }}</p>
         <button type="button" class="btn-soft mt-4 px-4 py-1.5 text-sm" @click="load({ skeleton: true })">
-          重试
+          {{ t('statistics.retry') }}
         </button>
       </div>
 
@@ -473,7 +431,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
             <path d="M7 15l3-3 3 3 4-5" />
           </svg>
         </div>
-        <p class="text-lg text-ink">暂无统计数据</p>
+        <p class="text-lg text-ink">{{ t('statistics.noStatsData') }}</p>
         <p class="mt-1 text-sm text-ink-faint">复制、粘贴、使用待办/便签等操作后，这里将展示你的使用画像</p>
       </div>
 
@@ -482,9 +440,9 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         <div v-if="title" class="glass-card overflow-hidden rounded-2xl">
           <div class="relative flex items-center gap-4 bg-gradient-to-r from-gold/25 via-gold/10 to-transparent p-5">
             <div class="gold-bar min-w-0">
-              <div class="text-xs uppercase tracking-widest text-gold">专属称号 · Unique Title</div>
-              <div class="mt-0.5 text-2xl font-bold text-ink">{{ title.name }}</div>
-              <div class="mt-0.5 text-xs text-ink-faint">基于当前时间范围的综合画像评分，独一无二</div>
+              <div class="text-xs uppercase tracking-widest text-gold">{{ t('statistics.uniqueTitle') }} · Unique Title</div>
+              <div class="mt-0.5 text-2xl font-bold text-ink">{{ tName(title.name) }}</div>
+              <div class="mt-0.5 text-xs text-ink-faint">{{ t('statistics.uniqueTitleDesc') }}</div>
             </div>
             <button
               v-if="titleScores.length > 0"
@@ -492,7 +450,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
               class="btn-soft ml-auto shrink-0 px-3 py-1.5 text-xs"
               @click="showTitleScores = !showTitleScores"
             >
-              {{ showTitleScores ? '收起评分' : '评分明细' }}
+              {{ showTitleScores ? t('statistics.hideScores') : t('statistics.scoreDetails') }}
             </button>
           </div>
           <div v-if="showTitleScores && titleScores.length > 0" class="border-t border-accent/60 px-5 py-3">
@@ -503,7 +461,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
                 class="rounded-full border px-3 py-1 text-xs tabular-nums"
                 :class="idx === 0 ? 'border-gold bg-gold/15 text-gold' : 'border-accent bg-surface-field text-ink-soft'"
               >
-                {{ sc.name }}
+                {{ tName(sc.name) }}
                 <span class="font-semibold">{{ sc.score.toFixed(1) }}</span>
               </div>
             </div>
@@ -512,20 +470,20 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
 
         <!-- ===== 我的标签（§7.8，受区间跨度门槛控制：跨度 < 15 天时整块不显示）===== -->
         <div v-if="tagSpanOK" class="glass-card rounded-2xl p-4">
-          <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">我的标签</h2>
+          <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.myTags') }}</h2>
           <div v-if="tags.length === 0" class="rounded-xl border border-dashed border-accent px-4 py-3 text-sm text-ink-faint">
-            暂无匹配标签
+            {{ t('statistics.noTags') }}
           </div>
           <div v-else class="space-y-3">
             <div v-for="group in tagsByCategory" :key="group.cat">
-              <div class="mb-1.5 text-xs font-medium text-ink-soft">{{ group.label }}</div>
+              <div class="mb-1.5 text-xs font-medium text-ink-soft">{{ tName(group.label) }}</div>
               <div class="flex flex-wrap gap-2">
                 <span
                   v-for="t in group.items"
                   :key="t.id"
                   class="inline-flex items-center rounded-full border border-gold/40 bg-gradient-to-r from-gold/20 to-gold/5 px-3 py-1 text-sm text-ink"
                 >
-                  {{ t.name }}
+                  {{ tName(t.name) }}
                 </span>
               </div>
             </div>
@@ -556,39 +514,39 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
           <!-- 打字量 -->
           <div class="glass-card rounded-2xl p-4">
-            <div class="text-xs uppercase tracking-wide text-ink-faint">打字量 · 复制字符总量</div>
+            <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.typingTitle') }}</div>
             <div class="mt-1 text-2xl font-semibold text-ink tabular-nums">{{ typingChars }}</div>
-            <div class="mt-1 text-xs text-ink-faint">累计复制内容长度（图片不计入）</div>
+            <div class="mt-1 text-xs text-ink-faint">{{ t('statistics.typingDesc') }}</div>
           </div>
 
           <!-- 复制之王 -->
           <div class="glass-card rounded-2xl p-4">
             <div class="flex items-center justify-between">
-              <span class="text-xs uppercase tracking-wide text-ink-faint">复制之王</span>
-              <span v-if="kingClip" class="text-xs text-gold tabular-nums">使用 {{ kingClip.count }} 次</span>
+              <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.copyKing') }}</span>
+              <span v-if="kingClip" class="text-xs text-gold tabular-nums">{{ t('statistics.usedTimes', { n: kingClip.count }) }}</span>
             </div>
             <div class="mt-1 truncate text-lg font-medium text-ink" v-tip="kingClip?.content ?? ''">
               {{ kingPreview }}
             </div>
-            <div class="mt-1 text-xs text-ink-faint">最常复制的文本内容</div>
+            <div class="mt-1 text-xs text-ink-faint">{{ t('statistics.copyKingDesc') }}</div>
           </div>
 
           <!-- 最长连续使用 -->
           <div class="glass-card rounded-2xl p-4">
-            <div class="text-xs uppercase tracking-wide text-ink-faint">最长连续使用</div>
+            <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.longestStreak') }}</div>
             <div class="mt-1 text-2xl font-semibold text-ink tabular-nums">
               {{ longestStreakLabel }}
             </div>
-            <div class="mt-1 text-xs text-ink-faint">{{ isDownsampled ? '所选范围内连续活跃月份' : '所选范围内连续活跃记录' }}</div>
+            <div class="mt-1 text-xs text-ink-faint">{{ isDownsampled ? t('statistics.streakDescMonth') : t('statistics.streakDescRecord') }}</div>
           </div>
 
           <!-- 时长换算 -->
           <div class="glass-card rounded-2xl p-4">
-            <div class="text-xs uppercase tracking-wide text-ink-faint">时长换算</div>
+            <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.durationEquiv') }}</div>
             <div class="mt-1 text-2xl font-semibold text-ink tabular-nums">
-              {{ movieEquiv > 0 ? `${movieEquiv} 部` : '不足 1 部' }}
+              {{ movieEquiv > 0 ? t('statistics.movieEq', { n: movieEquiv }) : t('statistics.movieLess') }}
             </div>
-            <div class="mt-1 text-xs text-ink-faint">相当于看了 {{ movieEquiv > 0 ? movieEquiv : '不到一部' }} 部 2 小时电影</div>
+            <div class="mt-1 text-xs text-ink-faint">{{ movieEquiv > 0 ? t('statistics.movieDesc', { n: movieEquiv }) : t('statistics.movieDescLess') }}</div>
             </div>
           </div>
         </LazySection>
@@ -596,12 +554,12 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         <!-- ===== 活跃时段（§7.5）· 流式加载 ===== -->
         <LazySection :key="`period-${lazyKey}`" skeleton-class="h-44">
           <div class="glass-card rounded-2xl p-4">
-            <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">活跃时段</h2>
+            <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.periodTitle') }}</h2>
           <div class="space-y-2.5">
             <div v-for="p in periodDist" :key="p.name" class="flex items-center gap-3">
-              <span class="w-12 shrink-0 text-sm text-ink">{{ p.name }}</span>
-              <span class="w-12 shrink-0 text-xs text-ink-faint tabular-nums">{{ p.time }}</span>
-              <span class="w-16 shrink-0 text-xs text-ink-faint tabular-nums">{{ p.value }} 次</span>
+              <span class="w-12 shrink-0 truncate text-sm text-ink">{{ p.name }}</span>
+              <span class="w-14 shrink-0 truncate text-xs text-ink-faint tabular-nums">{{ p.time }}</span>
+              <span class="w-16 shrink-0 text-xs text-ink-faint tabular-nums">{{ t('statistics.countTimes', { n: p.value }) }}</span>
               <div class="h-3 flex-1 overflow-hidden rounded-full bg-secondary">
                 <div
                   class="h-full rounded-full transition-all duration-500 ease-soft"
@@ -620,8 +578,8 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         <!-- ===== Tab 访问分布（§7.4）· 流式加载 ===== -->
         <LazySection :key="`tabs-${lazyKey}`" skeleton-class="h-44">
           <div class="glass-card rounded-2xl p-4">
-            <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">Tab 访问分布</h2>
-          <div v-if="tabDist.length === 0" class="text-sm text-ink-faint">暂无 Tab 访问记录</div>
+            <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.tabDistTitle') }}</h2>
+          <div v-if="tabDist.length === 0" class="text-sm text-ink-faint">{{ t('statistics.noTabDist') }}</div>
           <div v-else class="space-y-2">
             <div v-for="tab in tabDist" :key="tab.key" class="flex items-center gap-3">
               <span class="w-20 shrink-0 text-sm text-ink">{{ tab.key }}</span>
@@ -642,7 +600,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         <LazySection v-if="range !== 'day'" :key="`trend-${lazyKey}`" skeleton-class="h-52">
           <div class="glass-card rounded-2xl p-4">
           <div class="mb-3 flex flex-wrap items-center gap-2">
-            <h2 class="gold-bar mr-2 text-sm font-semibold text-ink">每日趋势</h2>
+            <h2 class="gold-bar mr-2 text-sm font-semibold text-ink">{{ t('statistics.dailyTrend') }}</h2>
             <button
               v-for="opt in trendOptions"
               :key="opt.key"
@@ -657,7 +615,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
               区间超 {{ TREND_DOWNSAMPLE_DAYS }} 天，已按月聚合（{{ series.length }} 个月）
             </span>
           </div>
-          <div v-if="series.length === 0" class="text-sm text-ink-faint">暂无趋势数据</div>
+          <div v-if="series.length === 0" class="text-sm text-ink-faint">{{ t('statistics.noTrendData') }}</div>
           <div v-else class="flex h-40 items-end gap-[2px] overflow-x-auto pb-1">
             <div
               v-for="(point, idx) in series"

@@ -7,10 +7,10 @@
   >
     <!-- 右上角工具栏：悬浮不占用内容空间；编辑态隐藏，避免遮挡 textarea -->
     <div v-if="!editing" class="absolute right-2 top-1 z-10 flex items-center gap-0.5">
-      <UiDropdown align="end" aria-label="更改配色" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
+      <UiDropdown align="end" :aria-label="t('common.changeColor')" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
         <template #trigger>
           <div
-              v-tip="'更改配色'"
+              v-tip="t('common.changeColor')"
               class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-ink-soft outline-none transition-colors hover:bg-white/40 hover:text-ink focus:outline-none"
           >
             <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -21,7 +21,7 @@
         <div class="w-56 space-y-2 p-1.5">
           <!-- 选择配色 -->
           <div>
-            <p class="mb-1 px-1 text-[10px] uppercase tracking-wide text-ink-faint">选择配色</p>
+            <p class="mb-1 px-1 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('note.colorTip') }}</p>
             <div class="flex flex-wrap gap-1.5 px-0.5">
               <button
                   v-for="c in noteColors"
@@ -45,20 +45,20 @@
               <div class="flex items-center gap-1.5">
                 <button
                     type="button"
-                    v-tip="'修改颜色'"
+                    v-tip="t('common.changeColorShort')"
                     class="h-5 w-5 shrink-0 rounded-full border border-white/60 shadow-sm transition-transform hover:scale-110"
                     :class="colorRow === idx ? 'ring-2 ring-gold' : ''"
                     :style="{ backgroundColor: row.color }"
                     @click="colorRow = colorRow === idx ? null : idx"
                 />
                 <input
-                    type="text" maxlength="8" placeholder="名称"
+                    type="text" maxlength="8" :placeholder="t('note.colorNamePlaceholder')"
                     v-model="row.name"
                     class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
                 />
                 <button
                     type="button"
-                    v-tip="'删除该配色'"
+                    v-tip="t('common.deleteColor')"
                     class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
                     @click="removeColorDraft(idx)"
                 >
@@ -71,10 +71,10 @@
                 <UiColorPicker v-model="row.color" :presets="NOTE_COLOR_PRESETS" />
               </div>
             </div>
-            <p v-if="colorDrafts.length === 0" class="px-1 py-1 text-center text-xs text-ink-faint">暂无配色，点击下方新增</p>
+            <p v-if="colorDrafts.length === 0" class="px-1 py-1 text-center text-xs text-ink-faint">{{ t('note.noColors') }}</p>
             <div class="flex items-center justify-between pt-0.5">
-              <button type="button" class="rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink" @click="addColorDraft">+ 新增配色</button>
-              <button type="button" class="btn-gold px-3 py-1 text-xs" @click="commitColors">完成</button>
+              <button type="button" class="rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink" @click="addColorDraft">{{ t('note.addColor') }}</button>
+              <button type="button" class="btn-gold px-3 py-1 text-xs" @click="commitColors">{{ t('note.done') }}</button>
             </div>
           </div>
           <div v-else class="border-t border-accent/60 pt-1.5">
@@ -84,7 +84,7 @@
                 class="w-full rounded-lg px-2 py-1 text-left text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
                 @click="openColorManager"
             >
-              管理配色…
+              {{ t('note.manageColors') }}
             </button>
           </div>
         </div>
@@ -92,7 +92,7 @@
       <button
           type="button"
           @click="$emit('request-delete', $event)"
-          v-tip="'删除'"
+          v-tip="t('common.delete')"
           class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-danger transition-colors hover:bg-danger/10"
       >
         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -112,7 +112,7 @@
           :highlight-string="highlightString"
           :active="highlight"
       />
-      <span v-else>双击编辑内容...</span>
+      <span v-else>{{ t('note.dblClickEdit') }}</span>
     </div>
 
     <div v-else class="flex-1">
@@ -121,7 +121,7 @@
           ref="textareaRef"
           rows="1"
           class="w-full resize-none overflow-hidden rounded-lg bg-transparent px-1 py-0.5 text-ink outline-none focus:bg-white/30 focus:shadow-[inset_0_0_0_1px_rgba(196,167,125,0.35)] transition-colors"
-          placeholder="输入便签内容..."
+          :placeholder="t('note.contentPlaceholder')"
           @blur="saveAndClose"
           @input="autoResize"
           @keydown.ctrl.enter="onCtrlEnterSave"
@@ -131,13 +131,13 @@
     <!-- 底部行：日期（左）+ 保存快捷键提示（右），mt-auto 推到底部，水平两端对齐垂直居中 -->
     <div class="mt-auto flex items-center justify-between gap-2 pt-2">
       <div class="text-xs text-ink-faint opacity-0 transition-opacity duration-300 ease-soft group-hover:opacity-100">
-        {{ formatDate(parseInt(note.updated_at)) }}
+        {{ formatDateLocalized(parseInt(note.updated_at)) }}
       </div>
       <div
           v-if="editing && saveShortcut"
           class="pointer-events-none rounded-md bg-white/35 px-2 py-0.5 text-[11px] text-ink-soft backdrop-blur-sm"
       >
-        {{ saveShortcut }} 保存
+        {{ saveShortcut }} {{ t('common.save') }}
       </div>
     </div>
   </div>
@@ -148,12 +148,17 @@ import UiDropdown from '~/components/ui/UiDropdown.vue';
 import UiColorPicker from '~/components/ui/UiColorPicker.vue';
 import { useNoteColors, resolveNoteColor, adaptNoteColorToScheme, NOTE_COLOR_PRESETS, type NoteColor } from '~/composables/useNoteColors';
 import { useColorScheme } from '~/composables/useColorScheme';
+import { useI18n } from '~/composables/useI18n';
 import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
 import type { Note } from '~/src/entities';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {formatDate} from "~/utils/formatDate";
+import { useFormatDate } from "~/composables/useFormatDate";
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { formatShortcutForDisplay, matchesKeyId } from "~/utils/shortcutFormat";
+
+const { t } = useI18n();
+const formatDateLocalized = useFormatDate();
 
 const props = defineProps<{
   note: Note

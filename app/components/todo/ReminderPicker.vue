@@ -10,7 +10,10 @@
  * 基于 UiDropdown：面板 Teleport 到 body + fixed 定位、视口收进，交互由组件统一处理。
  */
 import { computed, ref } from 'vue'
+import { useI18n } from '~/composables/useI18n'
 import UiDropdown from '~/components/ui/UiDropdown.vue'
+
+const { t } = useI18n();
 import UiSegmented from '~/components/ui/UiSegmented.vue'
 import DatePicker from '~/components/common/DatePicker.vue'
 import type { ReminderRule } from '~/src/entities'
@@ -40,23 +43,23 @@ const emit = defineEmits<{
   (e: 'update:rules', v: ReminderRule[]): void
 }>()
 
-const MODE_OPTIONS = [
-  { value: 'smart', label: '智能', tip: '按任务长短自动提前提醒' },
-  { value: 'custom', label: '自定义', tip: '自由添加多个闹钟' },
-  { value: 'off', label: '不提醒', tip: '关闭全部提前提醒' },
-]
+const MODE_OPTIONS = computed(() => [
+  { value: 'smart', label: t('reminder.smart'), tip: t('reminder.smartTip') },
+  { value: 'custom', label: t('reminder.custom'), tip: t('reminder.customTip') },
+  { value: 'off', label: t('reminder.off'), tip: t('reminder.offTip') },
+])
 
 /** 触发器文案（field 形态） */
 const fieldLabel = computed(() => {
-  if (props.mode === 'off') return '提醒：关'
-  if (props.mode === 'custom') return `提醒：${props.rules.length} 个闹钟`
-  return '提醒：智能'
+  if (props.mode === 'off') return t('reminder.triggerOff')
+  if (props.mode === 'custom') return t('reminder.triggerCustom', { n: props.rules.length })
+  return t('reminder.triggerSmart')
 })
 
 const iconTip = computed(() => {
-  if (props.mode === 'off') return '提醒：已关闭（点击开启）'
-  if (props.mode === 'custom') return `提醒：${props.rules.length} 个自定义闹钟（点击修改）`
-  return `提醒：智能（${props.smartHint || '按任务长短自动'}）`
+  if (props.mode === 'off') return t('reminder.triggerOffTip')
+  if (props.mode === 'custom') return t('reminder.triggerCustomTip', { n: props.rules.length })
+  return t('reminder.triggerSmartTip', { hint: props.smartHint || t('reminder.smartDefault') })
 })
 
 function setMode(v: string) {
@@ -96,7 +99,7 @@ function toggleAtPicker(idx: number) {
 
 /** 触发按钮文案：MM-DD HH:mm；未选择时给占位提示 */
 function formatAtValue(v: string): string {
-  return v ? v.replace('T', ' ').slice(5) : '选择时刻'
+  return v ? v.replace('T', ' ').slice(5) : t('reminder.pickTime')
 }
 
 function onAtValue(idx: number, v: string) {
@@ -116,16 +119,16 @@ function removeRule(idx: number) {
   emit('update:rules', props.rules.filter((_, i) => i !== idx))
 }
 
-const RULE_HINT: Record<ReminderRule['kind'], string> = {
-  percent: '剩余时长降到该比例时提醒',
-  offset: '截止前该时间提醒',
-  at: '到该时刻提醒',
-}
+const RULE_HINT = computed<Record<ReminderRule['kind'], string>>(() => ({
+  percent: t('reminder.kindPercentDesc'),
+  offset: t('reminder.kindOffsetDesc'),
+  at: t('reminder.kindAtDesc'),
+}))
 
 function ruleSummary(r: ReminderRule): string {
-  if (r.kind === 'percent') return `剩余 ${r.value}%`
-  if (r.kind === 'offset') return `提前 ${r.value} 分钟`
-  return `时刻 ${r.value.replace('T', ' ').slice(5)}`
+  if (r.kind === 'percent') return t('reminder.rulePercent', { n: r.value })
+  if (r.kind === 'offset') return t('reminder.ruleOffset', { n: r.value })
+  return t('reminder.ruleAt', { time: r.value.replace('T', ' ').slice(5) })
 }
 
 function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule) {
@@ -141,7 +144,7 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
       align="center"
       :close-on-select="false"
       :disabled="disabled"
-      aria-label="提醒设置"
+      :aria-label="t('reminder.aria')"
       panel-class="glass-card w-72 rounded-2xl p-3 shadow-float"
   >
     <template #trigger>
@@ -169,22 +172,22 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
     </template>
 
     <div class="space-y-2.5">
-      <UiSegmented :model-value="mode" :options="MODE_OPTIONS" block label="提醒模式" @update:model-value="setMode" />
+      <UiSegmented :model-value="mode" :options="MODE_OPTIONS" block :label="t('reminder.mode')" @update:model-value="setMode" />
 
       <!-- 智能：零配置说明 -->
       <p v-if="mode === 'smart'" class="px-1 text-xs leading-relaxed text-ink-faint">
-        长任务（距截止 ≥ 1 小时）提前 30/10 分钟各提醒一次；短任务提前 5 分钟提醒一次。
+        {{ t('reminder.smartDesc') }}
       </p>
 
       <!-- 不提醒 -->
       <p v-else-if="mode === 'off'" class="px-1 text-xs leading-relaxed text-ink-faint">
-        已关闭提前提醒（截止时刻的通知保留）。
+        {{ t('reminder.offDesc') }}
       </p>
 
       <!-- 自定义：闹钟规则列表 -->
       <div v-else class="space-y-1.5">
         <p v-if="!hasDue" class="rounded-lg bg-danger/10 px-2 py-1 text-[11px] text-danger">
-          未设置截止时间：百分比与提前分钟需要截止时间，仅"指定时刻"可用。
+          {{ t('reminder.needDueDate') }}
         </p>
         <div
             v-for="(rule, idx) in rules"
@@ -197,9 +200,9 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
                 class="h-7 shrink-0 cursor-pointer rounded-md border border-accent bg-surface-field px-1 text-xs text-ink focus:border-gold focus:outline-none"
                 @change="onKindChange(idx, ($event.target as HTMLSelectElement).value as ReminderRule['kind'], rule)"
             >
-              <option value="percent">按百分比</option>
-              <option value="offset">提前分钟</option>
-              <option value="at">指定时刻</option>
+              <option value="percent">{{ t('reminder.kindPercent') }}</option>
+              <option value="offset">{{ t('reminder.kindOffset') }}</option>
+              <option value="at">{{ t('reminder.kindAt') }}</option>
             </select>
             <div v-if="rule.kind === 'at'" class="relative min-w-0 flex-1">
               <!-- 触发按钮：展示当前指定时刻，点击打开统一日期时间选择面板 -->
@@ -234,11 +237,11 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
                   class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs tabular-nums text-ink focus:border-gold focus:outline-none"
                   @change="updateRule(idx, { value: clampRuleValue(rule.kind, ($event.target as HTMLInputElement).value) })"
               />
-              <span class="shrink-0 text-xs text-ink-faint">{{ rule.kind === 'percent' ? '%' : '分钟' }}</span>
+              <span class="shrink-0 text-xs text-ink-faint">{{ rule.kind === 'percent' ? t('reminder.unitPercent') : t('reminder.unitMin') }}</span>
             </template>
             <button
                 type="button"
-                v-tip="'删除该闹钟'"
+                v-tip="t('common.deleteAlarm')"
                 class="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
                 @click="removeRule(idx)"
             >
@@ -251,7 +254,7 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
         </div>
 
         <p v-if="rules.length === 0" class="px-1 py-1.5 text-center text-xs text-ink-faint">
-          暂无自定义闹钟，点击下方添加
+          {{ t('reminder.noCustomAlarms') }}
         </p>
 
         <div class="flex items-center justify-between border-t border-accent/60 pt-1.5">
@@ -260,9 +263,9 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
               class="cursor-pointer rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
               @click="addRule"
           >
-            + 添加闹钟
+            {{ t('reminder.addAlarm') }}
           </button>
-          <span class="px-1 text-[10px] text-ink-faint">共 {{ rules.length }} 次提醒</span>
+          <span class="px-1 text-[10px] text-ink-faint">{{ t('reminder.totalAlarms', { n: rules.length }) }}</span>
         </div>
       </div>
     </div>

@@ -3,6 +3,10 @@
  * 设置页单个快捷键行：启用开关 + 录制按钮 + 重置按钮 + 错误提示。
  * 「全局/局部快捷键列表」与「折叠数字粘贴组」共用同一模板，从 SettingMain 收敛而来。
  */
+import { useI18n } from '~/composables/useI18n';
+
+const { t } = useI18n();
+
 defineProps<{
   item: {
     id: string;
@@ -45,13 +49,13 @@ const emit = defineEmits<{
             :class="recording ? 'border-gold ring-1 ring-gold/60 animate-pulse' : ''"
             @click="emit('record')"
         >
-          {{ recording ? '按下新快捷键… (Esc 取消)' : item.display }}
+          {{ recording ? t('shortcut.pressNewKey') : item.display }}
         </button>
         <button
             v-if="item.isModified"
             type="button"
             class="btn-soft p-2"
-            v-tip="'重置为默认'"
+            v-tip="t('setting.shortcuts.resetToDefault')"
             @click="emit('reset')"
         >
           <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

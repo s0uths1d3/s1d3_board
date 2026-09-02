@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '~/composables/useI18n';
+import { messages } from '~/i18n/messages';
 /**
  * 统一日期选择器（DatePicker）
  *
@@ -36,7 +38,7 @@ const props = withDefaults(defineProps<{
    */
   liveEmit?: boolean;
 }>(), {
-  placeholder: '选择日期',
+  placeholder: '',
   mode: 'date',
   min: '',
   max: '',
@@ -112,16 +114,19 @@ function syncView() {
   view.value = { year: d.getFullYear(), month: d.getMonth() };
 }
 
-const viewTitle = computed(() => `${view.value.year} 年 ${view.value.month + 1} 月`);
+const { locale, t } = useI18n();
+const fmtYearMonth = (y: number, m: number) => t('date.yearMonth', { y, m });
+
+const viewTitle = computed(() => fmtYearMonth(view.value.year, view.value.month + 1));
 
 /** 上/下月提示文案：用 Date 进制滚动计算，避免一月/十二月显示 "0 月"/"13 月" 且年份不联动 */
 const prevMonthLabel = computed(() => {
   const d = new Date(view.value.year, view.value.month - 1, 1);
-  return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月`;
+  return fmtYearMonth(d.getFullYear(), d.getMonth() + 1);
 });
 const nextMonthLabel = computed(() => {
   const d = new Date(view.value.year, view.value.month + 1, 1);
-  return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月`;
+  return fmtYearMonth(d.getFullYear(), d.getMonth() + 1);
 });
 
 /** 月份切换方向（供滑动动画使用：1=向后，-1=向前） */
@@ -145,7 +150,9 @@ const cells = computed<Date[]>(() => {
   return list;
 });
 
-const weekHeaders = ['一', '二', '三', '四', '五', '六', '日'];
+const weekHeaders = computed(() =>
+  (messages[locale.value] as { date: { weekdays: string[] } }).date.weekdays,
+);
 
 /** 今日日期（computed）：跨天运行后"今日"描边仍指向正确日期 */
 const todayStr = computed(() => fmtDate(new Date()));
@@ -333,7 +340,7 @@ onBeforeUnmount(() => {
 const hasValue = computed(() => !!selectedDate.value);
 
 const display = computed(() => {
-  if (!hasValue.value) return props.placeholder;
+  if (!hasValue.value) return props.placeholder || t('date.placeholder');
   return props.mode === 'datetime' && selectedTime.value
     ? `${selectedDate.value} ${selectedTime.value}`
     : selectedDate.value;
@@ -439,10 +446,10 @@ const clearable = computed(() => hasValue.value);
 
           <!-- 日期时间模式：时分选择（自定义下拉，避免原生 select 项数限制） -->
           <div v-if="mode === 'datetime'" class="mt-3 flex items-center justify-center gap-2 border-t border-accent/60 pt-3">
-            <span class="text-xs text-ink-faint">时间</span>
+            <span class="text-xs text-ink-faint">{{ t('date.time') }}</span>
 
             <!-- 小时选择（0-23）：面板靠近视口底部，向上展开避免被屏幕裁切 -->
-            <UiDropdown align="end" direction="up" :close-on-select="false" aria-label="小时" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive(hourListEl, hour)">
+            <UiDropdown align="end" direction="up" :close-on-select="false" :aria-label="t('date.hour')" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive(hourListEl, hour)">
               <template #trigger>
                 <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none">
                   <span>{{ pad(hour) }}</span>
@@ -469,7 +476,7 @@ const clearable = computed(() => hasValue.value);
             <span class="text-ink-faint">:</span>
 
             <!-- 分钟选择（0-59） -->
-            <UiDropdown align="end" direction="up" :close-on-select="false" aria-label="分钟" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive(minuteListEl, minute)">
+            <UiDropdown align="end" direction="up" :close-on-select="false" :aria-label="t('date.minute')" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive(minuteListEl, minute)">
               <template #trigger>
                 <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none">
                   <span>{{ pad(minute) }}</span>
@@ -497,7 +504,7 @@ const clearable = computed(() => hasValue.value);
               type="button" class="btn-soft ml-1 px-3 py-1 text-xs"
               @click="emitValue(); close()"
             >
-              确定
+              {{ t('common.confirm') }}
             </button>
           </div>
         </div>

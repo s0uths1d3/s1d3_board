@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {ClipboardData} from '~/src/entities';
 import {formatDate} from "~/utils/formatDate";
+import { useFormatDate } from "~/composables/useFormatDate";
 import {
   getSelectedRowIndex,
   selectedRowIndex,
@@ -26,6 +27,7 @@ import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
 import { activeTab } from "~/composables/useTabs";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
 import { useSearchHighlight } from "~/composables/useSearchHighlight";
+import { useI18n } from "~/composables/useI18n";
 // 统计页懒加载（§14.5）：统计 Tab 非首屏，异步加载降低主窗口初始包体与内存
 import { defineAsyncComponent } from "vue";
 const StatsPage = defineAsyncComponent(() => import("~/components/statistics/StatsPage.vue"));
@@ -33,6 +35,8 @@ const StatsPage = defineAsyncComponent(() => import("~/components/statistics/Sta
 const listElement = ref<HTMLElement | null>(null);
 /** 是否开启悬停提示窗口（tooltip），受设置页「提示窗口」开关控制 */
 const { tooltipEnabled } = useTooltipEnabled();
+const { t } = useI18n();
+const formatDateLocalized = useFormatDate();
 const searchInput = ref<HTMLElement | null>(null);
 
 /** 剪贴板写库事件的去抖合并计时器（连续复制时避免频繁查库） */
@@ -332,7 +336,11 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
   // 用 item.type 判定而非 DOM 内是否含 <img>：图片懒渲染下未进入视口的项是占位骨架，
   // 此时 DOM 无 <img>，但 hover 到该项时应按图片项展示（content 已在内存中）。
   const isImageItem = (item.type ?? 'text') === 'image';
-  const meta = `创建时间${formatDate(parseInt(item.created_at))} · 使用次数:${item.count} · 最后使用:${formatDate(parseInt(item.updated_at))}`;
+  const meta = t('clip.meta', {
+    created: formatDateLocalized(parseInt(item.created_at)),
+    count: item.count,
+    updated: formatDateLocalized(parseInt(item.updated_at)),
+  });
   let payload: { text?: string; image?: string; meta?: string; x: number; y: number; top: number; bottom: number };
   if (isImageItem) {
     payload = {
@@ -450,15 +458,15 @@ let unlistenCommandResults: Array<() => void> = [];
 
 function onAddToPinnedResult(ev: unknown) {
   const status = (ev as { payload?: { status?: string } })?.payload?.status;
-  if (status === 'added') showPinnedHint('已添加到常用剪贴板');
-  else if (status === 'exists') showPinnedHint('该内容已在常用剪贴板中');
-  else if (status === 'none') showPinnedHint('请先在剪贴板中选择一项');
-  else if (status === 'error') showPinnedHint('添加常用剪贴板失败');
+  if (status === 'added') showPinnedHint(t('clip.addedToPinned'));
+  else if (status === 'exists') showPinnedHint(t('clip.existsInPinned'));
+  else if (status === 'none') showPinnedHint(t('clip.selectFirst'));
+  else if (status === 'error') showPinnedHint(t('clip.addToPinnedFailed'));
 }
 
 function onFavoriteResult(ev: unknown) {
   const fav = (ev as { payload?: { favorite?: boolean } })?.payload?.favorite;
-  showPinnedHint(fav ? '已收藏' : '已取消收藏');
+  showPinnedHint(fav ? t('clip.favorited') : t('clip.unfavorited'));
 }
 
 function onImageViewerClosed() {
@@ -555,11 +563,11 @@ async function favorite(id: number, value: number) {
   value = value === 0 ? 1 : 0;
   try {
     await clipboardService.updateFavorite(id, value)
-    showPinnedHint(value === 1 ? '已收藏' : '已取消收藏');
+    showPinnedHint(value === 1 ? t('clip.favorited') : t('clip.unfavorited'));
   } catch (e) {
     // DB 失败时星标 UI 不会因此错位（列表刷新后以数据库为准），给出可见反馈
     console.error('更新收藏状态失败:', e);
-    showPinnedHint('收藏操作失败');
+    showPinnedHint(t('clip.favoriteFailed'));
   }
 }
 
@@ -579,7 +587,7 @@ function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
   ctxMenuX.value = e.clientX;
   ctxMenuY.value = e.clientY;
   ctxMenuItems.value = [
-    { label: '添加到常用剪贴板', action: () => addToPinned(item) },
+    { label: t('clip.addToPinned'), action: () => addToPinned(item) },
   ];
   ctxMenuVisible.value = true;
 }
@@ -591,14 +599,14 @@ async function addToPinned(item: ClipboardData) {
     const type = (item.type ?? 'text') as 'text' | 'image';
     const exists = await clipboardService.isPinnedContentExist(item.content, type);
     if (exists) {
-      showPinnedHint('该内容已在常用剪贴板中');
+      showPinnedHint(t('clip.existsInPinned'));
       return;
     }
     await clipboardService.insertPinnedClip(item.content, type, '', item.source);
-    showPinnedHint('已添加到常用剪贴板');
+    showPinnedHint(t('clip.addedToPinned'));
   } catch (e) {
     console.error('添加常用剪贴板失败:', e);
-    showPinnedHint('添加常用剪贴板失败');
+    showPinnedHint(t('clip.addToPinnedFailed'));
   }
 }
 
@@ -620,7 +628,7 @@ const deleteConfirmTarget = ref<ClipboardData | null>(null);
 function handleDelete(target: ClipboardData, e?: MouseEvent) {
   if (!target) return;
   deleteConfirmTarget.value = target;
-  deleteConfirmMessage.value = target.type === 'image' ? '确定要删除该图片吗？' : '确定要删除该项吗？';
+  deleteConfirmMessage.value = t(target.type === 'image' ? 'clip.deleteConfirmImage' : 'clip.deleteConfirmText');
   const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null;
   deleteConfirmAnchor.value = btn?.getBoundingClientRect() ?? null;
   deleteConfirmVisible.value = true;
@@ -636,11 +644,11 @@ async function confirmDelete() {
     try {
       await clipboardService.deleteClipboardData(target.id);
       await fetchData();
-      showPinnedHint('已删除');
+      showPinnedHint(t('clip.deleted'));
     } catch (e) {
       // 失败不再静默：此前确认框已关、无任何提示、列表也不刷新
       console.error('删除失败:', e);
-      showPinnedHint('删除失败，请重试');
+      showPinnedHint(t('clip.deleteFailed'));
     }
   }
   refocusList();
@@ -848,14 +856,14 @@ async function openImageViewer(item: ClipboardData) {
                       ref="searchInput"
                       v-model="highlightContent"
                       type="text"
-                      placeholder="输入以搜索 · ↑/↓ 选择 · Enter 粘贴"
+                      :placeholder="t('clip.searchPlaceholder')"
                       class="list-search-input w-full bg-transparent text-ink placeholder:text-ink-faint focus:outline-none"
                   />
                   <button
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
                       :class="filter.favorite === 1 ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
-                      v-tip="filter.favorite === 1 ? '仅显示收藏（点击取消）' : '仅显示收藏'"
+                      v-tip="t(filter.favorite === 1 ? 'clip.favoriteOff' : 'clip.favoriteOn')"
                       @click="handleFilter"
                   >
                     <svg class="h-4 w-4" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
@@ -866,7 +874,7 @@ async function openImageViewer(item: ClipboardData) {
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
                       :class="filter.type === 'image' ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
-                      v-tip="filter.type === 'image' ? '仅显示图片（点击取消）' : '仅显示图片'"
+                      v-tip="t(filter.type === 'image' ? 'clip.imagesOff' : 'clip.imagesOn')"
                       @click="handleTypeFilter"
                   >
                     <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -878,7 +886,7 @@ async function openImageViewer(item: ClipboardData) {
                   <button
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
-                      v-tip="'清空搜索'"
+                      v-tip="t('clip.clearSearch')"
                       @click="highlightContent = ''"
                   >
                     <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -899,7 +907,7 @@ async function openImageViewer(item: ClipboardData) {
                 <button
                     type="button"
                     class="flex h-5 w-5 items-center justify-center rounded-full text-gold transition-colors hover:bg-gold/20"
-                    v-tip="'取消全部筛选'"
+                    v-tip="t('common.clearAllFilters')"
                     @click="filter.favorite = 0; filter.type = 'all'"
                 >
                   <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
@@ -958,10 +966,10 @@ async function openImageViewer(item: ClipboardData) {
                     </div>
                     <!-- 基础信息固定显示在容器最后一行 -->
                     <div class="mt-1 shrink-0 text-xs uppercase font-semibold opacity-60 text-ink-soft">
-                      {{ item.type === 'image' ? '图片' : '文本' }}
-                      创建时间{{ formatDate(parseInt(item.created_at)) }}
-                      使用次数:{{ item.count }}
-                      最后使用:{{ formatDate(parseInt(item.updated_at)) }}
+                      {{ t(item.type === 'image' ? 'common.image' : 'common.text') }}
+                      {{ t('clip.createdAt') }}{{ formatDateLocalized(parseInt(item.created_at)) }}
+                      {{ t('clip.useCount') }}{{ item.count }}
+                      {{ t('clip.lastUsedAt') }}{{ formatDateLocalized(parseInt(item.updated_at)) }}
                     </div>
                   </div>
                   <button class="btn-soft btn-circle p-2" @click="favorite(item.id,item.is_favorite)">
@@ -986,10 +994,10 @@ async function openImageViewer(item: ClipboardData) {
                   ref="clipLoadMoreEl"
                   class="flex items-center justify-center gap-2 py-4 text-xs text-ink-faint"
               >
-                <span v-if="loadingMore">加载中…</span>
-                <span v-else>继续向下滚动加载更多</span>
+                <span v-if="loadingMore">{{ t('clip.loadingMore') }}</span>
+                <span v-else>{{ t('clip.scrollMore') }}</span>
               </div>
-              <div v-else-if="data.length" class="py-4 text-center text-xs text-ink-faint">已全部加载</div>
+              <div v-else-if="data.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.noMore') }}</div>
 
               <!-- 添加到常用剪贴板的即时反馈 -->
               <div

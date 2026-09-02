@@ -10,7 +10,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
               </svg>
             </div>
-            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">总任务</div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.total') }}</div>
             <div class="text-xl font-semibold text-ink tabular-nums">{{ todos.length }}</div>
           </div>
 
@@ -20,7 +20,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
               </svg>
             </div>
-            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">完成率</div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.completionRate') }}</div>
             <div class="text-xl font-semibold text-ink tabular-nums">{{ completionRate }}%</div>
           </div>
 
@@ -30,7 +30,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
             </div>
-            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">准时率</div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.onTimeRate') }}</div>
             <div class="text-xl font-semibold text-ink tabular-nums">{{ onTimeRate }}%</div>
           </div>
         </div>
@@ -45,11 +45,11 @@
                 ref="todoSearchInput"
                 v-model="searchQuery"
                 type="text"
-                placeholder="搜索任务..."
+                :placeholder="t('todo.searchPlaceholder')"
                 class="todo-search-input min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             />
 
-            <UiDropdown align="center" aria-label="筛选" panel-class="glass-card menu w-32 rounded-2xl p-2">
+            <UiDropdown align="center" :aria-label="t('todo.filter')" panel-class="glass-card menu w-32 rounded-2xl p-2">
               <template #trigger="{ open }">
                 <label class="btn-soft flex shrink-0 cursor-pointer items-center">
                   {{ currentFilterLabel }}
@@ -65,10 +65,10 @@
               </ul>
             </UiDropdown>
 
-            <UiDropdown align="center" aria-label="排序" panel-class="glass-card menu w-40 rounded-2xl p-2">
+            <UiDropdown align="center" :aria-label="t('todo.sort')" panel-class="glass-card menu w-40 rounded-2xl p-2">
               <template #trigger="{ open }">
                 <label class="btn-soft flex cursor-pointer items-center">
-                  排序
+                  {{ t('todo.sort') }}
                   <svg class="ml-1 h-4 w-4 transform transition-transform duration-200" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"></path>
                   </svg>
@@ -85,12 +85,12 @@
             <button
                 @click="toggleAddForm"
                 class="btn-gold ml-auto flex h-10 shrink-0 items-center gap-1.5 px-3"
-                v-tip="showAddForm ? '收起' : '展开新增任务'"
+                v-tip="t(showAddForm ? 'todo.collapse' : 'todo.expandAddForm')"
             >
               <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
               </svg>
-              <span class="hidden text-sm sm:inline">新增任务</span>
+              <span class="hidden text-sm sm:inline">{{ t('todo.newTaskBtn') }}</span>
             </button>
           </div>
         </div>
@@ -105,8 +105,8 @@
               <input
                   v-model="newTodo.title"
                   type="text"
-                  placeholder="任务标题 *"
-                  class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                  class="todo-title-input w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                  :placeholder="t('todo.titlePlaceholder') + ' *'"
                   @keyup.enter="newTodo.title ? descriptionInput?.focus() : null"
               />
 
@@ -114,7 +114,7 @@
                   ref="descriptionInput"
                   v-model="newTodo.description"
                   class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-                  placeholder="任务描述（可选）"
+                  :placeholder="t('todo.descPlaceholder')"
                   rows="2"
               ></textarea>
 
@@ -122,17 +122,17 @@
               <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-2 min-w-0">
                   <div class="flex items-center gap-2">
-                    <label class="whitespace-nowrap text-sm text-ink-faint">优先级</label>
+                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.priority') }}</label>
                     <PrioritySelect v-model="newTodo.priorityLevel" />
                   </div>
 
                   <div class="flex items-center gap-2">
-                    <label class="whitespace-nowrap text-sm text-ink-faint">截止日期</label>
-                    <DueTimeSelect v-model="newTodo.dueDate" placeholder="截止时间" />
+                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.dueDate') }}</label>
+                    <DueTimeSelect v-model="newTodo.dueDate" :placeholder="t('todo.dueTime')" />
                   </div>
 
                   <div class="flex items-center gap-2">
-                    <label class="whitespace-nowrap text-sm text-ink-faint">提醒</label>
+                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.reminderLabel') }}</label>
                     <ReminderPicker
                         v-model:mode="newTodo.remindMode"
                         v-model:rules="newTodo.remindRules"
@@ -142,8 +142,8 @@
                   </div>
 
                   <div class="flex items-center gap-2">
-                    <label class="whitespace-nowrap text-sm text-ink-faint">分类</label>
-                    <CategorySelect v-model="newTodo.category" placeholder="分类" @category-delete="handleCategoryDelete" />
+                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.category') }}</label>
+                    <CategorySelect v-model="newTodo.category" :placeholder="t('todo.category')" @category-delete="handleCategoryDelete" />
                   </div>
                 </div>
 
@@ -151,7 +151,7 @@
                   <button
                       type="button"
                       @click="addTodo"
-                      v-tip="'添加任务'"
+                      v-tip="t('common.addTask')"
                       class="btn-gold flex h-9 w-9 items-center justify-center p-0"
                       :disabled="!newTodo.title.trim()"
                   >
@@ -162,7 +162,7 @@
                   <button
                       type="button"
                       @click="resetForm"
-                      v-tip="'重置'"
+                      v-tip="t('common.reset')"
                       class="btn-soft flex h-9 w-9 items-center justify-center p-0"
                   >
                     <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -203,17 +203,17 @@
           ref="sentinel"
           class="flex items-center justify-center gap-2 py-4 text-xs text-ink-faint"
       >
-        <span v-if="loadingMore">加载中…</span>
-        <span v-else>继续向下滚动加载更多</span>
+        <span v-if="loadingMore">{{ t('todo.loadingMore') }}</span>
+        <span v-else>{{ t('clip.scrollMore') }}</span>
       </div>
-      <div v-else-if="todos.length" class="py-4 text-center text-xs text-ink-faint">已全部加载</div>
+      <div v-else-if="todos.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.noMore') }}</div>
 
       <div v-if="filteredAndSortedTodos.length === 0" class="py-20 text-center">
         <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
         </svg>
         <p class="text-lg text-ink-faint">
-          {{ !searchQuery.trim() && todos.length === 0 ? '还没有任务，添加第一个任务吧！' : '没有符合条件的任务' }}
+          {{ !searchQuery.trim() && todos.length === 0 ? t('todo.empty') : t('todo.emptySearch') }}
         </p>
       </div>
 
@@ -249,6 +249,7 @@ import reminderService from '~/src/todo/reminderService'
 import { isTodoOverdue } from '~/src/todo/overdue'
 import DeleteConfirm from '~/components/common/DeleteConfirm.vue'
 import { useNow } from '~/composables/useNow'
+import { useI18n } from '~/composables/useI18n'
 import { todoList, selectedTodoIndex, editSignal, selectTodo, setTodoLoadMoreHook } from '~/src/commands/local/todoStore'
 import { useInfiniteList } from '~/composables/useInfiniteList'
 
@@ -263,6 +264,8 @@ const {
   pageSize: 50,
   signatureOf: (t) => `${t.id}:${t.updated_at}:${t.completed}`,
 })
+
+const { t } = useI18n();
 
 /** 全量待办集合（轮询全量查询结果）：仅用于统计卡片与提醒调度，不参与列表渲染 */
 const statsTodos = ref<Todo[]>([])
@@ -305,24 +308,24 @@ const currentSort = ref('date-desc')
 /** 响应式当前时间，用于截止时间到达时自动刷新逾期/筛选状态 */
 const now = useNow()
 
-const filters = [
-  { label: '全部', value: 'all' },
-  { label: '进行中', value: 'pending' },
-  { label: '已完成', value: 'completed' },
-  { label: '高优先级', value: 'high' },
-  { label: '已逾期', value: 'overdue' },
-  { label: '逾期完成', value: 'overdue-completed' }
-]
+const filters = computed(() => [
+  { label: t('todo.all'), value: 'all' },
+  { label: t('todo.active'), value: 'pending' },
+  { label: t('todo.completed'), value: 'completed' },
+  { label: t('todo.highPriority'), value: 'high' },
+  { label: t('todo.overdue'), value: 'overdue' },
+  { label: t('todo.overdueCompleted'), value: 'overdue-completed' },
+])
 
-const sortOptions = [
-  { label: '最新创建', value: 'date-desc' },
-  { label: '最早创建', value: 'date-asc' },
-  { label: '优先级', value: 'priority' },
-  { label: '名称', value: 'name' }
-]
+const sortOptions = computed(() => [
+  { label: t('todo.newest'), value: 'date-desc' },
+  { label: t('todo.oldest'), value: 'date-asc' },
+  { label: t('todo.priority'), value: 'priority' },
+  { label: t('todo.name'), value: 'name' },
+])
 
-/** 筛选按钮显示的中文标签：value→label 映射（避免点击后显示英文 value） */
-const currentFilterLabel = computed(() => filters.find(f => f.value === currentFilter.value)?.label ?? currentFilter.value)
+/** 筛选按钮显示的标签：value→label 映射（避免点击后显示英文 value） */
+const currentFilterLabel = computed(() => filters.value.find(f => f.value === currentFilter.value)?.label ?? currentFilter.value)
 
 /** 当前等级系统中的最高档位（"高优先级"筛选口径，随用户自定义档位自适应） */
 const highLevel = computed(() => {
@@ -417,7 +420,7 @@ const toggleAddForm = () => {
     newTodo.value.dueDate = defaultDueDate()
 
     nextTick(() => {
-      const titleInput = document.querySelector('input[placeholder="任务标题 *"]') as HTMLInputElement
+      const titleInput = document.querySelector('input.todo-title-input') as HTMLInputElement
       titleInput?.focus()
     })
   }
@@ -519,7 +522,7 @@ const updateTodo = async (id: string, updates: Partial<Todo>) => {
 const deleteTodo = (id: string, rect?: DOMRect) => {
   deleteConfirmAction = 'todo'
   deleteConfirmId = id
-  deleteConfirmMessage.value = '确定要删除该任务吗？'
+  deleteConfirmMessage.value = t('todo.deleteTaskConfirm')
   deleteConfirmAnchor.value = rect ?? null
   deleteConfirmVisible.value = true
 }
@@ -595,7 +598,7 @@ let deleteConfirmId: string | null = null
 const handleCategoryDelete = (name: string, rect?: DOMRect) => {
   deleteConfirmAction = 'category'
   deleteConfirmId = name
-  deleteConfirmMessage.value = '确定要删除该分类吗？'
+  deleteConfirmMessage.value = t('todo.deleteCategoryConfirm')
   deleteConfirmAnchor.value = rect ?? null
   deleteConfirmVisible.value = true
 }

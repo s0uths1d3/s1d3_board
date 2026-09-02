@@ -7,15 +7,21 @@
  * 面板含删除按钮与新增输入框（交互中不应收起），故 close-on-select=false，
  * 选择/新增成功后通过受控 open 收起。
  */
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
+import { useI18n } from '~/composables/useI18n'
+import { useDisplayNames } from '~/composables/useDisplayNames'
+
+const { t } = useI18n();
+const { categoryName } = useDisplayNames()
 import { useCategories } from '~/composables/useCategories'
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   modelValue: string
   placeholder?: string
-}>(), {
-  placeholder: '选择分类'
-})
+}>()
+
+// placeholder 未传时回退为「分类」；prop 默认值会被提升到 setup 外，故用 computed
+const placeholderText = computed(() => props.placeholder ?? t('todo.category'))
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
@@ -52,7 +58,7 @@ const submitNew = async () => {
     emit('update:modelValue', name)
     open.value = false
   } else {
-    errorMsg.value = '分类已存在'
+    errorMsg.value = t('todo.categoryExists')
   }
 }
 
@@ -81,7 +87,7 @@ watch(open, (v) => {
           class="flex w-full cursor-pointer items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
           :class="isOpen ? 'border-gold' : ''"
       >
-        <span class="truncate" :class="modelValue ? 'text-ink' : 'text-ink-faint'">{{ modelValue || placeholder }}</span>
+        <span class="truncate" :class="modelValue ? 'text-ink' : 'text-ink-faint'">{{ categoryName(modelValue) || placeholderText }}</span>
         <svg class="h-4 w-4 shrink-0 text-gold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
              stroke-linecap="round" stroke-linejoin="round">
           <path d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
@@ -99,11 +105,11 @@ watch(open, (v) => {
               class="flex-1 whitespace-nowrap px-2 py-1.5 text-left"
               @click="select(c)"
           >
-            {{ c }}
+            {{ categoryName(c) }}
           </button>
           <button
               type="button"
-              v-tip="'删除分类'"
+              v-tip="t('common.deleteCategory')"
               class="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
               @click.stop="onDelete(c, $event)"
           >
@@ -120,7 +126,7 @@ watch(open, (v) => {
             ref="inputEl"
             v-model="newName"
             type="text"
-            placeholder="新增分类…"
+            :placeholder="t('todo.newCategoryPlaceholder')"
             maxlength="10"
             class="w-full rounded-md border border-accent bg-surface-field px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             @keydown.enter.prevent="submitNew"

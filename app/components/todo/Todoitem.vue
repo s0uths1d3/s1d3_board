@@ -10,7 +10,7 @@
           <label
               class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border transition-all duration-300 ease-soft hover:shadow-sm"
               :class="visualCompleted ? 'border-gold bg-gold hover:bg-gold-soft' : 'border-line bg-surface-field hover:border-gold hover:bg-secondary'"
-              v-tip="'标记完成'"
+              v-tip="t('common.markComplete')"
           >
             <input
                 type="checkbox"
@@ -52,14 +52,14 @@
                   color: pLevel.color,
                   border: `1px solid ${pLevel.color}59`,
                 }"
-                v-tip="`优先级 ${pLevel.level}/255`"
+                v-tip="t('todo.priorityBadge', { level: pLevel.level })"
             >
               <span class="h-1.5 w-1.5 rounded-full" :style="{ backgroundColor: pLevel.color }" />
-              {{ pLevel.name }}
+              {{ priorityName(pLevel) }}
             </span>
 
             <span class="rounded-full border border-accent px-2 py-0.5 text-xs text-ink-soft">
-              {{ todo.category }}
+              {{ categoryName(todo.category) }}
             </span>
 
             <!-- 已逾期标签：截止时间已过。未完成=红色"已逾期"，已完成=金色"逾期完成" -->
@@ -70,7 +70,7 @@
                   ? 'bg-gold/20 text-gold'
                   : 'bg-[rgba(200,90,90,0.15)] text-danger'"
             >
-              {{ overdueCompleted ? '逾期完成' : '已逾期' }}
+              {{ overdueCompleted ? t('todo.overdueCompleted') : t('todo.overdue') }}
             </span>
           </div>
 
@@ -93,7 +93,7 @@
                   v-if="todo.dueDate"
                   class="flex items-center gap-1"
                   :class="{ 'text-danger': isOverdue && !visualCompleted }"
-                  v-tip="isOverdue && !visualCompleted ? '已逾期' : '截止时间'"
+                  v-tip="t(isOverdue && !visualCompleted ? 'todo.overdue' : 'todo.dueTime')"
               >
                 <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 7v5l3 2"></path>
@@ -117,7 +117,7 @@
               </button>
 
               <!-- 优先级选择：三层递减线表示高/中/低优先级 -->
-              <UiDropdown align="center" aria-label="优先级" panel-class="glass-card menu w-32 rounded-2xl p-2">
+              <UiDropdown align="center" :aria-label="t('todo.priority')" panel-class="glass-card menu w-32 rounded-2xl p-2">
                 <template #trigger>
                   <label class="btn-soft flex h-8 w-8 cursor-pointer items-center justify-center p-2">
                     <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -134,7 +134,7 @@
                           :class="currentLevel === p.level ? 'bg-gold/20 font-semibold' : ''"
                       >
                         <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ backgroundColor: p.color }" />
-                        <span class="flex-1">{{ p.name }}</span>
+                        <span class="flex-1">{{ priorityName(p) }}</span>
                         <span class="shrink-0 text-[10px] tabular-nums text-ink-faint">{{ p.level }}</span>
                       </a>
                     </li>
@@ -158,11 +158,11 @@
                         <a
                             @click="chooseCategory(category, close)"
                             class="flex-1 whitespace-nowrap px-2 py-1"
-                        >{{ category }}</a>
+                        >{{ categoryName(category) }}</a>
                         <button
                             type="button"
                             data-dd-keep-open
-                            v-tip="'删除分类'"
+                            v-tip="t('common.deleteCategory')"
                             class="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
                             @click.stop="onDeleteCategory(category, $event)"
                         >
@@ -177,7 +177,7 @@
                       <input
                           v-model="newCategory"
                           type="text"
-                          placeholder="新增分类…"
+                          :placeholder="t('todo.newCategoryPlaceholder')"
                           maxlength="10"
                           class="w-full rounded-lg border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
                           @keydown.enter.prevent="addNewCategory(close)"
@@ -224,12 +224,12 @@
                 :data-todo-edit-title="todo.id"
                 type="text"
                 class="min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-                placeholder="任务标题"
+                :placeholder="t('todo.titlePlaceholder')"
                 @keyup.enter="onTitleEnterSave"
             />
           <button
               type="button"
-              v-tip="'保存'"
+              v-tip="t('common.save')"
               @click="saveEdit"
               class="btn-gold flex h-9 w-9 shrink-0 items-center justify-center p-0"
           >
@@ -239,7 +239,7 @@
           </button>
           <button
               type="button"
-              v-tip="'取消'"
+              v-tip="t('common.cancel')"
               @click="cancelEdit"
               class="btn-soft flex h-9 w-9 shrink-0 items-center justify-center p-0"
           >
@@ -251,7 +251,7 @@
         <textarea
             v-model="editDescription"
             class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-            placeholder="任务描述（可选）"
+            :placeholder="t('todo.descPlaceholder')"
             rows="2"
         ></textarea>
         </div>
@@ -263,12 +263,17 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import type {Todo} from "~/src/entities";
+import { useI18n } from '~/composables/useI18n';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import ReminderPicker from "~/components/todo/ReminderPicker.vue";
 import type { ReminderRule } from "~/src/entities";
 import {formatDate} from "~/utils/formatDate";
 import { useNow } from "~/composables/useNow";
 import { useTodoPriorities } from "~/composables/useTodoPriorities";
+import { useDisplayNames } from "~/composables/useDisplayNames";
+
+const { t } = useI18n();
+const { priorityName, categoryName } = useDisplayNames();
 import { describeSmartPlan } from "~/src/todo/reminderPolicy";
 import { isTodoOverdue } from "~/src/todo/overdue";
 
@@ -367,8 +372,8 @@ const rulesList = computed<ReminderRule[]>(() => props.todo.remindRules ?? [])
 const reminderDisabled = computed(() => props.todo.completed === 1 || (isOverdue.value && !visualCompleted.value))
 /** 智能策略摘要：直接消费 reminderPolicy 的分档实现，策略调整时提示自动跟随 */
 const smartHint = computed(() => {
-  if (!props.todo.dueDate) return '未设截止时间'
-  return describeSmartPlan(props.todo) || '未设截止时间'
+  if (!props.todo.dueDate) return t('todo.noDueSet')
+  return describeSmartPlan(props.todo) || t('todo.noDueSet')
 })
 
 function onReminderMode(mode: 'smart' | 'off' | 'custom') {
@@ -432,7 +437,12 @@ const formatDueDate = computed(() => {
   const d = new Date(props.todo.dueDate)
   if (isNaN(d.getTime())) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  return t('todo.dueDisplay', {
+    m: d.getMonth() + 1,
+    d: d.getDate(),
+    hh: pad(d.getHours()),
+    mm: pad(d.getMinutes()),
+  })
 })
 </script>
 

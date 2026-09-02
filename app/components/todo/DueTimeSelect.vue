@@ -13,15 +13,20 @@
  * 避免被调用方容器（典型场景：TodoList 新建表单的 overflow-hidden 折叠动画）裁切。
  */
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useI18n } from '~/composables/useI18n'
 import DatePicker from '~/components/common/DatePicker.vue'
 import ContextMenu from '~/components/mainpage/ContextMenu.vue'
 import { useDueDateMemory } from '~/composables/useDueDateMemory'
+import { useDisplayNames } from '~/composables/useDisplayNames'
+
+const { t } = useI18n();
+const { dueGroupName } = useDisplayNames()
 
 const props = withDefaults(defineProps<{
   modelValue: string
   placeholder?: string
 }>(), {
-  placeholder: '选择截止时间'
+  placeholder: ''
 })
 
 const emit = defineEmits<{
@@ -50,50 +55,51 @@ function atTime(base: Date, h: number, m: number) {
 }
 
 /** 常用日期快捷项（基于当前日期，默认沿用当前时刻的时:分） */
-const dateOptionsBase = [
-  { key: 'today', label: '今天 23:59', compute: () => atTime(new Date(), 23, 59) },
-  { key: 'tomorrow', label: '明天', compute: () => { const d = new Date(); d.setDate(d.getDate() + 1); return d } },
-  { key: 'dayAfter', label: '后天', compute: () => { const d = new Date(); d.setDate(d.getDate() + 2); return d } },
-  { key: 'nextWeek', label: '下周', compute: () => { const d = new Date(); d.setDate(d.getDate() + 7); return d } },
-]
+const dateOptionsBase = computed(() => [
+  { key: 'today', label: t('todo.quickToday'), compute: () => atTime(new Date(), 23, 59) },
+  { key: 'tomorrow', label: t('todo.quickTomorrow'), compute: () => { const d = new Date(); d.setDate(d.getDate() + 1); return d } },
+  { key: 'dayAfter', label: t('todo.quickDayAfter'), compute: () => { const d = new Date(); d.setDate(d.getDate() + 2); return d } },
+  { key: 'nextWeek', label: t('todo.quickNextWeek'), compute: () => { const d = new Date(); d.setDate(d.getDate() + 7); return d } },
+])
 
 /** 常用时长快捷项（相对当前时刻） */
-const durationOptionsBase = [
-  { key: '10m', label: '10 分钟后', compute: () => new Date(Date.now() + 10 * 60_000) },
-  { key: '30m', label: '30 分钟后', compute: () => new Date(Date.now() + 30 * 60_000) },
-  { key: '1h', label: '1 小时后', compute: () => new Date(Date.now() + 60 * 60_000) },
-  { key: '2h', label: '2 小时后', compute: () => new Date(Date.now() + 2 * 60 * 60_000) },
-  { key: '3h', label: '3 小时后', compute: () => new Date(Date.now() + 3 * 60 * 60_000) },
-]
+const durationOptionsBase = computed(() => [
+  { key: '10m', label: t('todo.durationMin', { n: 10 }), compute: () => new Date(Date.now() + 10 * 60_000) },
+  { key: '30m', label: t('todo.durationMin', { n: 30 }), compute: () => new Date(Date.now() + 30 * 60_000) },
+  { key: '1h', label: t('todo.durationHour', { n: 1 }), compute: () => new Date(Date.now() + 60 * 60_000) },
+  { key: '2h', label: t('todo.durationHour', { n: 2 }), compute: () => new Date(Date.now() + 2 * 60 * 60_000) },
+  { key: '3h', label: t('todo.durationHour', { n: 3 }), compute: () => new Date(Date.now() + 3 * 60 * 60_000) },
+])
 
 /** 显示用默认项（过滤已被删除/隐藏的项；label 含自定义别名，如「别名称 + 原标签」） */
 const dateOptions = computed(() =>
-  dateOptionsBase
+  dateOptionsBase.value
     .filter(o => !isDefaultHidden(o.key, 'date'))
     .map(o => ({ ...o, label: defaultNameOf(o.key) ? `${defaultNameOf(o.key)} ${o.label}` : o.label })),
 )
 
 const durationOptions = computed(() =>
-  durationOptionsBase
+  durationOptionsBase.value
     .filter(o => !isDefaultHidden(o.key, 'duration'))
     .map(o => ({ ...o, label: defaultNameOf(o.key) ? `${defaultNameOf(o.key)} ${o.label}` : o.label })),
 )
 
 /** 已选 / 上次选择的友好展示：今天/明天/后天/具体日期 */
 const display = (iso: string): string => {
-  if (!iso) return props.placeholder
+  const ph = props.placeholder || t('todo.duePlaceholder')
+  if (!iso) return ph
   const d = new Date(iso)
-  if (isNaN(d.getTime())) return props.placeholder
+  if (isNaN(d.getTime())) return ph
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   const dayDiff = Math.round(
     (new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - todayStart) / 86_400_000,
   )
   const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`
-  if (dayDiff === 0) return `今天 ${time}`
-  if (dayDiff === 1) return `明天 ${time}`
-  if (dayDiff === 2) return `后天 ${time}`
-  return `${d.getMonth() + 1}月${d.getDate()}日 ${time}`
+  if (dayDiff === 0) return t('todo.displayToday', { time })
+  if (dayDiff === 1) return t('todo.displayTomorrow', { time })
+  if (dayDiff === 2) return t('todo.displayDayAfter', { time })
+  return t('todo.dueDisplay', { m: d.getMonth() + 1, d: d.getDate(), hh: pad(d.getHours()), mm: pad(d.getMinutes()) })
 }
 
 const triggerDisplay = computed(() => display(props.modelValue))
@@ -281,7 +287,7 @@ const deleteCtxItem = () => {
 
 /** 默认项：取当前 key 的快捷项计算出的实际时间 ISO */
 const isoOfDefaultKey = (key: string, group: 'duration' | 'date'): string => {
-  const base = (group === 'duration' ? durationOptionsBase : dateOptionsBase).find(o => o.key === key)
+  const base = (group === 'duration' ? durationOptionsBase.value : dateOptionsBase.value).find(o => o.key === key)
   return base ? toISO(base.compute()) : ''
 }
 
@@ -296,27 +302,27 @@ const ctxMenuItems = computed(() => {
   const targetGroups = visibleGroups.value.filter(g => g.id !== ctxGroupId.value)
   if (ctxIsDefault.value) {
     const addItems = targetGroups.map(g => ({
-      label: `添加到 ${g.name}`,
+      label: t('todo.ctxAddTo', { name: dueGroupName(g) }),
       action: () => addCtxToGroup(g.id),
     }))
     return [
-      { label: '重命名', action: startRename },
+      { label: t('todo.ctxRename'), action: startRename },
       ...addItems,
-      { label: '删除', danger: true, action: deleteCtxItem },
+      { label: t('common.delete'), danger: true, action: deleteCtxItem },
     ]
   }
   const isCustomGroup = ctxGroupId.value !== 'recent'
   const addItems = targetGroups.map(g => ({
-    label: `添加到 ${g.name}`,
+    label: t('todo.ctxAddTo', { name: g.name }),
     action: () => addCtxToGroup(g.id),
   }))
   return [
-    { label: '重命名', action: startRename },
+    { label: t('todo.ctxRename'), action: startRename },
     ...addItems,
     ...(isCustomGroup
-      ? [{ label: '从分组移除', action: () => { void removeFromGroup(ctxValue.value, ctxGroupId.value) } }]
+      ? [{ label: t('todo.ctxRemoveFromGroup'), action: () => { void removeFromGroup(ctxValue.value, ctxGroupId.value) } }]
       : []),
-    { label: '删除', danger: true, action: deleteCtxItem },
+    { label: t('common.delete'), danger: true, action: deleteCtxItem },
   ]
 })
 
@@ -396,10 +402,10 @@ const groupCtxMenuItems = computed(() => {
   const g = groupOf(groupCtxId.value)
   if (!g) return []
   return [
-    { label: '新增分组', action: startCreateGroup },
-    { label: '重命名', action: startRenameGroup },
-    { label: isExpanded(g.id) ? '取消默认展开' : '设为默认展开', action: toggleExpandedGroup },
-    { label: g.builtin ? '删除分组（可恢复）' : '删除分组', danger: true, action: deleteCtxGroup },
+    { label: t('todo.ctxNewGroup'), action: startCreateGroup },
+    { label: t('todo.ctxRename'), action: startRenameGroup },
+    { label: t(isExpanded(g.id) ? 'todo.ctxUnsetDefaultExpand' : 'todo.ctxSetDefaultExpand'), action: toggleExpandedGroup },
+    { label: t(g.builtin ? 'todo.ctxDeleteGroupRecoverable' : 'todo.ctxDeleteGroup'), danger: true, action: deleteCtxGroup },
   ]
 })
 
@@ -542,7 +548,7 @@ onBeforeUnmount(() => {
               class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm text-ink transition-colors hover:bg-secondary"
               @click.stop="choose(lastOption!.value)"
             >
-              <span class="truncate">上次选择</span>
+              <span class="truncate">{{ t('todo.lastPick') }}</span>
               <span class="shrink-0 text-xs text-ink-faint">{{ lastOption!.label }}</span>
             </button>
           </li>
@@ -557,16 +563,16 @@ onBeforeUnmount(() => {
                   v-model="groupRenameDraft"
                   type="text"
                   maxlength="12"
-                  placeholder="分组名称"
+                  :placeholder="t('todo.groupNamePlaceholder')"
                   class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
                   @keydown.enter.prevent="submitGroupName"
                   @keydown.esc.prevent="cancelGroupRename"
                   @click.stop
                 />
-                <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="submitGroupName">
+                <button type="button" v-tip="t('common.confirm')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="submitGroupName">
                   <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                 </button>
-                <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelGroupRename">
+                <button type="button" v-tip="t('common.cancel')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelGroupRename">
                   <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                 </button>
               </div>
@@ -578,7 +584,7 @@ onBeforeUnmount(() => {
                 @click.stop="toggleGroup(g.id)"
                 @contextmenu.prevent="openGroupCtxMenu(g.id, $event)"
               >
-                <span class="truncate">{{ g.name }}</span>
+                <span class="truncate">{{ dueGroupName(g) }}</span>
                 <svg class="h-3 w-3 shrink-0 transition-transform duration-200" :class="{ 'rotate-180': groupOpen[g.id] }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M6 9l6 6 6-6" />
                 </svg>
@@ -592,16 +598,16 @@ onBeforeUnmount(() => {
                   v-model="groupRenameDraft"
                   type="text"
                   maxlength="12"
-                  placeholder="新分组名称"
+                  :placeholder="t('todo.newGroupNamePlaceholder')"
                   class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
                   @keydown.enter.prevent="submitGroupName"
                   @keydown.esc.prevent="cancelGroupRename"
                   @click.stop
                 />
-                <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="submitGroupName">
+                <button type="button" v-tip="t('common.confirm')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="submitGroupName">
                   <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                 </button>
-                <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelGroupRename">
+                <button type="button" v-tip="t('common.cancel')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelGroupRename">
                   <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                 </button>
               </li>
@@ -615,16 +621,16 @@ onBeforeUnmount(() => {
                       v-model="renameDraft"
                       type="text"
                       maxlength="20"
-                      placeholder="名称"
+                      :placeholder="t('todo.name')"
                       class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="t('common.confirm')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="t('common.cancel')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -638,7 +644,7 @@ onBeforeUnmount(() => {
                     {{ opt.label }}
                   </button>
                 </li>
-                <li v-if="!recentOptions.length" class="px-2 py-1 text-xs text-ink-faint">暂无历史记录</li>
+                <li v-if="!recentOptions.length" class="px-2 py-1 text-xs text-ink-faint">{{ t('todo.noRecent') }}</li>
               </template>
 
               <!-- 内置 duration：预设时长 + 自定义固定项 -->
@@ -650,16 +656,16 @@ onBeforeUnmount(() => {
                       v-model="renameDraft"
                       type="text"
                       maxlength="20"
-                      placeholder="名称"
+                      :placeholder="t('todo.name')"
                       class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="t('common.confirm')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="t('common.cancel')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -680,16 +686,16 @@ onBeforeUnmount(() => {
                       v-model="renameDraft"
                       type="text"
                       maxlength="20"
-                      placeholder="名称"
+                      :placeholder="t('todo.name')"
                       class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="t('common.confirm')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="t('common.cancel')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -714,16 +720,16 @@ onBeforeUnmount(() => {
                       v-model="renameDraft"
                       type="text"
                       maxlength="20"
-                      placeholder="名称"
+                      :placeholder="t('todo.name')"
                       class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="t('common.confirm')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="t('common.cancel')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -744,16 +750,16 @@ onBeforeUnmount(() => {
                       v-model="renameDraft"
                       type="text"
                       maxlength="20"
-                      placeholder="名称"
+                      :placeholder="t('todo.name')"
                       class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="t('common.confirm')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="t('common.cancel')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -778,16 +784,16 @@ onBeforeUnmount(() => {
                       v-model="renameDraft"
                       type="text"
                       maxlength="20"
-                      placeholder="名称"
+                      :placeholder="t('todo.name')"
                       class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
                     />
-                    <button type="button" v-tip="'确定'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
+                    <button type="button" v-tip="t('common.confirm')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="confirmRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
                     </button>
-                    <button type="button" v-tip="'取消'" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
+                    <button type="button" v-tip="t('common.cancel')" class="btn-soft flex h-6 w-6 shrink-0 items-center justify-center p-0" @click.stop="cancelRename">
                       <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
                     </button>
                   </div>
@@ -801,7 +807,7 @@ onBeforeUnmount(() => {
                     {{ opt.label }}
                   </button>
                 </li>
-                <li v-if="!customGroupOptions(g.id).length" class="px-2 py-1 text-xs text-ink-faint">空分组，右键时间项可加入</li>
+                <li v-if="!customGroupOptions(g.id).length" class="px-2 py-1 text-xs text-ink-faint">{{ t('todo.emptyGroupHint') }}</li>
               </template>
             </template>
           </template>
@@ -813,7 +819,7 @@ onBeforeUnmount(() => {
               class="w-full rounded-md px-2 py-1.5 text-left text-xs text-ink-soft transition-colors hover:bg-secondary"
               @click.stop="restoreDeletedGroups"
             >
-              恢复已删除分组
+              {{ t('todo.restoreDeletedGroups') }}
             </button>
           </li>
 
@@ -824,7 +830,7 @@ onBeforeUnmount(() => {
               class="w-full rounded-md px-2 py-1.5 text-left text-sm text-gold transition-colors hover:bg-secondary"
               @click.stop="openCustom"
             >
-              选择具体日期…
+              {{ t('todo.pickCustomDate') }}
             </button>
           </li>
           <li v-if="modelValue">
@@ -833,7 +839,7 @@ onBeforeUnmount(() => {
               class="w-full rounded-md px-2 py-1.5 text-left text-sm text-danger transition-colors hover:bg-danger/10"
               @click.stop="clearValue"
             >
-              清除截止时间
+              {{ t('todo.clearDue') }}
             </button>
           </li>
         </ul>

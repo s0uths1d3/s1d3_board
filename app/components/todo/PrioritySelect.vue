@@ -7,6 +7,7 @@
  * 基于 UiDropdown：面板 Teleport 到 body + fixed 定位、视口收进，交互由组件统一处理。
  */
 import { ref, computed } from 'vue'
+import { useI18n } from '~/composables/useI18n'
 import UiDropdown from '~/components/ui/UiDropdown.vue'
 import UiColorPicker from '~/components/ui/UiColorPicker.vue'
 import {
@@ -15,6 +16,10 @@ import {
   clampLevel,
   type TodoPriorityLevel,
 } from '~/composables/useTodoPriorities'
+import { useDisplayNames } from '~/composables/useDisplayNames'
+
+const { t } = useI18n();
+const { priorityName } = useDisplayNames()
 
 const props = withDefaults(defineProps<{
   modelValue: number
@@ -79,7 +84,7 @@ const rowLevelInput = (e: Event, idx: number) => {
   <UiDropdown
       align="center"
       :close-on-select="false"
-      aria-label="优先级"
+      :aria-label="t('todo.priority')"
       panel-class="glass-card w-64 rounded-2xl p-2 shadow-float"
   >
     <template #trigger="{ open }">
@@ -89,7 +94,7 @@ const rowLevelInput = (e: Event, idx: number) => {
       >
         <span class="flex min-w-0 items-center gap-2">
           <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ backgroundColor: current.color }" />
-          <span class="truncate text-ink">{{ current.name }}</span>
+          <span class="truncate text-ink">{{ priorityName(current) }}</span>
         </span>
         <svg class="h-4 w-4 shrink-0 text-gold transition-transform duration-200" :class="open ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M6 9l6 6 6-6" />
@@ -109,7 +114,7 @@ const rowLevelInput = (e: Event, idx: number) => {
                 @click="select(p, close)"
             >
               <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ backgroundColor: p.color }" />
-              <span class="flex-1 truncate text-left">{{ p.name }}</span>
+              <span class="flex-1 truncate text-left">{{ priorityName(p) }}</span>
               <span class="shrink-0 text-xs tabular-nums text-ink-faint">{{ p.level }}</span>
             </button>
           </li>
@@ -121,7 +126,7 @@ const rowLevelInput = (e: Event, idx: number) => {
               class="w-full rounded-lg px-2 py-1 text-left text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
               @click="openManager"
           >
-            管理等级…
+            {{ t('todo.manageLevels') }}
           </button>
         </div>
       </div>
@@ -138,20 +143,20 @@ const rowLevelInput = (e: Event, idx: number) => {
                   @change="rowLevelInput($event, idx)"
               />
               <input
-                  type="text" maxlength="8" :placeholder="`等级${row.level}`"
+                  type="text" maxlength="8" :placeholder="t('todo.levelName', { n: row.level })"
                   v-model="row.name"
                   class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
               />
               <button
                   type="button"
-                  v-tip="'修改颜色'"
+                  v-tip="t('common.changeColorShort')"
                   class="h-6 w-6 shrink-0 rounded-full border border-white/60 shadow-sm transition-transform hover:scale-110"
                   :style="{ backgroundColor: row.color }"
                   @click="colorRow = colorRow === idx ? null : idx"
               />
               <button
                   type="button"
-                  v-tip="'删除该等级'"
+                  v-tip="t('common.deleteLevel')"
                   class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
                   @click="removeRow(idx)"
               >
@@ -166,7 +171,7 @@ const rowLevelInput = (e: Event, idx: number) => {
             </div>
           </div>
           <p v-if="editList.length === 0" class="px-1 py-2 text-center text-xs text-ink-faint">
-            暂无等级，点击下方新增
+            {{ t('todo.noLevels') }}
           </p>
         </div>
 
@@ -176,18 +181,18 @@ const rowLevelInput = (e: Event, idx: number) => {
               class="rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
               @click="addRow"
           >
-            + 新增等级
+            {{ t('todo.addLevel') }}
           </button>
           <button
               type="button"
               class="btn-gold px-3 py-1 text-xs"
               @click="commitManage(close)"
           >
-            完成
+            {{ t('common.confirm') }}
           </button>
         </div>
         <p class="px-1 text-[10px] leading-relaxed text-ink-faint">
-          数值 0-255，越大越优先；删除等级后，使用它的待办会自动移到最近的档位。
+          {{ t('todo.levelHint') }}
         </p>
       </div>
     </template>

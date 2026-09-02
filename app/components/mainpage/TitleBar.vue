@@ -5,6 +5,7 @@ import { activeTab, setActiveTab, getVisibleTabItems, reorderTab, persistNavConf
 import { computed, ref, onMounted, onBeforeUnmount } from "vue";
 import { useLongPressReorder } from "~/composables/useLongPressReorder";
 import { cycleColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, useColorScheme, type ColorSchemeMode } from "~/composables/useColorScheme";
+import { useI18n } from "~/composables/useI18n";
 
 /** 标题栏导航项：仅渲染当前可见的 tab（统计 Tab 受解锁门槛控制，§7.9，解锁后动态出现） */
 const visibleTabs = computed(() => getVisibleTabItems());
@@ -69,14 +70,15 @@ const schemeDot: Record<ColorSchemeMode, string> = {
 };
 const nextSchemeLabel = computed(() => {
   const next = COLOR_SCHEME_ORDER[(COLOR_SCHEME_ORDER.indexOf(scheme.value) + 1) % COLOR_SCHEME_ORDER.length]!;
-  return COLOR_SCHEME_LABELS[next];
+  return t(`colorScheme.${next}`);
 });
-const currentSchemeLabel = computed(() => COLOR_SCHEME_LABELS[scheme.value]);
+const currentSchemeLabel = computed(() => t(`colorScheme.${scheme.value}`));
 /** system 模式下提示里附带当前解析到的配色，避免"看起来没反应"的困惑 */
+const { t } = useI18n();
 const schemeTip = computed(() => {
-  const base = `配色：${currentSchemeLabel.value}`;
-  const resolved = scheme.value === 'system' ? `（当前${COLOR_SCHEME_LABELS[resolvedScheme.value]}）` : '';
-  return `${base}${resolved}，点击切换为${nextSchemeLabel.value}`;
+  const base = `${t('titlebar.switchColorScheme')}: ${currentSchemeLabel.value}`;
+  const resolved = scheme.value === 'system' ? ` (${t('titlebar.currentScheme', { name: t(`colorScheme.${resolvedScheme.value}`) })})` : '';
+  return `${base}${resolved}, ${t('titlebar.clickSwitchTo')} ${nextSchemeLabel.value}`;
 });
 async function onSchemeClick() {
   await cycleColorScheme();
@@ -114,7 +116,7 @@ onBeforeUnmount(() => {
         <button
             v-for="tab in visibleTabs"
             :key="tab.key"
-            v-tip="tab.name"
+            v-tip="t('titlebar.' + tab.key)"
             :data-reorder-key="tab.key"
             class="nav-tab gold-underline flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-all duration-300 ease-soft"
             :class="[
@@ -168,7 +170,7 @@ onBeforeUnmount(() => {
       <button
           class="relative flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
           v-tip="schemeTip"
-          aria-label="切换配色"
+          :aria-label="t('titlebar.switchColorScheme')"
           @click="onSchemeClick"
       >
         <!-- 调色盘图标 + 当前配色小色点 -->
@@ -188,7 +190,7 @@ onBeforeUnmount(() => {
       <div v-if="isTauri()" class="flex items-center gap-2">
       <button
           class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
-          v-tip="'最小化'"
+          v-tip="t('titlebar.minimize')"
           @click="minimize"
       >
         <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
@@ -199,7 +201,7 @@ onBeforeUnmount(() => {
       <button
           class="flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:shadow-sm"
           :class="isMaximized ? 'text-gold bg-gold/15 hover:bg-gold/25' : 'text-ink-soft hover:bg-secondary'"
-          v-tip="isMaximized ? '还原' : '最大化'"
+          v-tip="t(isMaximized ? 'titlebar.restore' : 'titlebar.maximize')"
           @click="toggleMaximize"
       >
         <!-- 最大化：单个方框；还原：重叠方框 + 回折角 -->
@@ -215,7 +217,7 @@ onBeforeUnmount(() => {
       <button
           class="flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:shadow-sm"
           :class="alwaysOnTop ? 'text-gold bg-gold/15 hover:bg-gold/25' : 'text-ink-soft hover:bg-secondary'"
-          v-tip="alwaysOnTop ? '取消置顶（点击取消）' : '窗口始终置顶'"
+          v-tip="t(alwaysOnTop ? 'titlebar.unpinWindow' : 'titlebar.pinWindow')"
           @click="toggleAlwaysOnTop"
       >
         <svg class="h-3.5 w-3.5" :class="alwaysOnTop ? 'rotate-45' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -226,7 +228,7 @@ onBeforeUnmount(() => {
 
       <button
           class="flex h-7 w-7 items-center justify-center rounded-full text-danger transition-all duration-300 ease-soft hover:bg-danger/10 hover:shadow-sm"
-          v-tip="'关闭'"
+          v-tip="t('titlebar.close')"
           @click="close"
       >
         <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

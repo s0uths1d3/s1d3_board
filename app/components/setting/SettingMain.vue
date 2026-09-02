@@ -12,6 +12,7 @@ import { isTauri } from '~/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
 import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
 import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
+import { useI18n, setLocaleMode, LOCALES, type LocaleMode } from '~/composables/useI18n';
 import { useTodoSmartRemind, setTodoSmartRemindEnabled } from '~/composables/useTodoSmartRemind';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
 import { navRows, reorderTab, persistNavConfig, setTabEnabled } from '~/composables/useTabs';
@@ -20,8 +21,6 @@ import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { writeText } from 'tauri-plugin-clipboard-api';
 import appIcon from '~/assets/icon/icon.png';
-// ShortcutRow 位于 components/setting/ 下，Nuxt 自动注册名为 SettingShortcutRow，
-// 此处显式导入并按模板中的 <ShortcutRow> 名称使用（否则组件解析失败、列表渲染为空）
 import ShortcutRow from '~/components/setting/ShortcutRow.vue';
 
 const osType = ref('');
@@ -43,12 +42,26 @@ const apiKey = ref('');
 const maxLimit = ref('');
 // ===== 配色：琥珀（当前暖米色）/ 跟随系统 / 浅色 / 深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 =====
 const { scheme } = useColorScheme();
-const colorSchemeOptions = COLOR_SCHEME_ORDER.map(value => ({ value, label: COLOR_SCHEME_LABELS[value] }));
-const colorSchemeLabel = computed(() => COLOR_SCHEME_LABELS[scheme.value]);
+const colorSchemeOptions = computed(() => COLOR_SCHEME_ORDER.map(value => ({ value, label: t(`colorScheme.${value}`) })));
+const colorSchemeLabel = computed(() => t(`colorScheme.${scheme.value}`));
 async function selectColorScheme(value: ColorSchemeMode) {
   if (scheme.value === value) return;
   await setColorScheme(value);
-  showHint(`已切换为${COLOR_SCHEME_LABELS[value]}配色`);
+  showHint(t('setting.general.colorSchemeSaved', { name: t(`colorScheme.${value}`) }));
+}
+// ===== 语言：跟随系统 / 中文 / English（useI18n 统一管理，含首次系统探测与跨窗口同步）=====
+const { localeMode, t } = useI18n();
+const localeOptions = computed(() => [
+  { value: 'system' as const, label: t('locale.system') },
+  ...LOCALES.map((l) => ({ value: l.value, label: l.label })),
+]);
+const localeLabel = computed(() =>
+  localeOptions.value.find((o) => o.value === localeMode.value)?.label ?? '',
+);
+async function selectLocale(value: LocaleMode) {
+  if (localeMode.value === value) return;
+  await setLocaleMode(value);
+  showHint(t('setting.general.localeChanged', { name: localeOptions.value.find(o => o.value === value)?.label ?? '' }));
 }
 /** 开机自启状态（系统级设置，使用 tauri autostart 插件，不存数据库） */
 const autoStartEnabled = ref(false);
@@ -70,16 +83,16 @@ watch(tooltipEnabled, async (val) => {
 
 // ===== 窗口弹出位置（快捷键唤出主窗口时的落点） =====
 const { popupPositionMode } = usePopupPosition();/** 三个候选模式：光标处 / 上次打开位置 / 光标所在屏幕居中 */
-const POPUP_POSITION_OPTIONS: { value: PopupPositionMode; label: string; tip: string }[] = [
-  { value: 'cursor', label: '光标处', tip: '在鼠标光标附近弹出' },
-  { value: 'last', label: '上次位置', tip: '在上次打开（含拖动后）的位置弹出' },
-  { value: 'center', label: '屏幕中央', tip: '在光标所在屏幕居中弹出' },
-];
+const POPUP_POSITION_OPTIONS = computed<{ value: PopupPositionMode; label: string; tip: string }[]>(() => [
+  { value: 'cursor', label: t('setting.general.popupPositions.cursor'), tip: t('setting.general.popupPositions.cursorTip') },
+  { value: 'last', label: t('setting.general.popupPositions.last'), tip: t('setting.general.popupPositions.lastTip') },
+  { value: 'center', label: t('setting.general.popupPositions.center'), tip: t('setting.general.popupPositions.centerTip') },
+]);
 /** 切换弹出位置模式并持久化（UiSegmented 回传字符串值，此处收敛为模式类型） */
 function selectPopupPosition(v: string) {
   const mode = v as PopupPositionMode;
   void setPopupPositionMode(mode);
-  showHint('已保存窗口弹出位置');
+  showHint(t('setting.general.popupPositionSaved'));
 }
 /** 是否开启搜索高亮，与所有搜索框共享同一状态 */
 const { searchHighlightEnabled } = useSearchHighlight();
@@ -88,7 +101,7 @@ const { searchHighlightEnabled } = useSearchHighlight();
 const { smartRemindEnabled } = useTodoSmartRemind();
 async function onSmartRemindToggle(val: boolean) {
   await setTodoSmartRemindEnabled(val);
-  showHint(val ? '已开启智能提醒' : '已关闭智能提醒，仅保留到期通知');
+  showHint(val ? t('setting.general.smartRemindOn') : t('setting.general.smartRemindOff'));
 }
 watch(searchHighlightEnabled, async (val) => {
   await dbService.setKeyValue('search_highlight_enabled', val ? '1' : '0');
@@ -129,14 +142,14 @@ watch(autoStartEnabled, async (val) => {
     } else {
       await disable();
     }
-    showHint(val ? '已开启开机自启' : '已关闭开机自启');
+    showHint(val ? t('setting.general.startupOn') : t('setting.general.startupOff'));
   } catch (e) {
     console.error('设置开机自启失败:', e);
     // 失败回滚 UI 状态
     autoStartEnabled.value = !val;
     // 提示用户：Tauri autostart 默认写当前用户注册表（HKCU），一般无需管理员权限，
     // 失败多因系统策略/注册表权限限制
-    showHint('开机自启设置失败，请检查系统权限');
+    showHint(t('setting.general.startupFailed'));
   }
 });
 
@@ -151,14 +164,14 @@ async function confirmClearDatabase() {
   clearMsg.value = '';
   try {
     await dbService.clearDatabase();
-    clearMsg.value = '已清空剪贴板、便签与待办数据（常用剪贴与统计数据保留）';
+    clearMsg.value = t('setting.general.clearedDetail');
     // 触发剪贴板列表刷新（若在其他页已挂载）
     try {
       const { fetchData } = await import('~/src/commands/local/clipboardStore');
       await fetchData();
     } catch (_) { /* 列表未挂载时忽略 */ }
   } catch (e) {
-    clearMsg.value = '清空失败：' + (e as Error).message;
+    clearMsg.value = t('setting.general.clearFailed') + (e as Error).message;
   } finally {
     clearing.value = false;
     showClearConfirm.value = false;
@@ -167,73 +180,78 @@ async function confirmClearDatabase() {
 
 const settings: SettingGroup[] = [
   {
-    title: '快捷键设置',
+    title: 'setting.categories.shortcuts',
     type: 'shortcut',
     items: [],
   },
   {
-    title: '导航栏设置',
+    title: 'setting.categories.nav',
     type: 'nav',
     items: [],
   },
   {
-    title: 'Api设置',
+    title: 'setting.categories.api',
     type: 'ai_setting',
     items: [
       {
-        label: 'API key',
+        label: 'setting.general.apiKey',
         value: '',
         type: 'input'
       }
     ]
   },
   {
-    title: '通用设置',
+    title: 'setting.categories.general',
     type: 'general',    items: [
       {
-        label: '剪贴板最大存储数量',
+        label: 'setting.general.clipboardLimit',
         value: '',
         type: 'input'
       },
       {
-        label: '开机自启',
+        label: 'setting.general.launchAtStartup',
         value: '',
         type: 'checkbox'
       },
       {
-        label: '提示窗口',
+        label: 'setting.general.tooltipWindow',
         value: '',
         type: 'checkbox'
       },
       {
-        label: '待办智能提醒',
+        label: 'setting.general.smartReminder',
         value: '',
         type: 'checkbox'
       },
       {
-        label: '窗口弹出位置',
+        label: 'setting.general.popupPosition',
         value: '',
         type: 'select'
       },
       {
-        label: '搜索高亮',
+        label: 'setting.general.searchHighlight',
         value: '',
         type: 'checkbox'
       },
       {
-        label: '配色',
+        label: 'setting.general.colorScheme',
         value: '',
         type: 'select'
       },
       {
-        label: '清空数据库',
+        label: 'setting.general.locale',
+        value: '',
+        type: 'select'
+      },
+      {
+        label: 'setting.general.clearDatabase',
         value: '',
         type: 'action'
       }
     ]
   },
   {
-    title: '关于',
+    title: 'setting.categories.about',
     type: 'about',
     items: [],
   }
@@ -279,7 +297,7 @@ async function checkUpdate(options?: { silent?: boolean }) {
   const silent = options?.silent ?? false;
   if (updateState.value === 'checking') return;
   updateState.value = 'checking';
-  if (!silent) showHint('正在检查更新…');
+  if (!silent) showHint(t('setting.about.checkingHint'));
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 10000);
@@ -292,7 +310,7 @@ async function checkUpdate(options?: { silent?: boolean }) {
       // 仓库还没有任何 Release：不存在更新
       latestVersion.value = '';
       updateState.value = 'latest';
-      if (!silent) showHint('当前已是最新版本');
+      if (!silent) showHint(t('setting.about.upToDateHint'));
       return;
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -301,11 +319,11 @@ async function checkUpdate(options?: { silent?: boolean }) {
     releaseUrl.value = String(data.html_url || `${APP_REPO}/releases`);
     const hasNew = compareVersions(latestVersion.value, appVersion.value) > 0;
     updateState.value = hasNew ? 'available' : 'latest';
-    if (!silent) showHint(hasNew ? `发现新版本 v${latestVersion.value}，请及时更新` : '当前已是最新版本');
+    if (!silent) showHint(hasNew ? t('setting.about.newVersionHint', { version: latestVersion.value }) : t('setting.about.upToDateHint'));
   } catch (e) {
     console.error('检查更新失败:', e);
     updateState.value = 'error';
-    if (!silent) showHint('检查更新失败，请稍后重试');
+    if (!silent) showHint(t('setting.about.updateFailedHint'));
   }
 }
 
@@ -315,7 +333,7 @@ async function openRepoPage() {
     else window.open(APP_REPO, '_blank', 'noopener');
   } catch (e) {
     console.error('打开主页失败:', e);
-    showHint('打开主页失败');
+    showHint(t('setting.about.openRepoFailed'));
   }
 }
 
@@ -326,7 +344,7 @@ async function openReleasePage() {
     else window.open(url, '_blank', 'noopener');
   } catch (e) {
     console.error('打开发布页失败:', e);
-    showHint('打开发布页失败');
+    showHint(t('setting.about.openReleaseFailed'));
   }
 }
 
@@ -334,10 +352,10 @@ async function copyRepoLink() {
   try {
     if (isTauri()) await writeText(APP_REPO);
     else await navigator.clipboard.writeText(APP_REPO);
-    showHint('已复制主页链接');
+    showHint(t('setting.about.repoLinkCopied'));
   } catch (e) {
     console.error('复制链接失败:', e);
-    showHint('复制失败，请手动复制');
+    showHint(t('setting.about.copyFailed'));
   }
 }
 
@@ -428,12 +446,20 @@ const shortcutItems = computed(() =>
     // 数字快捷粘贴（Ctrl+1~0 / Ctrl+Shift+1~0）单独归类，默认折叠展示
     const group = s.id.startsWith('pinned_paste') ? 'pinned'
       : s.id.startsWith('slot_paste') ? 'slot' : 'normal';
+    // 数字快捷粘贴共用同一个 i18n key，按 {n} 占位（标题里的数字 1~10）；其余项 title 已是 i18n key
+    const mPinned = s.id.match(/^pinned_paste_(\d+)$/);
+    const mSlot = s.id.match(/^slot_paste_(\d+)$/);
+    const label = mPinned
+      ? t('shortcut.pinned_paste', { n: Number(mPinned[1]) })
+      : mSlot
+        ? t('shortcut.slot_paste', { n: Number(mSlot[1]) })
+        : t(s.title);
     return {
       id: s.id,
-      label: s.title,
+      label,
       key: s.key,
       scope: s.scope,
-      display: s.key ? formatShortcutForDisplay(s.key) : '未绑定',
+      display: s.key ? formatShortcutForDisplay(s.key) : t('shortcut.unbound'),
       isModified: s.key !== s.defaultKey,
       enabled: s.enabled,
       group,
@@ -446,7 +472,7 @@ const shortcutGroups = computed(() =>
   (['global', 'local'] as const).map(scope => {
     const items = shortcutItems.value.filter(i => i.scope === scope && i.group === 'normal');
     return {
-      title: scope === 'global' ? '全局快捷键' : '局部快捷键',
+      title: scope === 'global' ? t('shortcut.groupGlobal') : t('shortcut.groupLocal'),
       scope,
       items,
       hasModified: items.some(i => i.isModified),
@@ -456,8 +482,8 @@ const shortcutGroups = computed(() =>
 
 /** 两组可折叠的数字快捷粘贴（默认折叠，支持一键开启/关闭/还原） */
 const collapsibleGroups = computed(() => [
-  { key: 'pinned', title: '常用剪贴快捷粘贴（Ctrl+1~0）', items: shortcutItems.value.filter(i => i.group === 'pinned') },
-  { key: 'slot', title: '剪贴板快捷粘贴（Ctrl+Shift+1~0）', items: shortcutItems.value.filter(i => i.group === 'slot') },
+  { key: 'pinned', title: t('shortcut.groupPinned'), items: shortcutItems.value.filter(i => i.group === 'pinned') },
+  { key: 'slot', title: t('shortcut.groupSlot'), items: shortcutItems.value.filter(i => i.group === 'slot') },
 ]);
 /** 折叠状态（默认收起） */
 const collapsed = ref<Record<string, boolean>>({ pinned: true, slot: true });
@@ -476,20 +502,20 @@ function toggleShortcutWithHint(id: string) {
   const item = shortcuts.value.find(s => s.id === id);
   const next = !item?.enabled;
   toggleShortcutEnabled(id);
-  showHint(next ? '已启用快捷键' : '已禁用快捷键');
+  showHint(next ? t('setting.shortcuts.enabledHint') : t('setting.shortcuts.disabledHint'));
 }
 
 /** 整组胶囊开关：点击在「全部启用 / 全部禁用」间切换 */
 async function toggleGroup(group: { key: string; items: { id: string; enabled: boolean }[] }) {
   const enable = !groupAllEnabled(group);
   await setShortcutGroupEnabled(group.items.map(i => i.id), enable);
-  showHint(enable ? '已开启该组全部快捷键' : '已关闭该组全部快捷键');
+  showHint(enable ? t('setting.shortcuts.groupEnabled') : t('setting.shortcuts.groupDisabled'));
 }
 
 /** 一键还原组内全部快捷键为默认（图标按钮） */
 async function resetGroup(group: { key: string; items: { id: string }[] }) {
   await resetShortcutGroup(group.items.map(i => i.id));
-  showHint('已还原该组快捷键为默认');
+  showHint(t('setting.shortcuts.groupReset'));
 }
 
 function startRecording(id: string) {
@@ -523,10 +549,10 @@ async function commitRecording(id: string, newKey: string) {
   const err = await updateShortcutKey(id, newKey);
   if (err) {
     errorMap.value[id] = err;
-    showHint('快捷键保存失败：' + err);
+    showHint(t('setting.shortcuts.saveFailed') + err);
   } else {
     delete errorMap.value[id];
-    showHint('快捷键已保存');
+    showHint(t('setting.shortcuts.savedHint'));
   }
 }
 
@@ -534,10 +560,10 @@ async function resetOne(id: string) {
   const err = await resetShortcut(id);
   if (err) {
     errorMap.value[id] = err;
-    showHint('重置失败：' + err);
+    showHint(t('setting.shortcuts.resetFailed') + err);
   } else {
     delete errorMap.value[id];
-    showHint('已重置为默认');
+    showHint(t('setting.shortcuts.resetDoneHint'));
   }
 }
 
@@ -545,7 +571,7 @@ async function resetAll(scope?: 'global' | 'local') {
   cancelRecording();
   await resetAllShortcuts(scope);
   errorMap.value = {};
-  showHint('已全部重置为默认');
+  showHint(t('setting.shortcuts.allResetHint'));
 }
 
 // 切换设置组时取消录制
@@ -613,7 +639,7 @@ onMounted(async () => {
                 :class="{ 'border-gold bg-secondary text-gold': activeSetting === setting }"
                 @click="onSettingClick(setting)"
             >
-              {{ setting.title }}
+              {{ t(setting.title) }}
             </button>
           </div>
         </TransitionGroup>
@@ -646,7 +672,7 @@ onMounted(async () => {
                     <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                     <path d="M3 3v5h5" />
                   </svg>
-                  全部重置
+                  {{ t('shortcut.resetAll') }}
                 </button>
               </div>
             </div>
@@ -669,7 +695,7 @@ onMounted(async () => {
                   <UiToggleSwitch
                       size="sm"
                       :model-value="groupAllEnabled(cg)"
-                      tip-on="点击关闭该组全部" tip-off="点击开启该组全部"
+                      :tip-on="t('setting.shortcuts.disableGroupTip')" :tip-off="t('setting.shortcuts.enableGroupTip')"
                       :label="cg.title"
                       @change="toggleGroup(cg)"
                   />
@@ -677,7 +703,7 @@ onMounted(async () => {
                   <button
                       type="button"
                       class="btn-soft p-2"
-                      v-tip="'一键还原该组为默认'"
+                      v-tip="t('setting.shortcuts.resetGroup')"
                       @click="resetGroup(cg)"
                   >
                     <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -702,7 +728,7 @@ onMounted(async () => {
             </div>
 
             <p class="text-xs text-ink-faint">
-              点击快捷键输入框后按下新的组合键即可自定义；Esc 取消；重复的快捷键会提示冲突。全局快捷键在系统任意位置生效，局部快捷键仅在窗口内生效。
+              {{ t('setting.shortcuts.shortcutHint') }}
             </p>
           </div>
 
@@ -717,10 +743,8 @@ onMounted(async () => {
                     <span class="text-lg font-semibold text-ink">s1d3 board</span>
                     <span class="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-xs text-gold tabular-nums">v{{ appVersion }}</span>
                   </div>
-                  <p class="mt-1 text-xs leading-relaxed text-ink-faint">
-                    基于 Tauri 2 + Nuxt 4 + Vue 3 的桌面效率工具，为剪贴板、待办、便签、统计等日常高频操作提供系统托盘内快捷访问。
-                  </p>
-                  <p class="mt-1 text-xs text-ink-faint">作者：<span class="text-ink-soft">{{ APP_AUTHOR }}</span></p>
+                  <p class="mt-1 text-xs leading-relaxed text-ink-faint">{{ t('setting.about.description') }}</p>
+                  <p class="mt-1 text-xs text-ink-faint">{{ t('setting.about.authorLabel') }}<span class="text-ink-soft">{{ APP_AUTHOR }}</span></p>
                 </div>
               </div>
             </div>
@@ -729,15 +753,15 @@ onMounted(async () => {
             <div class="glass-card rounded-2xl p-4">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-ink">GitHub 主页</div>
+                  <div class="text-sm text-ink">{{ t('setting.about.repo') }}</div>
                   <div class="truncate text-xs text-ink-faint">{{ APP_REPO }}</div>
                 </div>
                 <div class="flex shrink-0 gap-2">
-                  <button type="button" class="btn-soft px-3 py-1.5 text-xs" v-tip="'复制仓库链接'" @click="copyRepoLink">
-                    复制链接
+                  <button type="button" class="btn-soft px-3 py-1.5 text-xs" v-tip="t('setting.about.copyRepo')" @click="copyRepoLink">
+                    {{ t('setting.about.copyLink') }}
                   </button>
-                  <button type="button" class="btn-gold px-3 py-1.5 text-xs" v-tip="'在浏览器中打开项目主页'" @click="openRepoPage">
-                    打开主页
+                  <button type="button" class="btn-gold px-3 py-1.5 text-xs" v-tip="t('setting.about.openRepo')" @click="openRepoPage">
+                    {{ t('setting.about.openRepoShort') }}
                   </button>
                 </div>
               </div>
@@ -747,16 +771,16 @@ onMounted(async () => {
             <div class="glass-card rounded-2xl p-4">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-ink">检查更新</div>
+                  <div class="text-sm text-ink">{{ t('setting.about.checkUpdate') }}</div>
                   <div class="mt-0.5 text-xs text-ink-faint">
-                    <template v-if="updateState === 'checking'">正在检查新版本…</template>
-                    <template v-else-if="updateState === 'latest'">当前已是最新版本（v{{ appVersion }}）</template>
+                    <template v-if="updateState === 'checking'">{{ t('setting.about.checkingNew') }}</template>
+                    <template v-else-if="updateState === 'latest'">{{ t('setting.about.upToDateWithVersion', { version: appVersion }) }}</template>
                     <template v-else-if="updateState === 'available'">
-                      发现新版本 <span class="font-semibold text-gold">v{{ latestVersion }}</span>
-                      <button type="button" class="text-gold underline underline-offset-2" @click="openReleasePage">查看发布页</button>
+                      {{ t('setting.about.newVersion') }} <span class="font-semibold text-gold">v{{ latestVersion }}</span>
+                      <button type="button" class="text-gold underline underline-offset-2" @click="openReleasePage">{{ t('setting.about.viewRelease') }}</button>
                     </template>
-                    <template v-else-if="updateState === 'error'">检查失败：网络不可用或超出请求限制，请稍后重试</template>
-                    <template v-else>联网检查 GitHub Releases 是否有新版本</template>
+                    <template v-else-if="updateState === 'error'">{{ t('setting.about.checkFailed') }}</template>
+                    <template v-else>{{ t('setting.about.checkOnline') }}</template>
                   </div>
                 </div>
                 <button
@@ -765,13 +789,13 @@ onMounted(async () => {
                     :disabled="updateState === 'checking'"
                     @click="checkUpdate()"
                 >
-                  {{ updateState === 'checking' ? '检查中…' : '检查更新' }}
+                  {{ updateState === 'checking' ? t('setting.about.checking') : t('setting.about.checkUpdate') }}
                 </button>
               </div>
             </div>
 
             <p class="text-xs text-ink-faint">
-              如果这个工具对你有帮助，欢迎到 GitHub 主页点个 Star ⭐；问题与建议也可以通过 Issues 反馈。
+              {{ t('setting.about.starHint') }}
             </p>
           </div>
 
@@ -779,12 +803,12 @@ onMounted(async () => {
           <div v-else-if="activeSetting.type !== 'nav'">
             <ul class="glass-card rounded-2xl shadow-soft">
               <li class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
-                {{ activeSetting.title }}
+                {{ t(activeSetting.title) }}
               </li>
               <li v-for="(item, itemIndex) in activeSetting.items" :key="itemIndex"
                   class="flex items-center justify-between gap-4 p-4">
                 <div>
-                  <div class="text-ink">{{ item.label }}</div>
+                  <div class="text-ink">{{ t(item.label) }}</div>
                   <div v-if="item.type === 'action' && clearMsg" class="mt-1 text-xs text-ink-faint">
                     {{ clearMsg }}
                   </div>
@@ -795,63 +819,96 @@ onMounted(async () => {
                     <button v-if="!showClearConfirm" type="button"
                             class="btn-soft w-full text-danger"
                             @click="showClearConfirm = true">
-                      清空数据库
+                      {{ t('setting.general.clearDatabase') }}
                     </button>
                     <div v-else class="flex gap-2">
                       <button type="button" class="btn-soft flex-1 text-danger"
                               :disabled="clearing" @click="confirmClearDatabase">
-                        {{ clearing ? '清空中…' : '确认清空' }}
+                        {{ clearing ? t('setting.general.clearing') : t('setting.general.clearConfirmBtn') }}
                       </button>
                       <button type="button" class="btn-soft flex-1"
                               :disabled="clearing" @click="showClearConfirm = false">
-                        取消
+                        {{ t('common.cancel') }}
                       </button>
                     </div>
                   </template>
                   <SettingInput
-                      v-else-if="item.type === 'input' && item.label === 'API key'"
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.apiKey'"
                       v-model="apiKey"
-                      placeholder="输入 API key"
-                      @save="showHint('已保存 API key')"
+                      :placeholder="t('setting.general.apiKeyPlaceholder')"
+                      @save="showHint(t('setting.general.apiKeySaved'))"
                   />
                   <SettingInput
-                      v-else-if="item.type === 'input' && item.label === '剪贴板最大存储数量'"
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.clipboardLimit'"
                       v-model="maxLimit"
-                      placeholder="如 500"
-                      @save="showHint('已保存最大存储数量')"
+                      :placeholder="t('setting.general.clipboardLimitPlaceholder')"
+                      @save="showHint(t('setting.general.clipboardLimitSaved'))"
                   />                  <UiToggleSwitch
-                      v-else-if="item.type === 'checkbox' && item.label === '开机自启'"
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.launchAtStartup'"
                       v-model="autoStartEnabled"
-                      label="开机自启"
+                      :label="t('setting.general.launchAtStartup')"
                   />
                   <UiToggleSwitch
-                      v-else-if="item.type === 'checkbox' && item.label === '提示窗口'"
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.tooltipWindow'"
                       v-model="tooltipEnabled"
-                      tip-on="点击禁用" tip-off="点击启用"
-                      label="提示窗口"
-                      @change="showHint(tooltipEnabled ? '已开启提示窗口' : '已关闭提示窗口')"
+                      :tip-on="t('setting.shortcuts.clickDisable')" :tip-off="t('setting.shortcuts.clickEnable')"
+                      :label="t('setting.general.tooltipWindow')"
+                      @change="showHint(tooltipEnabled ? t('setting.general.tooltipOn') : t('setting.general.tooltipOff'))"
                   />
                   <UiToggleSwitch
-                      v-else-if="item.type === 'checkbox' && item.label === '搜索高亮'"
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.searchHighlight'"
                       v-model="searchHighlightEnabled"
-                      tip-on="点击禁用" tip-off="点击启用"
-                      label="搜索高亮"
-                      @change="showHint(searchHighlightEnabled ? '已开启搜索高亮' : '已关闭搜索高亮')"
+                      :tip-on="t('setting.shortcuts.clickDisable')" :tip-off="t('setting.shortcuts.clickEnable')"
+                      :label="t('setting.general.searchHighlight')"
+                      @change="showHint(searchHighlightEnabled ? t('setting.general.highlightOn') : t('setting.general.highlightOff'))"
                   />
                   <UiToggleSwitch
-                      v-else-if="item.type === 'checkbox' && item.label === '待办智能提醒'"
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.smartReminder'"
                       :model-value="smartRemindEnabled"
-                      tip-on="关闭后仅保留到期时刻通知" tip-off="开启后按任务长短智能提前提醒"
-                      label="待办智能提醒"
+                      :tip-on="t('setting.general.smartRemindTipOn')" :tip-off="t('setting.general.smartRemindTipOff')"
+                      :label="t('setting.general.smartReminder')"
                       @change="onSmartRemindToggle"
                   />
+                  <!-- 语言：跟随系统 / 中文 / English（放在配色兜底分支之前） -->
+                  <UiDropdown
+                      v-else-if="item.type === 'select' && item.label === 'setting.general.locale'"
+                      class="w-full"
+                      align="end"
+                      match-trigger-width
+                      :aria-label="t('setting.general.locale')"
+                      panel-class="glass-card menu w-full rounded-2xl p-2"
+                  >
+                    <template #trigger="{ open }">
+                      <button type="button" tabindex="-1" class="btn-soft flex w-full items-center justify-between rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink">
+                        <span>{{ localeLabel }}</span>
+                        <svg class="h-4 w-4 opacity-60 transition-transform duration-200" :class="open ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+                    </template>
+                    <ul class="menu p-2">
+                      <li v-for="opt in localeOptions" :key="opt.value">
+                        <button
+                            type="button"
+                            class="flex w-full items-center justify-between rounded-xl"
+                            :class="localeMode === opt.value ? 'text-gold' : ''"
+                            @click="selectLocale(opt.value)"
+                        >
+                          <span>{{ opt.label }}</span>
+                          <svg v-if="localeMode === opt.value" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        </button>
+                      </li>
+                    </ul>
+                  </UiDropdown>
                   <!-- 窗口弹出位置：三选一分段控件（跟随系统风格，选中金色高亮） -->
                   <UiSegmented
-                      v-else-if="item.type === 'select' && item.label === '窗口弹出位置'"
+                      v-else-if="item.type === 'select' && item.label === 'setting.general.popupPosition'"
                       :model-value="popupPositionMode"
                       :options="POPUP_POSITION_OPTIONS"
                       block
-                      label="窗口弹出位置"
+                      :label="t('setting.general.popupPosition')"
                       @update:model-value="selectPopupPosition"
                   />
                   <!-- 配色：琥珀/跟随系统/浅色/深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 -->
@@ -860,7 +917,7 @@ onMounted(async () => {
                       class="w-full"
                       align="end"
                       match-trigger-width
-                      aria-label="配色"
+                      :aria-label="t('setting.general.colorScheme')"
                       panel-class="glass-card menu w-full rounded-2xl p-2"
                   >
                     <template #trigger="{ open }">
@@ -897,7 +954,7 @@ onMounted(async () => {
             <div class="glass-card rounded-2xl shadow-soft" data-nav-config-list>
               <TransitionGroup name="reorder-list" tag="ul">
                 <li key="__header__" class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
-                  导航栏图标 · 显示与排序（至少保留 剪贴板 / 设置）
+                  {{ t('setting.shortcuts.navSectionTitle') }}
                 </li>
                 <li
                     v-for="row in navRows"
@@ -916,13 +973,13 @@ onMounted(async () => {
                   </svg>
                   <div class="flex flex-col">
                     <div class="flex items-center gap-1.5 text-ink" :class="{ 'opacity-50': !row.enabled }">
-                      {{ row.name }}
+                      {{ t('titlebar.' + row.key) }}
                       <svg v-if="row.locked" class="h-3.5 w-3.5 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <rect x="5" y="11" width="14" height="10" rx="2" />
                         <path d="M8 11V7a4 4 0 0 1 8 0v4" />
                       </svg>
                     </div>
-                    <div v-if="row.locked" class="text-xs text-ink-faint">内置项，不可关闭</div>
+                    <div v-if="row.locked" class="text-xs text-ink-faint">{{ t('setting.shortcuts.builtinLocked') }}</div>
                   </div>
                 </div>
                 <!-- 右侧操作：内置项显示锁定图标；未解锁统计显示禁用开关；其余为可切换胶囊开关 -->
@@ -931,7 +988,7 @@ onMounted(async () => {
                     class="h-4 w-4 text-ink-faint/70"
                     viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                     stroke-linecap="round" stroke-linejoin="round"
-                    v-tip="'内置项，不可关闭'"
+                    v-tip="t('setting.shortcuts.builtinLocked')"
                 >
                   <rect x="5" y="11" width="14" height="10" rx="2" />
                   <path d="M8 11V7a4 4 0 0 1 8 0v4" />
@@ -939,15 +996,15 @@ onMounted(async () => {
                 <UiToggleSwitch
                     v-else
                     :model-value="row.enabled"
-                    tip-on="点击隐藏" tip-off="点击显示"
-                    :label="row.name"
+                    :tip-on="t('setting.shortcuts.navHideTip')" :tip-off="t('setting.shortcuts.navShowTip')"
+                    :label="t('titlebar.' + row.key)"
                     @change="onNavRowToggle(row)"
                 />
               </li>
               </TransitionGroup>
             </div>
             <p class="text-xs text-ink-faint">
-              按住图标（约 0.5 秒）后拖动即可调整导航栏顺序，松开自动保存；关闭图标后将从标题栏隐藏（内置的剪贴板与设置不可关闭）。
+              {{ t('setting.shortcuts.navHint') }}
             </p>
           </div>
         </div>
