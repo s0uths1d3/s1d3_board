@@ -101,6 +101,19 @@
                 </svg>
                 {{ formatDueDate }}
               </span>
+              <!-- 自定义提醒时刻：用户显式设置的闹钟时间也要在卡片上可见
+                   （"指定时刻"规则显示最早一条的时间；百分比/提前分钟由截止时间推导，仅显示铃铛），
+                   悬停查看全部规则明细 -->
+              <span
+                  v-if="remindRules.length"
+                  class="flex items-center gap-1"
+                  v-tip="remindRulesTip"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 00-4-5.7V5a2 2 0 10-4 0v.3A6 6 0 006 11v3.2a2 2 0 01-.6 1.4L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path>
+                </svg>
+                {{ customRemindAt }}
+              </span>
             </div>
 
             <!-- 操作按钮区：relative z-10 提升 dropdown 下拉菜单的 stacking context，
@@ -433,16 +446,52 @@ const visualCompleted = computed(() => props.todo.completed === 1)
 const overdueCompleted = computed(() => props.todo.completed === 1 && isOverdue.value)
 
 /** 截止时间友好展示：月-日 时:分（无秒），用于卡片底部显示。 */
+const pad2 = (n: number) => String(n).padStart(2, '0')
 const formatDueDate = computed(() => {
   if (!props.todo.dueDate) return ''
   const d = new Date(props.todo.dueDate)
   if (isNaN(d.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
   return t('todo.dueDisplay', {
     m: d.getMonth() + 1,
     d: d.getDate(),
-    hh: pad(d.getHours()),
-    mm: pad(d.getMinutes()),
+    hh: pad2(d.getHours()),
+    mm: pad2(d.getMinutes()),
+  })
+})
+
+// ===== 卡片上的自定义提醒展示（仅自定义模式；智能/关闭不显示） =====
+/** 自定义闹钟规则列表 */
+const remindRules = computed<ReminderRule[]>(() =>
+  (props.todo.remindMode || '') === 'custom' ? props.todo.remindRules ?? [] : []
+)
+
+/** 单条规则的摘要文案：与 ReminderPicker 的 ruleSummary 同源（ruleAt 的时间格式化为 MM-DD HH:mm） */
+const remindRuleSummary = (rule: ReminderRule): string => {
+  if (rule.kind === 'percent') return t('reminder.rulePercent', { n: rule.value })
+  if (rule.kind === 'offset') return t('reminder.ruleOffset', { n: rule.value })
+  const d = new Date(rule.value)
+  const time = isNaN(d.getTime())
+    ? rule.value
+    : `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  return t('reminder.ruleAt', { time })
+}
+
+/** 悬停提示：全部自定义规则的明细（多个以 " / " 连接） */
+const remindRulesTip = computed(() => remindRules.value.map(remindRuleSummary).join(' / '))
+
+/** 卡片显示的提醒时刻："指定时刻"规则中最早的一条；仅相对规则时为空（其触发时刻由截止时间推导） */
+const customRemindAt = computed(() => {
+  const times = remindRules.value
+      .filter(r => r.kind === 'at')
+      .map(r => new Date(r.value).getTime())
+      .filter(v => !isNaN(v))
+  if (times.length === 0) return ''
+  const d = new Date(Math.min(...times))
+  return t('todo.dueDisplay', {
+    m: d.getMonth() + 1,
+    d: d.getDate(),
+    hh: pad2(d.getHours()),
+    mm: pad2(d.getMinutes()),
   })
 })
 </script>

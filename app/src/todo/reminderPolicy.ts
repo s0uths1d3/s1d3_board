@@ -61,7 +61,9 @@ export function reminderText(todo: Todo, stage: ReminderStage, nowMs: number): {
     case 'p10': return { title, body: `「${name}」还有 10 分钟到期` };
     case 'p5': return { title, body: `「${name}」还有 5 分钟到期` };
     case 'custom': {
-      const due = parseLocalISO(todo.dueDate) ?? nowMs;
+      const due = parseLocalISO(todo.dueDate);
+      // 无截止时间的纯闹钟：不涉及"到期"概念
+      if (!due) return { title, body: `「${name}」设定的提醒时刻已到` };
       const remainMin = Math.ceil((due - nowMs) / 60000);
       const remainTxt = remainMin >= 1 ? `还有约 ${remainMin} 分钟到期` : '即将到期';
       return { title, body: `「${name}」${remainTxt}` };
@@ -73,11 +75,31 @@ export function reminderText(todo: Todo, stage: ReminderStage, nowMs: number): {
   }
 }
 
-/** 单条待办的提醒规划：完成/无截止时间 → 空；自定义模式 → 单条 custom；智能模式 → 分档 */
+/** 单条待办的提醒规划：完成 → 空；无截止时间 → 仅"指定时刻"闹钟；自定义模式 → 单条 custom；智能模式 → 分档 */
 export function computeReminders(todo: Todo, nowMs: number): ReminderPlan {
   const plan: ReminderPlan = { active: [], missed: [] };
+  if (todo.completed === 1) return plan;
   const dueMs = parseLocalISO(todo.dueDate);
-  if (!dueMs || todo.completed === 1) return plan;
+
+  // 无截止时间：百分比/提前分钟依赖截止时间无法计算；
+  // "指定时刻"是用户显式选择的绝对时刻，需照常排程（与 ReminderPicker
+  // "仅指定时刻可用"的提示一致），否则会被静默吞掉且不触发
+  if (!dueMs) {
+    if ((todo.remindMode || '') !== 'custom') return plan;
+    for (const rule of todo.remindRules ?? []) {
+      if (rule.kind !== 'at') continue;
+      const fireAt = parseLocalISO(rule.value);
+      if (fireAt === null) continue;
+      const item: PlannedReminder = {
+        key: `${todo.id}|${todo.dueDate || ''}|${rule.id}|${rule.kind}|${rule.value}`,
+        stage: 'custom',
+        fireAt,
+      };
+      if (fireAt <= nowMs) plan.missed.push(item);
+      else if (fireAt - nowMs > IMMEDIATE_GRACE_MS) plan.active.push(item);
+    }
+    return plan;
+  }
 
   const push = (stage: ReminderStage, fireAt: number, keySuffix: string) => {
     const key = `${todo.id}|${todo.dueDate || ''}|${keySuffix}`;

@@ -186,7 +186,14 @@ class ReminderService {
     this.catchUpQueue = [];
     try {
       if (queue.length === 1) {
-        this.send('待办提醒', `「${queue[0]!.todo.title || '未命名任务'}」即将到期，请留意`);
+        // 自定义闹钟按用户设定时刻的口径描述（无截止时间的纯闹钟不涉及"到期"）
+        const { todo, item } = queue[0]!;
+        if (item.stage === 'custom') {
+          const text = reminderText(todo, 'custom', Date.now());
+          this.send(text.title, text.body);
+        } else {
+          this.send('待办提醒', `「${todo.title || '未命名任务'}」即将到期，请留意`);
+        }
       } else {
         const names = queue.map(x => x.todo.title || '未命名任务');
         const shown = names.slice(0, 5).join('、');
@@ -220,7 +227,9 @@ class ReminderService {
       return;
     }
     this.retryCounts.delete(key);
-    if (!todo || todo.completed === 1 || !todo.dueDate) return;
+    // 自定义闹钟（指定时刻）不依赖截止时间也能触发；其余阶段均围绕截止时间
+    if (!todo || todo.completed === 1) return;
+    if (stage !== 'custom' && !todo.dueDate) return;
     // 复核 key 仍有效（截止时间/闹钟规则未被改删）：
     // - 智能与到期阶段：key 前缀必须匹配当前截止时间（改期 → 丢弃，sync 重排新 key）
     // - 自定义闹钟：按规则集合重新规划后仍存在才发送（迟到但在截止前 → 照常提醒）
@@ -229,7 +238,7 @@ class ReminderService {
     } else if (!key.startsWith(`${todo.id}|${todo.dueDate || ''}|${stage}`)) {
       return;
     }
-    if (stage !== 'due' && new Date(todo.dueDate).getTime() <= Date.now() - 1000) return;
+    if (stage !== 'due' && todo.dueDate && new Date(todo.dueDate).getTime() <= Date.now() - 1000) return;
 
     this.firedLog[key] = Date.now();
     this.persistFiredLog();
