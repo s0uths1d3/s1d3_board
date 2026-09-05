@@ -725,6 +725,9 @@ onMounted(async () => {
   // Ctrl+Enter：进入选中待办的编辑态
   window.addEventListener('todo:edit-request', onEditRequest)
 
+  // Del：删除当前选中的待办
+  window.addEventListener('todo:delete-request', onDeleteRequest)
+
   // 仅在 Tauri 桌面容器内定时从数据库刷新列表（数据同步用；提醒由调度服务的精确定时器负责）。
   // 3s 粒度 + in-flight 去重 + 签名跳过 + 写库期间挂起；窗口隐藏（托盘驻留）时暂停轮询。
   if (isTauri()) {
@@ -752,6 +755,7 @@ onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer)
   window.removeEventListener('focus-search', onFocusSearch)
   window.removeEventListener('todo:edit-request', onEditRequest)
+  window.removeEventListener('todo:delete-request', onDeleteRequest)
 })
 
 /** 列表同步：过滤排序结果 → todoStore（供方向键选择/编辑使用），并修正越界选中 */
@@ -769,6 +773,19 @@ watch(filteredAndSortedTodos, (list) => {
 const onEditRequest = () => {
   if (todoList.value.length === 0) return
   editSignal.value += 1
+}
+
+/** Del 键：对当前选中待办打开内联删除确认框（与点击卡片删除按钮同一流程）。
+ *  锚点取选中卡片右缘垂直居中（模拟删除按钮位置），确认框就近弹出且不遮挡选中项。 */
+const onDeleteRequest = () => {
+  // 确认框已打开时不重复响应（轮询刷新可能已改变选中项，避免确认框跳到别的任务上）
+  if (deleteConfirmVisible.value) return
+  const todo = todoList.value[selectedTodoIndex.value]
+  if (!todo) return
+  const card = document.querySelectorAll('#todoListContainer .todo-item')[selectedTodoIndex.value] as HTMLElement | null
+  const rect = card?.getBoundingClientRect()
+  const anchor = rect ? new DOMRect(rect.right - 40, rect.top + rect.height / 2 - 16, 32, 32) : null
+  deleteTodo(todo.id, anchor ?? undefined)
 }
 
 /** 点击列表行：选中对应索引 */

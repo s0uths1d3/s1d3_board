@@ -68,9 +68,11 @@ export class ShortcutManager {
                         // 不参与文本编辑，放行继续匹配——否则主页面默认聚焦在搜索框里，
                         // Ctrl+←/→ 切换标签等快捷键会全部失效。
                     } else if (inSearchSurface) {
-                        // 搜索框是"命令面板"：无修饰的方向键/Enter 放行（列表选择、Enter 粘贴）；
-                        // Delete/Backspace 保持原生删字，不劫持文本编辑
-                        if (pressedKey === 'delete' || pressedKey === 'backspace') return;
+                        // 搜索框是"命令面板"：无修饰的方向键/Enter 放行（列表选择、Enter 粘贴）。
+                        // Delete 同样放行——主列表 Tab 默认/切入即聚焦搜索框（clip 切 tab 强制聚焦），
+                        // 在此吞掉会让"Del 删除选中项"在绝大多数时候失效；且前向删除（Forward Delete）
+                        // 几乎不用于文本编辑。Backspace 保持原生删字，不劫持文本编辑。
+                        if (pressedKey === 'backspace') return;
                     } else {
                         // 其余可编辑元素（便签 textarea、常用剪贴编辑框等）：
                         // 无修饰键的原生文本键（Enter 换行、删字、移动光标、输入）不触发命令，
