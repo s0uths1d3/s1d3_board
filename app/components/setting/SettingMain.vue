@@ -158,18 +158,79 @@ const showClearConfirm = ref(false);
 const clearing = ref(false);
 const clearMsg = ref('');
 
+// ===== 5 秒撤回窗口：清空后数据先备份到 clear_backup_* 表，期间可整表恢复，超时丢弃备份 =====
+const undoActive = ref(false);
+const undoRemaining = ref(5);
+let undoCountdownTimer: ReturnType<typeof setInterval> | null = null;
+let undoExpireTimer: ReturnType<typeof setTimeout> | null = null;
+
+const stopUndoTimers = () => {
+  if (undoCountdownTimer) {
+    clearInterval(undoCountdownTimer);
+    undoCountdownTimer = null;
+  }
+  if (undoExpireTimer) {
+    clearTimeout(undoExpireTimer);
+    undoExpireTimer = null;
+  }
+};
+
+/** 窗口结束（到期/组件卸载）：丢弃备份，清空彻底生效 */
+const expireUndoWindow = async () => {
+  stopUndoTimers();
+  undoActive.value = false;
+  try {
+    await dbService.finalizeClear();
+  } catch { /* 备份清理失败无碍：下次启动仍会兜底清理 */ }
+};
+
+/** 撤回清空：整表恢复清空前的数据（剪贴板/便签/待办/统计） */
+async function undoClearDatabase() {
+  if (!undoActive.value) return;
+  stopUndoTimers();
+  undoActive.value = false;
+  try {
+    const ok = await dbService.undoClearDatabase();
+    clearMsg.value = ok ? t('setting.general.clearRestored') : t('setting.general.clearedDetail');
+    if (ok) {
+      // 触发剪贴板列表刷新（若在其他页已挂载），待办/统计由各自 Tab 重新挂载时拉取
+      try {
+        const { fetchData } = await import('~/src/commands/local/clipboardStore');
+        await fetchData();
+      } catch (_) { /* 列表未挂载时忽略 */ }
+    }
+  } catch (e) {
+    clearMsg.value = t('setting.general.clearFailed') + (e as Error).message;
+  }
+}
+
 async function confirmClearDatabase() {
   if (clearing.value) return;
   clearing.value = true;
   clearMsg.value = '';
   try {
+    // 连续清空：终结上一轮未过期的撤回窗口（其备份由本轮清空的备份覆盖）
+    stopUndoTimers();
+    undoActive.value = false;
+    await dbService.finalizeClear();
+
     await dbService.clearDatabase();
-    clearMsg.value = t('setting.general.clearedDetail');
     // 触发剪贴板列表刷新（若在其他页已挂载）
     try {
       const { fetchData } = await import('~/src/commands/local/clipboardStore');
       await fetchData();
     } catch (_) { /* 列表未挂载时忽略 */ }
+    // 开启 5 秒撤回窗口：倒计时归零后自动丢弃备份
+    undoRemaining.value = 5;
+    undoActive.value = true;
+    undoCountdownTimer = setInterval(() => {
+      undoRemaining.value = Math.max(0, undoRemaining.value - 1);
+    }, 1000);
+    undoExpireTimer = setTimeout(() => {
+      void expireUndoWindow().then(() => {
+        if (!clearMsg.value) clearMsg.value = t('setting.general.clearedDetail');
+      });
+    }, 5000);
   } catch (e) {
     clearMsg.value = t('setting.general.clearFailed') + (e as Error).message;
   } finally {
@@ -177,6 +238,15 @@ async function confirmClearDatabase() {
     showClearConfirm.value = false;
   }
 }
+
+// 组件卸载（切走设置页）时窗口随界面结束：停表并丢弃备份，避免备份悬挂到下次启动
+onBeforeUnmount(() => {
+  if (undoActive.value) {
+    void expireUndoWindow();
+  } else {
+    stopUndoTimers();
+  }
+});
 
 const settings: SettingGroup[] = [
   {
@@ -809,8 +879,20 @@ onMounted(async () => {
                   class="flex items-center justify-between gap-4 p-4">
                 <div>
                   <div class="text-ink">{{ t(item.label) }}</div>
-                  <div v-if="item.type === 'action' && clearMsg" class="mt-1 text-xs text-ink-faint">
-                    {{ clearMsg }}
+                  <div v-if="item.type === 'action' && (clearMsg || undoActive)"
+                       class="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                    <span class="text-ink-faint">
+                      {{ undoActive ? t('setting.general.clearUndoHint', { n: undoRemaining }) : clearMsg }}
+                    </span>
+                    <!-- 撤回：窗口期内整表恢复清空前的数据 -->
+                    <button
+                        v-if="undoActive"
+                        type="button"
+                        class="btn-soft px-2 py-0.5 text-xs text-gold"
+                        @click="undoClearDatabase"
+                    >
+                      {{ t('setting.general.clearUndoBtn') }}
+                    </button>
                   </div>
                 </div>
                 <div class="w-56 shrink-0">

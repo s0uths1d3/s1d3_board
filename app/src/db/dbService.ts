@@ -76,6 +76,17 @@ function withPage(page: PageQuery | undefined, params: unknown[]): { sql: string
     return { sql: ' LIMIT $' + (params.length + 1) + ' OFFSET $' + (params.length + 2), params: [...params, page.limit, page.offset] };
 }
 
+/**
+ * 清空撤回机制的备份表映射：清空前各业务/统计表整表复制到 clear_backup_*，
+ * 5 秒撤回窗口内可整表恢复，窗口结束或应用重启后丢弃。
+ */
+const CLEAR_BACKUP_TABLES = [
+    { src: 'clipboard', backup: 'clear_backup_clipboard' },
+    { src: 'note', backup: 'clear_backup_note' },
+    { src: 'todo', backup: 'clear_backup_todo' },
+    { src: 'daily_stat', backup: 'clear_backup_daily_stat' },
+] as const;
+
 class DatabaseService {
     private static instance: DatabaseService;
     private db: Database | undefined;
@@ -93,6 +104,10 @@ class DatabaseService {
         const dbName = 'sqlite:s1d3_board.db';
         this.db = await Database.load(dbName);
         await this.ensureFeatureColumns();
+        // 上次会话遗留的清空备份：撤回窗口随进程结束已失效，直接丢弃（幂等）
+        for (const { backup } of CLEAR_BACKUP_TABLES) {
+            await this.db!.execute(`DROP TABLE IF EXISTS ${backup}`).catch(() => {});
+        }
     }
 
     /**
@@ -403,18 +418,64 @@ class DatabaseService {
     }
 
     /**
-     * 清空业务数据（剪贴板 / 便签 / 待办），保留配置表（settings、shortcut_binding）
-     * 以及常用剪贴（pinned_clip，不可删除）与统计数据（daily_stat）。
+     * 清空业务数据（剪贴板 / 便签 / 待办）与统计数据（daily_stat），
+     * 保留配置表（settings、shortcut_binding）与常用剪贴（pinned_clip，不可删除）。
      * 同时重置各表的自增主键计数。
+     *
+     * 清空前把上述表完整备份到 clear_backup_* 表，配合 undoClearDatabase（5 秒
+     * 撤回窗口内整表恢复）与 finalizeClear（窗口结束后丢弃备份）实现可撤回清空；
+     * 上次会话遗留的备份在 initDatabase 中清理。
      */
     public async clearDatabase(): Promise<void> {
         await this.ensureDbInitialized();
+        for (const { src, backup } of CLEAR_BACKUP_TABLES) {
+            await this.db!.execute(`DROP TABLE IF EXISTS ${backup}`);
+            await this.db!.execute(`CREATE TABLE ${backup} AS SELECT * FROM ${src}`);
+        }
         await this.db!.execute("DELETE FROM clipboard");
         await this.db!.execute("DELETE FROM note");
         await this.db!.execute("DELETE FROM todo");
+        // 统计数据一并清空（statsService.clearAll 会同时丢弃内存累加器，避免清表后被写回）
+        await statsService.clearAll();
         await this.db!.execute(
             "DELETE FROM sqlite_sequence WHERE name IN ('clipboard', 'note', 'todo')"
         );
+    }
+
+    /**
+     * 撤回清空：把 clear_backup_* 备份整表还原。返回是否有备份被恢复。
+     * 撤回窗口内新写入的数据先被清掉，保证恢复后与"清空前"状态完全一致；
+     * 剪贴板全文索引由触发器随删/插自动维护，无需额外重建。
+     */
+    public async undoClearDatabase(): Promise<boolean> {
+        await this.ensureDbInitialized();
+        const restorable: { src: string; backup: string }[] = [];
+        for (const entry of CLEAR_BACKUP_TABLES) {
+            if (await this.tableExists(entry.backup)) restorable.push(entry);
+        }
+        if (restorable.length === 0) return false;
+        for (const { src, backup } of restorable) {
+            await this.db!.execute(`DELETE FROM ${src}`);
+            await this.db!.execute(`INSERT INTO ${src} SELECT * FROM ${backup}`);
+            await this.db!.execute(`DROP TABLE ${backup}`);
+        }
+        return true;
+    }
+
+    /** 撤回窗口结束：丢弃备份，清空彻底生效（幂等，可在无备份时安全调用） */
+    public async finalizeClear(): Promise<void> {
+        await this.ensureDbInitialized();
+        for (const { backup } of CLEAR_BACKUP_TABLES) {
+            await this.db!.execute(`DROP TABLE IF EXISTS ${backup}`);
+        }
+    }
+
+    private async tableExists(name: string): Promise<boolean> {
+        const rows = await this.db!.select<{ name: string }[]>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = $1",
+            [name]
+        );
+        return Array.isArray(rows) && rows.length > 0;
     }
 
     /**

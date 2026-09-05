@@ -172,6 +172,21 @@ class StatsService {
     }
   }
 
+  /**
+   * 清空全部统计数据（"清空数据库"入口调用）：
+   * daily_stat 表与内存累加器必须一并清——只删表的话，pending 里未落库的
+   * 增量会在下次 flush 时写回，表现为统计页出现"清不掉"的残留。
+   */
+  public async clearAll(): Promise<void> {
+    if (this.flushTimer != null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.pending.clear();
+    await this.ensureDbInitialized();
+    await this.db!.execute("DELETE FROM daily_stat");
+  }
+
   /** 把 pending 中落在 [from, to] 区间内的增量合并到聚合结果（§14.7，纯内存加法） */
   private mergePending(target: Record<string, number>, from?: string, to?: string): void {
     for (const [date, acc] of this.pending) {
