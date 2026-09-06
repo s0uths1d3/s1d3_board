@@ -85,7 +85,7 @@ function shift(delta: number) {
           <span class="w-36 min-w-0">
             <DatePicker
               :model-value="customFrom"
-              :placeholder="t('statistics.fromDate')"
+              :placeholder="t('statistics.from_date')"
               :max="customTo || undefined"
               @update:model-value="emit('update:customFrom', $event)"
             />
@@ -94,7 +94,7 @@ function shift(delta: number) {
           <span class="w-36 min-w-0">
             <DatePicker
               :model-value="customTo"
-              :placeholder="t('statistics.toDate')"
+              :placeholder="t('statistics.to_date')"
               :min="customFrom || undefined"
               @update:model-value="emit('update:customTo', $event)"
             />
@@ -107,7 +107,7 @@ function shift(delta: number) {
             class="flex h-8 w-8 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
             :class="leftDisabled ? 'cursor-not-allowed text-ink-faint/40' : 'text-gold hover:bg-secondary'"
             :disabled="leftDisabled"
-            v-tip="t('statistics.prevPhase')"
+            v-tip="t('statistics.prev_phase')"
             @click="shift(-1)"
           >
             <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -121,7 +121,7 @@ function shift(delta: number) {
             class="flex h-8 w-8 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
             :class="rightDisabled ? 'cursor-not-allowed text-ink-faint/40' : 'text-gold hover:bg-secondary'"
             :disabled="rightDisabled"
-            v-tip="t('statistics.nextPhase')"
+            v-tip="t('statistics.next_phase')"
             @click="shift(1)"
           >
             <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
