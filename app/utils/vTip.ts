@@ -53,6 +53,8 @@ function getTip(): HTMLDivElement {
 
 function parseValue(value: TipValue): TipOptions {
   if (typeof value === 'string') return { content: value, placement: 'top' };
+  // 绑定值为 undefined/null（如可选 tip 未配置）时按空内容处理，由 showTip 的空内容短路兜住
+  if (value == null) return { content: '', placement: 'top' };
   return { content: value.content, placement: value.placement ?? 'top' };
 }
 
