@@ -118,7 +118,7 @@ class DatabaseService {
      * 与 Rust 侧 migration（同 DDL）互不冲突。
      */
     private async ensureFeatureColumns() {
-        // 兜底建表：app_usage（桌面应用使用时长）——防止旧二进制（无 v15 迁移）下前端查询/写入报 no such table
+        // 兜底建表：app_usage / app_icons（桌面应用使用时长）——防止旧二进制（无 v15/v16 迁移）下前端查询/写入报 no such table
         try {
             await this.db!.execute(`
                 CREATE TABLE IF NOT EXISTS app_usage
@@ -130,8 +130,15 @@ class DatabaseService {
                     PRIMARY KEY (stat_date, app_name)
                 )
             `);
+            await this.db!.execute(`
+                CREATE TABLE IF NOT EXISTS app_icons
+                (
+                    app_name TEXT PRIMARY KEY,
+                    icon     TEXT NOT NULL
+                )
+            `);
         } catch (e) {
-            console.warn('[db] 兜底建表 app_usage 失败:', e);
+            console.warn('[db] 兜底建表 app_usage/app_icons 失败:', e);
         }
         const wanted = [
             { table: 'todo', column: 'remind_mode', ddl: 'ALTER TABLE todo ADD COLUMN remind_mode TEXT' },

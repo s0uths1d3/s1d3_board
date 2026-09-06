@@ -30,6 +30,12 @@ export type StatField =
   | 'tab_setting' | 'tab_statistics' | 'tab_app_usage'
   | 'active_dawn' | 'active_day' | 'active_evening' | 'active_night';
 
+/** pull_app_usage 返回结构：Rust 侧内存增量 + 本次会话提取的应用图标 */
+interface PullResult {
+  entries: { app: string; total: number; active: number }[];
+  icons: { app: string; icon: string }[];
+}
+
 /** 区间聚合结果（与 daily_stat 各列同名，值来自 SUM/COALESCE） */
 export interface StatsSummary {
   [key: string]: number;
@@ -202,6 +208,7 @@ class StatsService {
     await this.ensureDbInitialized();
     await this.db!.execute("DELETE FROM daily_stat");
     await this.db!.execute("DELETE FROM app_usage");
+    await this.db!.execute("DELETE FROM app_icons");
   }
 
   // ===== 桌面应用使用时长（app_usage 表，Rust 事件监听 → 30s 拉取）=====
@@ -256,55 +263,91 @@ class StatsService {
     }
   }
 
-  /** 应用使用时长跟踪：30s 拉取 Rust 侧前台监听增量（设置页开关开启后由 app.vue 启动） */
-  public startAppUsageTracking(): void {
+/** 应用使用时长跟踪：30s 拉取 Rust 侧前台监听增量（设置页开关开启后由 app.vue 启动） */
+public startAppUsageTracking(): void {
     if (this.appUsageTimer != null || !isTauri()) return;
     const pull = () => {
-      void invoke<{ app: string; total: number; active: number }[]>('pull_app_usage')
-        .then((entries) => this.recordAppUsage(entries))
+      void invoke<PullResult>('pull_app_usage')
+        .then((res) => {
+          this.recordAppUsage(res.entries);
+          if (res.icons?.length) void this.recordAppIcons(res.icons);
+        })
         .catch(() => { /* 命令缺失/非 Tauri 环境静默忽略 */ });
     };
     void pull();
     this.appUsageTimer = setInterval(pull, 30_000);
-  }
+}
 
-  /** 停止跟踪：最后拉取一次并强制落库，防止退出丢失 */
-  public stopAppUsageTracking(): void {
+/** 停止跟踪：最后拉取一次并强制落库，防止退出丢失 */
+public stopAppUsageTracking(): void {
     if (this.appUsageTimer == null) return;
     clearInterval(this.appUsageTimer);
     this.appUsageTimer = null;
-    void invoke<{ app: string; total: number; active: number }[]>('pull_app_usage')
-      .then((entries) => this.recordAppUsage(entries))
+    void invoke<PullResult>('pull_app_usage')
+      .then((res) => {
+        this.recordAppUsage(res.entries);
+        if (res.icons?.length) void this.recordAppIcons(res.icons);
+      })
       .finally(() => void this.flushAppUsage());
-  }
+}
 
-  /** 区间内按应用聚合的使用时长（总时长降序；§14.7 同构：合并未落库 pending） */
-  public async getAppUsageRange(
+/** 应用图标持久化（Rust 采样提取的 PNG data URL，INSERT 覆盖写） */
+private async recordAppIcons(icons: { app: string; icon: string }[]): Promise<void> {
+    try {
+      await this.ensureDbInitialized();
+      for (const e of icons) {
+        await this.db!.execute(
+          `INSERT INTO app_icons (app_name, icon) VALUES ($1, $2)
+           ON CONFLICT(app_name) DO UPDATE SET icon = excluded.icon`,
+          [e.app, e.icon],
+        );
+      }
+    } catch (e) {
+      // 图标持久化失败不影响时长统计
+      console.error('[stats] app_icons 写入失败:', e);
+    }
+}
+
+/** 区间内按应用聚合的使用时长（总时长降序；含图标；§14.7 同构：合并未落库 pending） */
+public async getAppUsageRange(
     from: string,
     to: string,
-  ): Promise<{ app: string; total: number; active: number }[]> {
+): Promise<{ app: string; total: number; active: number; icon: string | null }[]> {
     await this.ensureDbInitialized();
-    const rows = await this.db!.select<{ app_name: string; total: number; active: number }[]>(
-      `SELECT app_name, SUM(usage_seconds) AS total, SUM(active_seconds) AS active
-       FROM app_usage WHERE stat_date BETWEEN $1 AND $2
-       GROUP BY app_name ORDER BY SUM(usage_seconds) DESC`,
+    const rows = await this.db!.select<{
+      app_name: string; total: number; active: number; icon: string | null;
+    }[]>(
+      `SELECT u.app_name AS app_name,
+              SUM(u.usage_seconds) AS total,
+              SUM(u.active_seconds) AS active,
+              i.icon AS icon
+       FROM app_usage u
+       LEFT JOIN app_icons i ON i.app_name = u.app_name
+       WHERE u.stat_date BETWEEN $1 AND $2
+       GROUP BY u.app_name, i.icon
+       ORDER BY SUM(u.usage_seconds) DESC`,
       [from, to],
     );
-    const out = new Map<string, { app: string; total: number; active: number }>();
+    const out = new Map<string, { app: string; total: number; active: number; icon: string | null }>();
     for (const r of rows ?? []) {
-      out.set(r.app_name, { app: r.app_name, total: Number(r.total) || 0, active: Number(r.active) || 0 });
+      out.set(r.app_name, {
+        app: r.app_name,
+        total: Number(r.total) || 0,
+        active: Number(r.active) || 0,
+        icon: r.icon ?? null,
+      });
     }
     for (const [date, bucket] of this.appPending) {
       if (date < from || date > to) continue;
       for (const [app, v] of bucket) {
-        const cur = out.get(app) ?? { app, total: 0, active: 0 };
+        const cur = out.get(app) ?? { app, total: 0, active: 0, icon: null };
         cur.total += v.total;
         cur.active += v.active;
         out.set(app, cur);
       }
     }
     return [...out.values()].sort((a, b) => b.total - a.total);
-  }
+}
 
   /** 把 pending 中落在 [from, to] 区间内的增量合并到聚合结果（§14.7，纯内存加法） */
   private mergePending(target: Record<string, number>, from?: string, to?: string): void {

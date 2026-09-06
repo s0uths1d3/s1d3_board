@@ -313,9 +313,6 @@ const zhCn = {
   },
   appUsage: {
     title: '应用时长',
-    today: '今天',
-    week: '本周',
-    month: '本月',
     total: '总时长',
     active: '活跃时长',
     idle: '挂机时长',
@@ -885,9 +882,6 @@ const enUs: Record<string, unknown> = {
   },
   appUsage: {
     title: 'App Usage',
-    today: 'Today',
-    week: 'This week',
-    month: 'This month',
     total: 'Total',
     active: 'Active',
     idle: 'Idle',

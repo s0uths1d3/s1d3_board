@@ -365,6 +365,19 @@ CREATE TABLE IF NOT EXISTS app_usage
 -- 新导航 Tab「应用时长」的访问统计列
 ALTER TABLE daily_stat ADD COLUMN tab_app_usage INTEGER NOT NULL DEFAULT 0;
                             "#
+                        },
+                        Migration {
+                            version: 16,
+                            description: "Create app_icons table to persist extracted application icons",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 应用图标缓存（PNG data URL）：Rust 侧采样时提取，前端随拉取持久化，跨会话复用
+CREATE TABLE IF NOT EXISTS app_icons
+(
+    app_name TEXT PRIMARY KEY,
+    icon     TEXT NOT NULL
+);
+                            "#
                         }
                     ]
                 )

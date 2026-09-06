@@ -27,6 +27,9 @@ tauri-plugin-autostart = "2"
 tauri-plugin-opener = "2"
 enigo = "0.5.0"
 tauri-plugin-notification = "2"
+# 应用图标提取：PNG 编码（Windows HICON 转码 / Linux 主题图标转码）与 base64 数据 URL
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
@@ -34,16 +37,18 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Accessibility",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_SystemInformation",
+    "Win32_Storage_FileSystem",
 ] }
 
-# 应用使用时长：macOS 前台应用名与切换通知（AppKit 主线程 API）
+# 应用使用时长：macOS 前台应用名/图标与切换通知（AppKit）
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication"] }
-objc2-foundation = { version = "0.3", features = ["NSNotification", "NSOperation", "NSString", "block2"] }
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication", "NSImage", "NSBitmapImageRep"] }
+objc2-foundation = { version = "0.3", features = ["NSNotification", "NSOperation", "NSString", "NSData", "NSDictionary", "block2"] }
 block2 = "0.6"
 
 # 应用使用时长：Linux X11 前台窗口与屏保空闲（纯 Rust 实现，无需系统库链接）
