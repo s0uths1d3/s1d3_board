@@ -15,6 +15,7 @@ import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER
 import { useI18n, setLocaleMode, LOCALES, type LocaleMode } from '~/composables/useI18n';
 import { useTodoSmartRemind, setTodoSmartRemindEnabled } from '~/composables/useTodoSmartRemind';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
+import { appUsageEnabled, setAppUsageEnabled } from '~/composables/useAppUsage';
 import { navRows, reorderTab, persistNavConfig, setTabEnabled } from '~/composables/useTabs';
 import { useLongPressReorder } from '~/composables/useLongPressReorder';
 import { getVersion } from '@tauri-apps/api/app';
@@ -102,6 +103,16 @@ const { smartRemindEnabled } = useTodoSmartRemind();
 async function onSmartRemindToggle(val: boolean) {
   await setTodoSmartRemindEnabled(val);
   showHint(val ? t('setting.general.smartRemindOn') : t('setting.general.smartRemindOff'));
+}
+
+/** 应用使用时长记录开关：默认关闭（隐私）；切换失败时 composable 已回滚 UI，这里提示重试 */
+async function onAppUsageToggle(val: boolean) {
+  try {
+    await setAppUsageEnabled(val);
+    showHint(val ? t('setting.general.appUsageOn') : t('setting.general.appUsageOff'));
+  } catch {
+    showHint(t('setting.general.appUsageFailed'));
+  }
 }
 watch(searchHighlightEnabled, async (val) => {
   await dbService.setKeyValue('search_highlight_enabled', val ? '1' : '0');
@@ -290,6 +301,11 @@ const settings: SettingGroup[] = [
       },
       {
         label: 'setting.general.smartReminder',
+        value: '',
+        type: 'checkbox'
+      },
+      {
+        label: 'setting.general.appUsageTracking',
         value: '',
         type: 'checkbox'
       },
@@ -950,6 +966,14 @@ onMounted(async () => {
                       :tip-on="t('setting.general.smartRemindTipOn')" :tip-off="t('setting.general.smartRemindTipOff')"
                       :label="t('setting.general.smartReminder')"
                       @change="onSmartRemindToggle"
+                  />
+                  <!-- 应用使用时长记录：默认关闭（隐私），开启后 Rust 侧监听前台应用并按天累计 -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.appUsageTracking'"
+                      :model-value="appUsageEnabled"
+                      :tip-on="t('setting.general.appUsageTipOn')" :tip-off="t('setting.general.appUsageTipOff')"
+                      :label="t('setting.general.appUsageTracking')"
+                      @change="onAppUsageToggle"
                   />
                   <!-- 语言：跟随系统 / 中文 / English（放在配色兜底分支之前） -->
                   <UiDropdown

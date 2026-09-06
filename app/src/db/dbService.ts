@@ -85,6 +85,7 @@ const CLEAR_BACKUP_TABLES = [
     { src: 'note', backup: 'clear_backup_note' },
     { src: 'todo', backup: 'clear_backup_todo' },
     { src: 'daily_stat', backup: 'clear_backup_daily_stat' },
+    { src: 'app_usage', backup: 'clear_backup_app_usage' },
 ] as const;
 
 class DatabaseService {
@@ -117,6 +118,21 @@ class DatabaseService {
      * 与 Rust 侧 migration（同 DDL）互不冲突。
      */
     private async ensureFeatureColumns() {
+        // 兜底建表：app_usage（桌面应用使用时长）——防止旧二进制（无 v15 迁移）下前端查询/写入报 no such table
+        try {
+            await this.db!.execute(`
+                CREATE TABLE IF NOT EXISTS app_usage
+                (
+                    stat_date      TEXT NOT NULL,
+                    app_name       TEXT NOT NULL,
+                    usage_seconds  INTEGER NOT NULL DEFAULT 0,
+                    active_seconds INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (stat_date, app_name)
+                )
+            `);
+        } catch (e) {
+            console.warn('[db] 兜底建表 app_usage 失败:', e);
+        }
         const wanted = [
             { table: 'todo', column: 'remind_mode', ddl: 'ALTER TABLE todo ADD COLUMN remind_mode TEXT' },
             { table: 'todo', column: 'remind_at', ddl: 'ALTER TABLE todo ADD COLUMN remind_at TEXT' },
@@ -124,6 +140,8 @@ class DatabaseService {
             { table: 'todo', column: 'remind_rules', ddl: 'ALTER TABLE todo ADD COLUMN remind_rules TEXT' },
             { table: 'daily_stat', column: 'todo_reminded', ddl: 'ALTER TABLE daily_stat ADD COLUMN todo_reminded INTEGER NOT NULL DEFAULT 0' },
             { table: 'daily_stat', column: 'todo_chars', ddl: 'ALTER TABLE daily_stat ADD COLUMN todo_chars INTEGER NOT NULL DEFAULT 0' },
+            { table: 'daily_stat', column: 'tab_app_usage', ddl: 'ALTER TABLE daily_stat ADD COLUMN tab_app_usage INTEGER NOT NULL DEFAULT 0' },
+            { table: 'app_usage', column: 'active_seconds', ddl: 'ALTER TABLE app_usage ADD COLUMN active_seconds INTEGER NOT NULL DEFAULT 0' },
         ];
         let addedPriorityLevel = false;
         for (const { table, column, ddl } of wanted) {

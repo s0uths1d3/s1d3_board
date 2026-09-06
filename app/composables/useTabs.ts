@@ -3,7 +3,7 @@ import statsService, { type StatField } from '~/src/statistics/statsService'
 import dbService from '~/src/db/dbService'
 
 /** 顶层页面 Tab */
-export type TabKey = 'clip' | 'todo' | 'note' | 'pinned' | 'setting' | 'statistics'
+export type TabKey = 'clip' | 'todo' | 'note' | 'pinned' | 'setting' | 'statistics' | 'app_usage'
 
 const activeTabRef = ref<TabKey>('clip')
 
@@ -31,6 +31,7 @@ export const tabItems: TabItem[] = [
   { key: 'pinned', name: '常用剪贴板' },
   { key: 'setting', name: '设置' },
   { key: 'statistics', name: '统计' },
+  { key: 'app_usage', name: '应用时长' },
 ]
 
 // ===== 导航栏自定义配置（顺序 + 启用状态，持久化到 settings 表） =====

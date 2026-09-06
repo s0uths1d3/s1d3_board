@@ -19,6 +19,7 @@ tauri-build = { version = "2.2.0", features = [] }
 
 [dependencies]
 log = "0.4"
+serde = { version = "1", features = ["derive"] }
 tauri = { version = "2.11.5", features = ["tray-icon", "image-png", "image-ico"] }
 tauri-plugin-log = "2"
 tauri-plugin-clipboard = "2.1.11"
@@ -28,7 +29,26 @@ enigo = "0.5.0"
 tauri-plugin-notification = "2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader", "Win32_Foundation"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_System_LibraryLoader",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Accessibility",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_SystemInformation",
+] }
+
+# 应用使用时长：macOS 前台应用名与切换通知（AppKit 主线程 API）
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication"] }
+objc2-foundation = { version = "0.3", features = ["NSNotification", "NSOperation", "NSString", "block2"] }
+block2 = "0.6"
+
+# 应用使用时长：Linux X11 前台窗口与屏保空闲（纯 Rust 实现，无需系统库链接）
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["screensaver"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"

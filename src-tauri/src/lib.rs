@@ -2,6 +2,8 @@ use std::time::Duration;
 use tauri::Manager;
 use tauri_plugin_sql::{Migration, MigrationKind};
 
+mod app_usage;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -344,6 +346,25 @@ DROP INDEX IF EXISTS idx_pinned_sort;
 -- 与代码中"跟随系统（system）"的文档化默认值冲突，导致跟随系统永不生效；一次性纠正。
 UPDATE settings SET value = 'system', description = '配色模式' WHERE key = 'color_scheme' AND value = 'light';
                             "#
+                        },
+                        Migration {
+                            version: 15,
+                            description: "Create app_usage table for per-application desktop usage tracking; add appUsage tab stat column",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 桌面应用使用时长：按天×应用累计（前台窗口维度；总量与活跃量分列，挂机 = 总 - 活跃）
+CREATE TABLE IF NOT EXISTS app_usage
+(
+    stat_date      TEXT NOT NULL,               -- 统计日期 YYYY-MM-DD（本地时区）
+    app_name       TEXT NOT NULL,               -- 应用标识（Windows/Linux 进程名、macOS 应用名）
+    usage_seconds  INTEGER NOT NULL DEFAULT 0,  -- 前台总时长（秒，含挂机）
+    active_seconds INTEGER NOT NULL DEFAULT 0,  -- 活跃时长（秒，键鼠无输入>5分钟的部分不计入）
+    PRIMARY KEY (stat_date, app_name)
+);
+
+-- 新导航 Tab「应用时长」的访问统计列
+ALTER TABLE daily_stat ADD COLUMN tab_app_usage INTEGER NOT NULL DEFAULT 0;
+                            "#
                         }
                     ]
                 )
@@ -357,9 +378,17 @@ UPDATE settings SET value = 'system', description = '配色模式' WHERE key = '
                         .build(),
                 )?;
             }
+            // 桌面应用使用时长：启动前台切换监听与 30s 分段结算（累计仅在设置开启后生效）
+            app_usage::start(app.handle().clone());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![paste, set_menu_theme, quit_app])
+        .invoke_handler(tauri::generate_handler![
+            paste,
+            set_menu_theme,
+            quit_app,
+            app_usage::set_app_usage_enabled,
+            app_usage::pull_app_usage
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

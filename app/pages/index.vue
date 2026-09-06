@@ -30,6 +30,7 @@ import { useI18n } from "~/composables/useI18n";
 // 统计页懒加载（§14.5）：统计 Tab 非首屏，异步加载降低主窗口初始包体与内存
 import { defineAsyncComponent } from "vue";
 const StatsPage = defineAsyncComponent(() => import("~/components/statistics/StatsPage.vue"));
+import AppUsagePage from "~/components/appusage/AppUsagePage.vue";
 
 const listElement = ref<HTMLElement | null>(null);
 /** 是否开启悬停提示窗口（tooltip），受设置页「提示窗口」开关控制 */
@@ -1057,6 +1058,9 @@ async function openImageViewer(item: ClipboardData) {
 
             <!-- 统计（懒加载，§14.5） -->
             <StatsPage v-else-if="activeTab === 'statistics'" />
+
+            <!-- 应用时长（独立统计 Tab） -->
+            <AppUsagePage v-else-if="activeTab === 'app_usage'" />
           </div>
         </Transition>
       </div>

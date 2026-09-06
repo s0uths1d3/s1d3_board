@@ -1,4 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "~/utils/env";
 import { toDateString } from "~/utils/datetime";
@@ -26,7 +27,7 @@ export type StatField =
   | 'note_added' | 'note_deleted' | 'favorite_toggle'
   | 'usage_seconds' | 'shortcut_count'
   | 'tab_clip' | 'tab_todo' | 'tab_note' | 'tab_pinned'
-  | 'tab_setting' | 'tab_statistics'
+  | 'tab_setting' | 'tab_statistics' | 'tab_app_usage'
   | 'active_dawn' | 'active_day' | 'active_evening' | 'active_night';
 
 /** 区间聚合结果（与 daily_stat 各列同名，值来自 SUM/COALESCE） */
@@ -49,7 +50,7 @@ const DEFAULT_RANGE_FIELDS: StatField[] = [
   'todo_added', 'todo_completed', 'todo_deleted', 'todo_chars', 'todo_reminded',
   'note_added', 'note_deleted', 'favorite_toggle',
   'usage_seconds', 'shortcut_count',
-  'tab_clip', 'tab_todo', 'tab_note', 'tab_pinned', 'tab_setting', 'tab_statistics',
+  'tab_clip', 'tab_todo', 'tab_note', 'tab_pinned', 'tab_setting', 'tab_statistics', 'tab_app_usage',
   'active_dawn', 'active_day', 'active_evening', 'active_night',
 ];
 
@@ -69,6 +70,15 @@ class StatsService {
   private pending = new Map<string, Partial<Record<StatField, number>>>();
   /** 节流落库定时器（pending 为空时不挂起，首条写入后启动） */
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** 应用使用时长累加器：日期 → (应用 → 总/活跃秒数)，与 daily_stat 同模式 2s 节流写 app_usage 表 */
+  private appPending = new Map<string, Map<string, { total: number; active: number }>>();
+  /** 应用使用 flush 节流定时器 */
+  private appFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 应用使用 flush 进行中标记（公共 flush 与独立节流定时器可能并发触发，防重复累加） */
+  private appFlushing = false;
+  /** 应用使用拉取定时器（30s invoke Rust 侧增量） */
+  private appUsageTimer: ReturnType<typeof setInterval> | null = null;
 
   /** 使用时长跟踪状态（§4.5）：30s 结算一次，仅主窗口启动 */
   private usageInterval: ReturnType<typeof setInterval> | null = null;
@@ -145,13 +155,13 @@ class StatsService {
     }
   }
 
-  /** 2) 强制落库内存累加器（定时 flush / 退出前共用，§14.1 / §14.1.1） */
+  /** 2) 强制落库内存累加器（定时 flush / 退出前共用，§14.1 / §14.1.1），daily_stat 与 app_usage 一并落库 */
   public async flush(): Promise<void> {
     if (this.flushTimer != null) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
-    if (this.pending.size === 0) return;
+    if (this.pending.size === 0 && this.appPending.size === 0) return;
     try {
       await this.ensureDbInitialized();
       for (const [date, acc] of this.pending) {
@@ -166,6 +176,7 @@ class StatsService {
         );
       }
       this.pending.clear();
+      await this.flushAppUsage();
     } catch (e) {
       // 失败保留 pending 下次重试，不丢数据
       console.error('[stats] flush failed:', e);
@@ -174,7 +185,7 @@ class StatsService {
 
   /**
    * 清空全部统计数据（"清空数据库"入口调用）：
-   * daily_stat 表与内存累加器必须一并清——只删表的话，pending 里未落库的
+   * daily_stat/app_usage 表与内存累加器必须一并清——只删表的话，pending 里未落库的
    * 增量会在下次 flush 时写回，表现为统计页出现"清不掉"的残留。
    */
   public async clearAll(): Promise<void> {
@@ -182,9 +193,117 @@ class StatsService {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
+    if (this.appFlushTimer != null) {
+      clearTimeout(this.appFlushTimer);
+      this.appFlushTimer = null;
+    }
     this.pending.clear();
+    this.appPending.clear();
     await this.ensureDbInitialized();
     await this.db!.execute("DELETE FROM daily_stat");
+    await this.db!.execute("DELETE FROM app_usage");
+  }
+
+  // ===== 桌面应用使用时长（app_usage 表，Rust 事件监听 → 30s 拉取）=====
+
+  /** 单次拉取的 Rust 侧增量合入 pending（与 daily_stat 同模式的 2s 节流落库） */
+  private recordAppUsage(entries: { app: string; total: number; active: number }[]): void {
+    if (!entries || entries.length === 0) return;
+    const date = this.today();
+    let bucket = this.appPending.get(date);
+    if (!bucket) {
+      bucket = new Map();
+      this.appPending.set(date, bucket);
+    }
+    for (const e of entries) {
+      const cur = bucket.get(e.app) ?? { total: 0, active: 0 };
+      cur.total += e.total;
+      cur.active += e.active;
+      bucket.set(e.app, cur);
+    }
+    if (this.appFlushTimer == null) {
+      this.appFlushTimer = setTimeout(() => {
+        this.appFlushTimer = null;
+        void this.flushAppUsage();
+      }, 2000);
+    }
+  }
+
+  /** app_usage 表批量 UPSERT（按天×应用行，冲突累加两个时长列）；重入直接跳过（失败保留 pending 重试） */
+  private async flushAppUsage(): Promise<void> {
+    if (this.appPending.size === 0 || this.appFlushing) return;
+    this.appFlushing = true;
+    try {
+      await this.ensureDbInitialized();
+      for (const [date, bucket] of this.appPending) {
+        for (const [app, v] of bucket) {
+          await this.db!.execute(
+            `INSERT INTO app_usage (stat_date, app_name, usage_seconds, active_seconds)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(stat_date, app_name) DO UPDATE SET
+               usage_seconds = usage_seconds + excluded.usage_seconds,
+               active_seconds = active_seconds + excluded.active_seconds`,
+            [date, app, v.total, v.active],
+          );
+        }
+      }
+      this.appPending.clear();
+    } catch (e) {
+      // 失败保留 pending 下次重试，不丢数据
+      console.error('[stats] app_usage flush failed:', e);
+    } finally {
+      this.appFlushing = false;
+    }
+  }
+
+  /** 应用使用时长跟踪：30s 拉取 Rust 侧前台监听增量（设置页开关开启后由 app.vue 启动） */
+  public startAppUsageTracking(): void {
+    if (this.appUsageTimer != null || !isTauri()) return;
+    const pull = () => {
+      void invoke<{ app: string; total: number; active: number }[]>('pull_app_usage')
+        .then((entries) => this.recordAppUsage(entries))
+        .catch(() => { /* 命令缺失/非 Tauri 环境静默忽略 */ });
+    };
+    void pull();
+    this.appUsageTimer = setInterval(pull, 30_000);
+  }
+
+  /** 停止跟踪：最后拉取一次并强制落库，防止退出丢失 */
+  public stopAppUsageTracking(): void {
+    if (this.appUsageTimer == null) return;
+    clearInterval(this.appUsageTimer);
+    this.appUsageTimer = null;
+    void invoke<{ app: string; total: number; active: number }[]>('pull_app_usage')
+      .then((entries) => this.recordAppUsage(entries))
+      .finally(() => void this.flushAppUsage());
+  }
+
+  /** 区间内按应用聚合的使用时长（总时长降序；§14.7 同构：合并未落库 pending） */
+  public async getAppUsageRange(
+    from: string,
+    to: string,
+  ): Promise<{ app: string; total: number; active: number }[]> {
+    await this.ensureDbInitialized();
+    const rows = await this.db!.select<{ app_name: string; total: number; active: number }[]>(
+      `SELECT app_name, SUM(usage_seconds) AS total, SUM(active_seconds) AS active
+       FROM app_usage WHERE stat_date BETWEEN $1 AND $2
+       GROUP BY app_name ORDER BY SUM(usage_seconds) DESC`,
+      [from, to],
+    );
+    const out = new Map<string, { app: string; total: number; active: number }>();
+    for (const r of rows ?? []) {
+      out.set(r.app_name, { app: r.app_name, total: Number(r.total) || 0, active: Number(r.active) || 0 });
+    }
+    for (const [date, bucket] of this.appPending) {
+      if (date < from || date > to) continue;
+      for (const [app, v] of bucket) {
+        const cur = out.get(app) ?? { app, total: 0, active: 0 };
+        cur.total += v.total;
+        cur.active += v.active;
+        out.set(app, cur);
+      }
+    }
+    return [...out.values()].sort((a, b) => b.total - a.total);
   }
 
   /** 把 pending 中落在 [from, to] 区间内的增量合并到聚合结果（§14.7，纯内存加法） */

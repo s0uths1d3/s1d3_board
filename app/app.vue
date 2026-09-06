@@ -17,6 +17,7 @@ import {isTauri} from "~/utils/env";
 import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
 import statsService from "~/src/statistics/statsService";
 import reminderService from "~/src/todo/reminderService";
+import { restoreAppUsageSetting } from "~/composables/useAppUsage";
 import { savePopupLastPosition } from "~/composables/usePopupPosition";
 
 /** 剪贴板监听与全局快捷键只需在主窗口注册一次；
@@ -155,6 +156,8 @@ onMounted(async () => {
   // ===== 统计模块（§7.9 / §14.8）=====
   // 使用时长跟踪（30s 结算一次，增量进入 pending 累加器，§4.5）
   statsService.startUsageTracking();
+  // ===== 应用使用时长（独立导航 Tab；默认关闭，此处恢复持久化的开关状态）=====
+  void restoreAppUsageSetting();
   // ===== 待办智能提醒 =====
   // 调度服务挂主窗口：切 Tab（TodoList 卸载）不丢定时器；内部幂等，TodoList 侧会兜底再调
   void reminderService.start();
@@ -197,6 +200,8 @@ onBeforeUnmount(async () => {
   await unregisterAllShortcuts();
   // 停止使用时长跟踪（内部执行最后一次结算 + 落库）
   statsService.stopUsageTracking();
+  // 应用使用时长：最后拉取一次并落库
+  statsService.stopAppUsageTracking();
   window.removeEventListener('beforeunload', flushStatsOnExit);
 });
 </script>
