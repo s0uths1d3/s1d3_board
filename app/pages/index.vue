@@ -290,6 +290,13 @@ async function openTooltipWindow() {
   });
 }
 
+/** 列表行样式：选中项金色描边 + 高亮环；收藏项（未选中时）金色描边 + 淡金底色，与未收藏项明显区分。
+ *  选中与收藏同时存在时以选中样式为主——收藏仍有左缘竖条、金色序号与「已收藏」徽标标识。 */
+function rowClass(item: ClipboardData, index: number): string {
+  if (index === getSelectedRowIndex()) return 'border-gold ring-1 ring-gold/60';
+  return item.is_favorite === 1 ? '!border-gold/50 !bg-gold/5' : '';
+}
+
 /** 列表本地方向键导航：上下移动选中项，并阻止冒泡避免与 ShortcutManager 的 window 监听重复触发 */
 function onListKeydown(e: KeyboardEvent) {
   // 删除确认框打开时：键盘操作由 DeleteConfirm 组件统一处理，这里不响应（避免误删/重复弹框）
@@ -923,10 +930,10 @@ async function openImageViewer(item: ClipboardData) {
                 @keydown="onListKeydown"
               >
                 <li
-                  class="glass-card list-row cursor-pointer rounded-2xl p-4 transition-all duration-300 ease-soft hover:-translate-y-0.5 hover:shadow-float"
+                  class="glass-card list-row relative cursor-pointer rounded-2xl p-4 transition-all duration-300 ease-soft hover:-translate-y-0.5 hover:shadow-float"
                   v-for="(item, index) in data"
                   :key="item.id"
-                  :class="{ 'border-gold ring-1 ring-gold/60': index === getSelectedRowIndex() }"
+                  :class="rowClass(item, index)"
                   draggable="true"
                   @dragstart="handleDragStart(item, $event)"
                   @dragend="handleDragEnd(item,$event)"
@@ -934,7 +941,13 @@ async function openImageViewer(item: ClipboardData) {
                   @contextmenu="openContextMenu(item, index, $event)"
                   @dblclick="openImageViewer(item)"
                 >
-                  <div class="text-4xl font-thin opacity-30 tabular-nums">{{ index + 1 }}</div>
+                  <!-- 收藏标识：卡片左缘金色竖条，与未收藏项一眼区分（选中样式优先级更高） -->
+                  <div
+                    v-if="item.is_favorite === 1"
+                    class="absolute left-1 top-3 bottom-3 w-1 rounded-full bg-gold"
+                    aria-hidden="true"
+                  ></div>
+                  <div class="text-4xl font-thin tabular-nums" :class="item.is_favorite === 1 ? 'text-gold/70' : 'opacity-30'">{{ index + 1 }}</div>
                   <div class="list-col-grow flex min-w-0 flex-col">
                     <div class="relative min-h-0 overflow-hidden" @mouseenter="showTooltip(index, item, $event)" @mouseleave="hideTooltip">
                       <!-- 图片条目：进入视口后渲染真实 <img>（懒解码，避免首屏同时解码数十张） -->
@@ -963,20 +976,29 @@ async function openImageViewer(item: ClipboardData) {
                         />
                       </span>
                     </div>
-                    <!-- 基础信息固定显示在容器最后一行 -->
-                    <div class="mt-1 shrink-0 text-xs uppercase font-semibold opacity-60 text-ink-soft">
-                      {{ t(item.type === 'image' ? 'common.image' : 'common.text') }}
-                      {{ t('clip.createdAt') }}{{ formatDateLocalized(parseInt(item.created_at)) }}
-                      {{ t('clip.useCount') }}{{ item.count }}
-                      {{ t('clip.lastUsedAt') }}{{ formatDateLocalized(parseInt(item.updated_at)) }}
+                    <!-- 基础信息固定显示在容器最后一行；收藏项前置金色徽标 -->
+                    <div class="mt-1 flex flex-wrap items-center gap-x-2 shrink-0 text-xs uppercase font-semibold text-ink-soft">
+                      <span
+                        v-if="item.is_favorite === 1"
+                        class="inline-flex items-center gap-1 rounded-full bg-gold/15 px-1.5 py-px text-gold"
+                      >
+                        <svg class="h-3 w-3" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" fill="currentColor"></path>
+                        </svg>
+                        {{ t('clip.favorited') }}
+                      </span>
+                      <span class="opacity-60">{{ t(item.type === 'image' ? 'common.image' : 'common.text') }}
+                      {{ t('clip.createdAt') }}{{ formatDateLocalized(parseInt(item.created_at)) }}</span>
+                      <span class="opacity-60">{{ t('clip.useCount') }}{{ item.count }}</span>
+                      <span class="opacity-60">{{ t('clip.lastUsedAt') }}{{ formatDateLocalized(parseInt(item.updated_at)) }}</span>
                     </div>
                   </div>
-                  <button class="btn-soft btn-circle p-2" @click="favorite(item.id,item.is_favorite)">
+                  <button class="btn-soft btn-circle p-2" :class="item.is_favorite === 1 ? 'bg-gold/15 text-gold' : ''" @click="favorite(item.id,item.is_favorite)">
                     <svg v-if="item.is_favorite===0" class="size-[1.2em]" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
                       <path d="M253.488042 1024c-16.9 0-33.2875-5.1125-47.6125-15.3625-26.625-18.425-39.425-49.6625-34.3125-81.925l40.9625-251.9c1.5375-10.2375-1.5375-20.475-8.7-27.65L28.213042 466.4375c-22.0125-22.525-29.1875-55.3-19.45-84.9875 9.725-29.7 35.325-51.2 66.05-55.8125l237.575-36.35c10.75-1.5375 19.4625-8.1875 24.0625-17.925L441.388042 48.125c13.825-29.7 42.5-48.125 75.2625-48.125s61.4375 18.4375 75.2625 48.125l104.45 223.2375c4.6125 9.725 13.825 16.375 24.0625 17.925L958.000542 325.625a82.355 82.355 0 0 1 66.05 55.8125c10.2375 29.7 2.5625 62.4625-19.45 84.9875l-175.625 180.7375c-7.1625 7.175-10.2375 17.925-8.7 27.65l40.9625 251.9c5.125 31.75-8.1875 63.4875-34.3 81.925-26.1125 18.4375-59.9 20.4875-88.0625 4.6125l-206.85-114.6875c-9.725-5.1125-20.9875-5.1125-30.7125 0l-207.3625 115.2c-12.8125 6.65-26.6375 10.2375-40.4625 10.2375zM516.650542 51.2c-12.8 0-23.55 7.1625-29.1875 18.4375L383.525542 292.875c-11.775 25.0875-35.325 43.0125-62.975 47.1l-237.575 36.35c-12.2875 2.05-21.5 9.7375-25.6 21.5-4.1 11.775-1.025 24.0625 7.665 32.775L240.688042 611.325c18.4375 18.95 26.625 45.5625 22.525 71.675L222.250542 934.9125c-2.05 12.8 3.075 24.575 13.3125 31.7775 10.2375 7.175 23.0375 7.6875 33.7875 1.5375l207.3625-115.2c25.0875-13.825 55.3-13.825 80.3875 0l207.3625 115.2c10.75 6.1375 23.55 5.625 33.8-1.5375 10.2375-7.1625 15.3625-18.95 13.3125-31.7375L770.625542 683.0125c-4.1-26.1125 4.1-52.7375 22.525-71.675l175.625-180.7375c8.7-8.7 11.2625-20.9875 7.675-32.775-4.0875-11.775-13.3125-19.9625-25.6-21.5l-237.5625-36.35c-27.65-4.0875-51.2-22.0125-62.975-47.1L545.838042 69.6375c-5.625-11.2625-16.375-18.4375-29.1875-18.4375z m0 0" fill="currentColor"></path>
                     </svg>
                     <svg v-else class="size-[1.2em]" viewBox="0 0 1426 1024" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M985.6 1022.976c-14.848 0-31.744-4.096-47.104-12.288L716.288 899.584l-223.744 111.104c-14.336 7.68-30.208 11.776-47.104 11.776-21.504 0-42.496-6.656-59.392-19.456-31.232-23.552-47.104-64-39.936-101.376l45.568-237.056-175.616-163.328c-27.136-27.648-37.376-67.072-27.136-104.448l0.512-1.024c12.8-38.4 44.544-65.024 82.944-70.144l243.712-44.544L625.152 58.88C642.56 23.552 678.4 1.024 716.288 1.024c39.424 0 76.288 23.552 91.648 58.368l109.056 221.696 243.712 42.496c38.4 5.632 70.656 33.28 81.408 71.168 12.288 36.864 2.048 77.312-25.6 104.96l-0.512 0.512-174.592 164.864 44.032 237.568c7.168 37.888-8.192 76.288-39.424 100.352-17.92 12.8-38.912 19.968-60.416 19.968z" fill="#c4a77d"></path>
+                      <path d="M985.6 1022.976c-14.848 0-31.744-4.096-47.104-12.288L716.288 899.584l-223.744 111.104c-14.336 7.68-30.208 11.776-47.104 11.776-21.504 0-42.496-6.656-59.392-19.456-31.232-23.552-47.104-64-39.936-101.376l45.568-237.056-175.616-163.328c-27.136-27.648-37.376-67.072-27.136-104.448l0.512-1.024c12.8-38.4 44.544-65.024 82.944-70.144l243.712-44.544L625.152 58.88C642.56 23.552 678.4 1.024 716.288 1.024c39.424 0 76.288 23.552 91.648 58.368l109.056 221.696 243.712 42.496c38.4 5.632 70.656 33.28 81.408 71.168 12.288 36.864 2.048 77.312-25.6 104.96l-0.512 0.512-174.592 164.864 44.032 237.568c7.168 37.888-8.192 76.288-39.424 100.352-17.92 12.8-38.912 19.968-60.416 19.968z" fill="currentColor"></path>
                     </svg>
                   </button>
                   <button class="btn-soft btn-circle p-2 text-danger" @click="handleDelete(item, $event)">
