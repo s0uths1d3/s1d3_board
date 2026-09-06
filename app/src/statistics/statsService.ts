@@ -310,43 +310,43 @@ private async recordAppIcons(icons: { app: string; icon: string }[]): Promise<vo
 
 /** 区间内按应用聚合的使用时长（总时长降序；含图标；§14.7 同构：合并未落库 pending） */
 public async getAppUsageRange(
-    from: string,
-    to: string,
+from: string,
+to: string,
 ): Promise<{ app: string; total: number; active: number; icon: string | null }[]> {
-    await this.ensureDbInitialized();
-    const rows = await this.db!.select<{
-      app_name: string; total: number; active: number; icon: string | null;
-    }[]>(
-      `SELECT u.app_name AS app_name,
-              SUM(u.usage_seconds) AS total,
-              SUM(u.active_seconds) AS active,
-              i.icon AS icon
-       FROM app_usage u
-       LEFT JOIN app_icons i ON i.app_name = u.app_name
-       WHERE u.stat_date BETWEEN $1 AND $2
-       GROUP BY u.app_name, i.icon
-       ORDER BY SUM(u.usage_seconds) DESC`,
-      [from, to],
-    );
-    const out = new Map<string, { app: string; total: number; active: number; icon: string | null }>();
-    for (const r of rows ?? []) {
-      out.set(r.app_name, {
-        app: r.app_name,
-        total: Number(r.total) || 0,
-        active: Number(r.active) || 0,
-        icon: r.icon ?? null,
-      });
+await this.ensureDbInitialized();
+  const rows = await this.db!.select<{
+    app_name: string; total: number; active: number; icon: string | null;
+  }[]>(
+    `SELECT u.app_name AS app_name,
+            SUM(u.usage_seconds) AS total,
+            SUM(u.active_seconds) AS active,
+            i.icon AS icon
+     FROM app_usage u
+     LEFT JOIN app_icons i ON i.app_name = u.app_name
+     WHERE u.stat_date BETWEEN $1 AND $2
+     GROUP BY u.app_name, i.icon
+     ORDER BY SUM(u.usage_seconds) DESC`,
+    [from, to],
+  );
+  const out = new Map<string, { app: string; total: number; active: number; icon: string | null }>();
+  for (const r of rows ?? []) {
+    out.set(r.app_name, {
+      app: r.app_name,
+      total: Number(r.total) || 0,
+      active: Number(r.active) || 0,
+      icon: r.icon ?? null,
+    });
+  }
+  for (const [date, bucket] of this.appPending) {
+    if (date < from || date > to) continue;
+    for (const [app, v] of bucket) {
+      const cur = out.get(app) ?? { app, total: 0, active: 0, icon: null };
+      cur.total += v.total;
+      cur.active += v.active;
+      out.set(app, cur);
     }
-    for (const [date, bucket] of this.appPending) {
-      if (date < from || date > to) continue;
-      for (const [app, v] of bucket) {
-        const cur = out.get(app) ?? { app, total: 0, active: 0, icon: null };
-        cur.total += v.total;
-        cur.active += v.active;
-        out.set(app, cur);
-      }
-    }
-    return [...out.values()].sort((a, b) => b.total - a.total);
+  }
+  return [...out.values()].sort((a, b) => b.total - a.total);
 }
 
   /** 把 pending 中落在 [from, to] 区间内的增量合并到聚合结果（§14.7，纯内存加法） */
