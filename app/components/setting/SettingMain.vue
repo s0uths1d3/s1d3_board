@@ -1,3 +1,9 @@
+<script lang="ts">
+// 模块级：跨组件挂载保留选中的设置分类。设置页随 Tab 切换被卸载/重建，
+// 组件内 ref 会重置为第一项，导致每次进入设置都先闪现第一组、再跳到上次分类。
+let lastActiveSettingTitle: string | null = null;
+</script>
+
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, onBeforeUnmount, nextTick } from 'vue';
 import {
@@ -343,9 +349,11 @@ const settings: SettingGroup[] = [
   }
 ];
 
-const activeSetting = ref(settings[0]);
+// 初始分组：优先取模块级保留值（同会话内再次进入无跳变），否则第一项
+const activeSetting = ref(settings.find(s => s.title === lastActiveSettingTitle) ?? settings[0]);
 // 持久化当前选中的设置分类，下次进入设置默认停在该分类
 watch(activeSetting, async (val) => {
+  lastActiveSettingTitle = val?.title ?? null;
   await dbService.setKeyValue('setting_active_tab', val?.title ?? '');
 });
 
@@ -679,15 +687,18 @@ onMounted(async () => {
     } catch { /* 读取失败保持回退版本 */ }
   }
   // 配色的读取/应用/持久化由 useColorScheme 统一负责，这里无需处理
-  // 恢复上次选中的设置分类（快捷键 / Api设置 / 通用）
-  try {
-    const savedTab = await dbService.getKeyValue('setting_active_tab');
-    if (savedTab) {
-      const found = settings.find(s => s.title === savedTab);
-      if (found) activeSetting.value = found;
+  // 恢复上次选中的设置分类（快捷键 / Api设置 / 通用）。
+  // 仅本会话首次挂载执行：后续挂载已由模块级 lastActiveSettingTitle 同步落位，无需再跳。
+  if (!lastActiveSettingTitle) {
+    try {
+      const savedTab = await dbService.getKeyValue('setting_active_tab');
+      if (savedTab) {
+        const found = settings.find(s => s.title === savedTab);
+        if (found) activeSetting.value = found;
+      }
+    } catch (e) {
+      // 忽略，使用默认第一项
     }
-  } catch (e) {
-    // 忽略，使用默认第一项
   }
   // 读取当前开机自启状态（仅桌面容器内可用）；
   // 用 initializingAutoStart 标记，避免触发 watch 误发 enable/disable 与提示。
@@ -707,7 +718,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="container mx-auto p-4">
+  <!-- 边距与宽度由外壳统一提供（main px-4 + max-w-6xl），各模块保持一致 -->
+  <div>
     <div class="flex">
       <div class="w-1/5 pr-4 sticky top-4 self-start" data-setting-nav>
         <!-- 左侧分类列表：长按 1s 可拖动调整顺序，松开自动持久化；TransitionGroup 提供平滑让位 -->
