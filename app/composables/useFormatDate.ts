@@ -9,5 +9,3 @@ export function useFormatDate() {
     const { locale } = useI18n();
     return (value: number | string) => baseFormatDate(value, locale.value);
 }
-
-export { formatDate } from '~/utils/formatDate';
