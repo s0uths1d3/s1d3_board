@@ -44,22 +44,22 @@ const emit = defineEmits<{
 }>()
 
 const MODE_OPTIONS = computed(() => [
-  { value: 'smart', label: t('reminder.smart'), tip: t('reminder.smartTip') },
-  { value: 'custom', label: t('reminder.custom'), tip: t('reminder.customTip') },
-  { value: 'off', label: t('reminder.off'), tip: t('reminder.offTip') },
+  { value: 'smart', label: t('reminder.smart'), tip: t('reminder.smart_tip') },
+  { value: 'custom', label: t('reminder.custom'), tip: t('reminder.custom_tip') },
+  { value: 'off', label: t('reminder.off'), tip: t('reminder.off_tip') },
 ])
 
 /** 触发器文案（field 形态）：外层已有「提醒」标签，值使用不带前缀的短文案 */
 const fieldLabel = computed(() => {
-  if (props.mode === 'off') return t('reminder.stateOff')
-  if (props.mode === 'custom') return t('reminder.stateCustom', { n: props.rules.length })
-  return t('reminder.stateSmart')
+  if (props.mode === 'off') return t('reminder.state_off')
+  if (props.mode === 'custom') return t('reminder.state_custom', { n: props.rules.length })
+  return t('reminder.state_smart')
 })
 
 const iconTip = computed(() => {
-  if (props.mode === 'off') return t('reminder.triggerOffTip')
-  if (props.mode === 'custom') return t('reminder.triggerCustomTip', { n: props.rules.length })
-  return t('reminder.triggerSmartTip', { hint: props.smartHint || t('reminder.smartDefault') })
+  if (props.mode === 'off') return t('reminder.trigger_off_tip')
+  if (props.mode === 'custom') return t('reminder.trigger_custom_tip', { n: props.rules.length })
+  return t('reminder.trigger_smart_tip', { hint: props.smartHint || t('reminder.smart_default') })
 })
 
 function setMode(v: string) {
@@ -99,7 +99,7 @@ function toggleAtPicker(idx: number) {
 
 /** 触发按钮文案：MM-DD HH:mm；未选择时给占位提示 */
 function formatAtValue(v: string): string {
-  return v ? v.replace('T', ' ').slice(5) : t('reminder.pickTime')
+  return v ? v.replace('T', ' ').slice(5) : t('reminder.pick_time')
 }
 
 function onAtValue(idx: number, v: string) {
@@ -120,15 +120,15 @@ function removeRule(idx: number) {
 }
 
 const RULE_HINT = computed<Record<ReminderRule['kind'], string>>(() => ({
-  percent: t('reminder.kindPercentDesc'),
-  offset: t('reminder.kindOffsetDesc'),
-  at: t('reminder.kindAtDesc'),
+  percent: t('reminder.kind_percent_desc'),
+  offset: t('reminder.kind_offset_desc'),
+  at: t('reminder.kind_at_desc'),
 }))
 
 function ruleSummary(r: ReminderRule): string {
-  if (r.kind === 'percent') return t('reminder.rulePercent', { n: r.value })
-  if (r.kind === 'offset') return t('reminder.ruleOffset', { n: r.value })
-  return t('reminder.ruleAt', { time: r.value.replace('T', ' ').slice(5) })
+  if (r.kind === 'percent') return t('reminder.rule_percent', { n: r.value })
+  if (r.kind === 'offset') return t('reminder.rule_offset', { n: r.value })
+  return t('reminder.rule_at', { time: r.value.replace('T', ' ').slice(5) })
 }
 
 function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule) {
@@ -176,18 +176,18 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
 
       <!-- 智能：零配置说明 -->
       <p v-if="mode === 'smart'" class="px-1 text-xs leading-relaxed text-ink-faint">
-        {{ t('reminder.smartDesc') }}
+        {{ t('reminder.smart_desc') }}
       </p>
 
       <!-- 不提醒 -->
       <p v-else-if="mode === 'off'" class="px-1 text-xs leading-relaxed text-ink-faint">
-        {{ t('reminder.offDesc') }}
+        {{ t('reminder.off_desc') }}
       </p>
 
       <!-- 自定义：闹钟规则列表 -->
       <div v-else class="space-y-1.5">
         <p v-if="!hasDue" class="rounded-lg bg-danger/10 px-2 py-1 text-[11px] text-danger">
-          {{ t('reminder.needDueDate') }}
+          {{ t('reminder.need_due_date') }}
         </p>
         <div
             v-for="(rule, idx) in rules"
@@ -200,9 +200,9 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
                 class="h-7 shrink-0 cursor-pointer rounded-md border border-accent bg-surface-field px-1 text-xs text-ink focus:border-gold focus:outline-none"
                 @change="onKindChange(idx, ($event.target as HTMLSelectElement).value as ReminderRule['kind'], rule)"
             >
-              <option value="percent">{{ t('reminder.kindPercent') }}</option>
-              <option value="offset">{{ t('reminder.kindOffset') }}</option>
-              <option value="at">{{ t('reminder.kindAt') }}</option>
+              <option value="percent">{{ t('reminder.kind_percent') }}</option>
+              <option value="offset">{{ t('reminder.kind_offset') }}</option>
+              <option value="at">{{ t('reminder.kind_at') }}</option>
             </select>
             <div v-if="rule.kind === 'at'" class="relative min-w-0 flex-1">
               <!-- 触发按钮：展示当前指定时刻，点击打开统一日期时间选择面板 -->
@@ -237,11 +237,11 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
                   class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs tabular-nums text-ink focus:border-gold focus:outline-none"
                   @change="updateRule(idx, { value: clampRuleValue(rule.kind, ($event.target as HTMLInputElement).value) })"
               />
-              <span class="shrink-0 text-xs text-ink-faint">{{ rule.kind === 'percent' ? t('reminder.unitPercent') : t('reminder.unitMin') }}</span>
+              <span class="shrink-0 text-xs text-ink-faint">{{ rule.kind === 'percent' ? t('reminder.unit_percent') : t('reminder.unit_min') }}</span>
             </template>
             <button
                 type="button"
-                v-tip="t('common.deleteAlarm')"
+                v-tip="t('common.delete_alarm')"
                 class="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
                 @click="removeRule(idx)"
             >
@@ -254,7 +254,7 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
         </div>
 
         <p v-if="rules.length === 0" class="px-1 py-1.5 text-center text-xs text-ink-faint">
-          {{ t('reminder.noCustomAlarms') }}
+          {{ t('reminder.no_custom_alarms') }}
         </p>
 
         <div class="flex items-center justify-between border-t border-accent/60 pt-1.5">
@@ -263,9 +263,9 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
               class="cursor-pointer rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
               @click="addRule"
           >
-            {{ t('reminder.addAlarm') }}
+            {{ t('reminder.add_alarm') }}
           </button>
-          <span class="px-1 text-[10px] text-ink-faint">{{ t('reminder.totalAlarms', { n: rules.length }) }}</span>
+          <span class="px-1 text-[10px] text-ink-faint">{{ t('reminder.total_alarms', { n: rules.length }) }}</span>
         </div>
       </div>
     </div>

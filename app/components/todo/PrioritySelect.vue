@@ -126,7 +126,7 @@ const rowLevelInput = (e: Event, idx: number) => {
               class="w-full rounded-lg px-2 py-1 text-left text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
               @click="openManager"
           >
-            {{ t('todo.manageLevels') }}
+            {{ t('todo.manage_levels') }}
           </button>
         </div>
       </div>
@@ -143,20 +143,20 @@ const rowLevelInput = (e: Event, idx: number) => {
                   @change="rowLevelInput($event, idx)"
               />
               <input
-                  type="text" maxlength="8" :placeholder="t('todo.levelName', { n: row.level })"
+                  type="text" maxlength="8" :placeholder="t('todo.level_name', { n: row.level })"
                   v-model="row.name"
                   class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
               />
               <button
                   type="button"
-                  v-tip="t('common.changeColorShort')"
+                  v-tip="t('common.change_color_short')"
                   class="h-6 w-6 shrink-0 rounded-full border border-white/60 shadow-sm transition-transform hover:scale-110"
                   :style="{ backgroundColor: row.color }"
                   @click="colorRow = colorRow === idx ? null : idx"
               />
               <button
                   type="button"
-                  v-tip="t('common.deleteLevel')"
+                  v-tip="t('common.delete_level')"
                   class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
                   @click="removeRow(idx)"
               >
@@ -171,7 +171,7 @@ const rowLevelInput = (e: Event, idx: number) => {
             </div>
           </div>
           <p v-if="editList.length === 0" class="px-1 py-2 text-center text-xs text-ink-faint">
-            {{ t('todo.noLevels') }}
+            {{ t('todo.no_levels') }}
           </p>
         </div>
 
@@ -181,7 +181,7 @@ const rowLevelInput = (e: Event, idx: number) => {
               class="rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
               @click="addRow"
           >
-            {{ t('todo.addLevel') }}
+            {{ t('todo.add_level') }}
           </button>
           <button
               type="button"
@@ -192,7 +192,7 @@ const rowLevelInput = (e: Event, idx: number) => {
           </button>
         </div>
         <p class="px-1 text-[10px] leading-relaxed text-ink-faint">
-          {{ t('todo.levelHint') }}
+          {{ t('todo.level_hint') }}
         </p>
       </div>
     </template>

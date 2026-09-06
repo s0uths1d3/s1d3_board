@@ -180,7 +180,7 @@ function closeViewer() {
 
 onMounted(async () => {
   if (!isTauri()) {
-    error.value = t('common.viewerDesktopOnly');
+    error.value = t('common.viewer_desktop_only');
     loading.value = false;
     return;
   }
@@ -234,12 +234,12 @@ onBeforeUnmount(() => {
     <!-- 标题栏：与主窗口一致（玻璃米白 + 金色竖条 + 窗口控制） -->
     <div class="drag-region flex h-10 shrink-0 items-center justify-between border-b border-line bg-surface px-3">
       <div class="gold-bar flex items-center gap-2 select-none">
-        <h1 class="text-sm font-semibold text-ink">{{ t('app.imageViewer') }}</h1>
+        <h1 class="text-sm font-semibold text-ink">{{ t('app.image_viewer') }}</h1>
       </div>
       <div class="no-drag flex items-center gap-2">
         <button
             class="flex h-7 w-7 items-center justify-center rounded-full text-danger transition-all duration-300 ease-soft hover:bg-danger/10 hover:shadow-sm"
-            v-tip="t('common.closeEsc')"
+            v-tip="t('common.close_esc')"
             @click="closeViewer"
         >
           <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -277,41 +277,41 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="imgSrc" class="viewer-toolbar no-drag">
-      <button class="viewer-btn" v-tip="t('common.prevImage')" :disabled="images.length <= 1" @click="prevImage">
+      <button class="viewer-btn" v-tip="t('common.prev_image')" :disabled="images.length <= 1" @click="prevImage">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M19 12H5M12 19l-7-7 7-7" />
         </svg>
       </button>
-      <button class="viewer-btn" v-tip="t('common.nextImage')" :disabled="images.length <= 1" @click="nextImage">
+      <button class="viewer-btn" v-tip="t('common.next_image')" :disabled="images.length <= 1" @click="nextImage">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 12h14M12 5l7 7-7 7" />
         </svg>
       </button>
       <span class="viewer-count">{{ currentIndex + 1 }} / {{ images.length }}</span>
-      <button class="viewer-btn" v-tip="t('common.zoomOut')" @click="zoom(-0.1)">
+      <button class="viewer-btn" v-tip="t('common.zoom_out')" @click="zoom(-0.1)">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M5 12h14" />
         </svg>
       </button>
       <span class="viewer-scale">{{ Math.round(scale * 100) }}%</span>
-      <button class="viewer-btn" v-tip="t('common.zoomIn')" @click="zoom(0.1)">
+      <button class="viewer-btn" v-tip="t('common.zoom_in')" @click="zoom(0.1)">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M5 12h14M12 5v14" />
         </svg>
       </button>
-      <button class="viewer-btn" v-tip="t('common.rotateLeft')" @click="rotate(-90)">
+      <button class="viewer-btn" v-tip="t('common.rotate_left')" @click="rotate(-90)">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
           <path d="M3 3v5h5" />
         </svg>
       </button>
-      <button class="viewer-btn" v-tip="t('common.rotateRight')" @click="rotate(90)">
+      <button class="viewer-btn" v-tip="t('common.rotate_right')" @click="rotate(90)">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
           <path d="M21 3v5h-5" />
         </svg>
       </button>
-      <button class="viewer-btn" v-tip="t('common.closeEsc')" @click="closeViewer">
+      <button class="viewer-btn" v-tip="t('common.close_esc')" @click="closeViewer">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M6 6l12 12M18 6L6 18" />
         </svg>

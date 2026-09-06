@@ -21,7 +21,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
               </svg>
             </div>
-            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.completionRate') }}</div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.completion_rate') }}</div>
             <div class="text-xl font-semibold text-ink tabular-nums">{{ completionRate }}%</div>
           </div>
 
@@ -31,7 +31,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
             </div>
-            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.onTimeRate') }}</div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.on_time_rate') }}</div>
             <div class="text-xl font-semibold text-ink tabular-nums">{{ onTimeRate }}%</div>
           </div>
         </div>
@@ -46,7 +46,7 @@
                 ref="todoSearchInput"
                 v-model="searchQuery"
                 type="text"
-                :placeholder="t('todo.searchPlaceholder')"
+                :placeholder="t('todo.search_placeholder')"
                 class="todo-search-input min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             />
 
@@ -86,12 +86,12 @@
             <button
                 @click="toggleAddForm"
                 class="btn-gold ml-auto flex h-10 shrink-0 items-center gap-1.5 px-3"
-                v-tip="t(showAddForm ? 'todo.collapse' : 'todo.expandAddForm')"
+                v-tip="t(showAddForm ? 'todo.collapse' : 'todo.expand_add_form')"
             >
               <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
               </svg>
-              <span class="hidden text-sm sm:inline">{{ t('todo.newTaskBtn') }}</span>
+              <span class="hidden text-sm sm:inline">{{ t('todo.new_task_btn') }}</span>
             </button>
           </div>
         </div>
@@ -107,7 +107,7 @@
                   v-model="newTodo.title"
                   type="text"
                   class="todo-title-input w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-                  :placeholder="t('todo.titlePlaceholder') + ' *'"
+                  :placeholder="t('todo.title_placeholder') + ' *'"
                   @keyup.enter="newTodo.title ? descriptionInput?.focus() : null"
               />
 
@@ -115,7 +115,7 @@
                   ref="descriptionInput"
                   v-model="newTodo.description"
                   class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-                  :placeholder="t('todo.descPlaceholder')"
+                  :placeholder="t('todo.desc_placeholder')"
                   rows="2"
               ></textarea>
 
@@ -129,11 +129,11 @@
 
                   <div class="flex items-center gap-2">
                     <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.dueDate') }}</label>
-                    <DueTimeSelect v-model="newTodo.dueDate" :placeholder="t('todo.dueTime')" />
+                    <DueTimeSelect v-model="newTodo.dueDate" :placeholder="t('todo.due_time')" />
                   </div>
 
                   <div class="flex items-center gap-2">
-                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.reminderLabel') }}</label>
+                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.reminder_label') }}</label>
                     <ReminderPicker
                         v-model:mode="newTodo.remindMode"
                         v-model:rules="newTodo.remindRules"
@@ -152,7 +152,7 @@
                   <button
                       type="button"
                       @click="addTodo"
-                      v-tip="t('common.addTask')"
+                      v-tip="t('common.add_task')"
                       class="btn-gold flex h-9 w-9 items-center justify-center p-0"
                       :disabled="!newTodo.title.trim()"
                   >
@@ -204,17 +204,17 @@
           ref="sentinel"
           class="flex items-center justify-center gap-2 py-4 text-xs text-ink-faint"
       >
-        <span v-if="loadingMore">{{ t('todo.loadingMore') }}</span>
-        <span v-else>{{ t('clip.scrollMore') }}</span>
+        <span v-if="loadingMore">{{ t('todo.loading_more') }}</span>
+        <span v-else>{{ t('clip.scroll_more') }}</span>
       </div>
-      <div v-else-if="todos.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.noMore') }}</div>
+      <div v-else-if="todos.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
 
       <div v-if="filteredAndSortedTodos.length === 0" class="py-20 text-center">
         <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
         </svg>
         <p class="text-lg text-ink-faint">
-          {{ !searchQuery.trim() && todos.length === 0 ? t('todo.empty') : t('todo.emptySearch') }}
+          {{ !searchQuery.trim() && todos.length === 0 ? t('todo.empty') : t('todo.empty_search') }}
         </p>
       </div>
 
@@ -313,9 +313,9 @@ const filters = computed(() => [
   { label: t('todo.all'), value: 'all' },
   { label: t('todo.active'), value: 'pending' },
   { label: t('todo.completed'), value: 'completed' },
-  { label: t('todo.highPriority'), value: 'high' },
+  { label: t('todo.high_priority'), value: 'high' },
   { label: t('todo.overdue'), value: 'overdue' },
-  { label: t('todo.overdueCompleted'), value: 'overdue-completed' },
+  { label: t('todo.overdue_completed'), value: 'overdue-completed' },
 ])
 
 const sortOptions = computed(() => [
@@ -523,7 +523,7 @@ const updateTodo = async (id: string, updates: Partial<Todo>) => {
 const deleteTodo = (id: string, rect?: DOMRect) => {
   deleteConfirmAction = 'todo'
   deleteConfirmId = id
-  deleteConfirmMessage.value = t('todo.deleteTaskConfirm')
+  deleteConfirmMessage.value = t('todo.delete_task_confirm')
   deleteConfirmAnchor.value = rect ?? null
   deleteConfirmVisible.value = true
 }
@@ -599,7 +599,7 @@ let deleteConfirmId: string | null = null
 const handleCategoryDelete = (name: string, rect?: DOMRect) => {
   deleteConfirmAction = 'category'
   deleteConfirmId = name
-  deleteConfirmMessage.value = t('todo.deleteCategoryConfirm')
+  deleteConfirmMessage.value = t('todo.delete_category_confirm')
   deleteConfirmAnchor.value = rect ?? null
   deleteConfirmVisible.value = true
 }

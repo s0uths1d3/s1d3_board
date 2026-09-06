@@ -10,7 +10,7 @@
           <label
               class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border transition-all duration-300 ease-soft hover:shadow-sm"
               :class="visualCompleted ? 'border-gold bg-gold hover:bg-gold-soft' : 'border-line bg-surface-field hover:border-gold hover:bg-secondary'"
-              v-tip="t('common.markComplete')"
+              v-tip="t('common.mark_complete')"
           >
             <input
                 type="checkbox"
@@ -52,7 +52,7 @@
                   color: pLevel.color,
                   border: `1px solid ${pLevel.color}59`,
                 }"
-                v-tip="t('todo.priorityBadge', { level: pLevel.level })"
+                v-tip="t('todo.priority_badge', { level: pLevel.level })"
             >
               <span class="h-1.5 w-1.5 rounded-full" :style="{ backgroundColor: pLevel.color }" />
               {{ priorityName(pLevel) }}
@@ -70,7 +70,7 @@
                   ? 'bg-gold/20 text-gold'
                   : 'bg-[rgba(200,90,90,0.15)] text-danger'"
             >
-              {{ overdueCompleted ? t('todo.overdueCompleted') : t('todo.overdue') }}
+              {{ overdueCompleted ? t('todo.overdue_completed') : t('todo.overdue') }}
             </span>
           </div>
 
@@ -93,7 +93,7 @@
                   v-if="todo.dueDate"
                   class="flex items-center gap-1"
                   :class="{ 'text-danger': isOverdue && !visualCompleted }"
-                  v-tip="t(isOverdue && !visualCompleted ? 'todo.overdue' : 'todo.dueTime')"
+                  v-tip="t(isOverdue && !visualCompleted ? 'todo.overdue' : 'todo.due_time')"
               >
                 <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 7v5l3 2"></path>
@@ -175,7 +175,7 @@
                         <button
                             type="button"
                             data-dd-keep-open
-                            v-tip="t('common.deleteCategory')"
+                            v-tip="t('common.delete_category')"
                             class="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
                             @click.stop="onDeleteCategory(category, $event)"
                         >
@@ -190,7 +190,7 @@
                       <input
                           v-model="newCategory"
                           type="text"
-                          :placeholder="t('todo.newCategoryPlaceholder')"
+                          :placeholder="t('todo.new_category_placeholder')"
                           maxlength="10"
                           class="w-full rounded-lg border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
                           @keydown.enter.prevent="addNewCategory(close)"
@@ -237,7 +237,7 @@
                 :data-todo-edit-title="todo.id"
                 type="text"
                 class="min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-                :placeholder="t('todo.titlePlaceholder')"
+                :placeholder="t('todo.title_placeholder')"
                 @keyup.enter="onTitleEnterSave"
             />
           <button
@@ -264,7 +264,7 @@
         <textarea
             v-model="editDescription"
             class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
-            :placeholder="t('todo.descPlaceholder')"
+            :placeholder="t('todo.desc_placeholder')"
             rows="2"
         ></textarea>
         </div>
@@ -386,8 +386,8 @@ const rulesList = computed<ReminderRule[]>(() => props.todo.remindRules ?? [])
 const reminderDisabled = computed(() => props.todo.completed === 1 || (isOverdue.value && !visualCompleted.value))
 /** 智能策略摘要：直接消费 reminderPolicy 的分档实现，策略调整时提示自动跟随 */
 const smartHint = computed(() => {
-  if (!props.todo.dueDate) return t('todo.noDueSet')
-  return describeSmartPlan(props.todo) || t('todo.noDueSet')
+  if (!props.todo.dueDate) return t('todo.no_due_set')
+  return describeSmartPlan(props.todo) || t('todo.no_due_set')
 })
 
 function onReminderMode(mode: 'smart' | 'off' | 'custom') {
@@ -451,7 +451,7 @@ const formatDueDate = computed(() => {
   if (!props.todo.dueDate) return ''
   const d = new Date(props.todo.dueDate)
   if (isNaN(d.getTime())) return ''
-  return t('todo.dueDisplay', {
+  return t('todo.due_display', {
     m: d.getMonth() + 1,
     d: d.getDate(),
     hh: pad2(d.getHours()),
@@ -467,13 +467,13 @@ const remindRules = computed<ReminderRule[]>(() =>
 
 /** 单条规则的摘要文案：与 ReminderPicker 的 ruleSummary 同源（ruleAt 的时间格式化为 MM-DD HH:mm） */
 const remindRuleSummary = (rule: ReminderRule): string => {
-  if (rule.kind === 'percent') return t('reminder.rulePercent', { n: rule.value })
-  if (rule.kind === 'offset') return t('reminder.ruleOffset', { n: rule.value })
+  if (rule.kind === 'percent') return t('reminder.rule_percent', { n: rule.value })
+  if (rule.kind === 'offset') return t('reminder.rule_offset', { n: rule.value })
   const d = new Date(rule.value)
   const time = isNaN(d.getTime())
     ? rule.value
     : `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
-  return t('reminder.ruleAt', { time })
+  return t('reminder.rule_at', { time })
 }
 
 /** 悬停提示：全部自定义规则的明细（多个以 " / " 连接） */
@@ -487,7 +487,7 @@ const customRemindAt = computed(() => {
       .filter(v => !isNaN(v))
   if (times.length === 0) return ''
   const d = new Date(Math.min(...times))
-  return t('todo.dueDisplay', {
+  return t('todo.due_display', {
     m: d.getMonth() + 1,
     d: d.getDate(),
     hh: pad2(d.getHours()),

@@ -7,10 +7,10 @@
   >
     <!-- 右上角工具栏：悬浮不占用内容空间；编辑态隐藏，避免遮挡 textarea -->
     <div v-if="!editing" class="absolute right-2 top-1 z-10 flex items-center gap-0.5">
-      <UiDropdown align="end" :aria-label="t('common.changeColor')" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
+      <UiDropdown align="end" :aria-label="t('common.change_color')" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
         <template #trigger>
           <div
-              v-tip="t('common.changeColor')"
+              v-tip="t('common.change_color')"
               class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-ink-soft outline-none transition-colors hover:bg-white/40 hover:text-ink focus:outline-none"
           >
             <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -21,7 +21,7 @@
         <div class="w-56 space-y-2 p-1.5">
           <!-- 选择配色 -->
           <div>
-            <p class="mb-1 px-1 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('note.colorTip') }}</p>
+            <p class="mb-1 px-1 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('note.color_tip') }}</p>
             <div class="flex flex-wrap gap-1.5 px-0.5">
               <button
                   v-for="c in noteColors"
@@ -45,20 +45,20 @@
               <div class="flex items-center gap-1.5">
                 <button
                     type="button"
-                    v-tip="t('common.changeColorShort')"
+                    v-tip="t('common.change_color_short')"
                     class="h-5 w-5 shrink-0 rounded-full border border-white/60 shadow-sm transition-transform hover:scale-110"
                     :class="colorRow === idx ? 'ring-2 ring-gold' : ''"
                     :style="{ backgroundColor: row.color }"
                     @click="colorRow = colorRow === idx ? null : idx"
                 />
                 <input
-                    type="text" maxlength="8" :placeholder="t('note.colorNamePlaceholder')"
+                    type="text" maxlength="8" :placeholder="t('note.color_name_placeholder')"
                     v-model="row.name"
                     class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
                 />
                 <button
                     type="button"
-                    v-tip="t('common.deleteColor')"
+                    v-tip="t('common.delete_color')"
                     class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
                     @click="removeColorDraft(idx)"
                 >
@@ -71,9 +71,9 @@
                 <UiColorPicker v-model="row.color" :presets="NOTE_COLOR_PRESETS" />
               </div>
             </div>
-            <p v-if="colorDrafts.length === 0" class="px-1 py-1 text-center text-xs text-ink-faint">{{ t('note.noColors') }}</p>
+            <p v-if="colorDrafts.length === 0" class="px-1 py-1 text-center text-xs text-ink-faint">{{ t('note.no_colors') }}</p>
             <div class="flex items-center justify-between pt-0.5">
-              <button type="button" class="rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink" @click="addColorDraft">{{ t('note.addColor') }}</button>
+              <button type="button" class="rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink" @click="addColorDraft">{{ t('note.add_color') }}</button>
               <button type="button" class="btn-gold px-3 py-1 text-xs" @click="commitColors">{{ t('note.done') }}</button>
             </div>
           </div>
@@ -84,7 +84,7 @@
                 class="w-full rounded-lg px-2 py-1 text-left text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
                 @click="openColorManager"
             >
-              {{ t('note.manageColors') }}
+              {{ t('note.manage_colors') }}
             </button>
           </div>
         </div>
@@ -112,7 +112,7 @@
           :highlight-string="highlightString"
           :active="highlight"
       />
-      <span v-else>{{ t('note.dblClickEdit') }}</span>
+      <span v-else>{{ t('note.dbl_click_edit') }}</span>
     </div>
 
     <div v-else class="flex-1">
@@ -121,7 +121,7 @@
           ref="textareaRef"
           rows="1"
           class="w-full resize-none overflow-hidden rounded-lg bg-transparent px-1 py-0.5 text-ink outline-none focus:bg-white/30 focus:shadow-[inset_0_0_0_1px_rgba(196,167,125,0.35)] transition-colors"
-          :placeholder="t('note.contentPlaceholder')"
+          :placeholder="t('note.content_placeholder')"
           @blur="saveAndClose"
           @input="autoResize"
           @keydown.ctrl.enter="onCtrlEnterSave"

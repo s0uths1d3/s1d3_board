@@ -7,7 +7,7 @@
             @click="createNote"
             class="btn-gold flex h-10 items-center shadow-soft transition-all duration-300 ease-soft hover:shadow-float"
         >
-          {{ t('note.newNote') }}
+          {{ t('note.new_note') }}
           <svg class="ml-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
           </svg>
@@ -22,14 +22,14 @@
               ref="noteSearchInput"
               v-model="noteSearch"
               type="text"
-              :placeholder="t('note.searchPlaceholder')"
+              :placeholder="t('note.search_placeholder')"
               class="h-full min-w-0 flex-1 bg-transparent text-ink placeholder:text-ink-faint focus:outline-none"
               @keydown.enter.prevent="jumpToFirstMatch"
           />
           <button
               type="button"
               class="btn-soft btn-circle flex h-8 w-8 items-center justify-center p-0"
-              v-tip="t('note.clearSearch')"
+              v-tip="t('note.clear_search')"
               @click="noteSearch = ''"
           >
             <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -43,10 +43,10 @@
               size="sm"
               :model-value="searchScope"
               :options="[
-                { value: 'current', label: positionLabel, tip: t('note.currentTip') },
-                { value: 'all', label: totalLabel, tip: t('note.allTip') },
+                { value: 'current', label: positionLabel, tip: t('note.current_tip') },
+                { value: 'all', label: totalLabel, tip: t('note.all_tip') },
               ]"
-              :label="t('note.searchScope')"
+              :label="t('note.search_scope')"
               @update:model-value="searchScope = $event as 'current' | 'all'"
           />
         </div>
@@ -76,10 +76,10 @@
           ref="sentinel"
           class="flex items-center justify-center gap-2 py-6 text-xs text-ink-faint"
       >
-        <span v-if="loading">{{ t('note.loadingMore') }}</span>
-        <span v-else>{{ t('clip.scrollMore') }}</span>
+        <span v-if="loading">{{ t('note.loading_more') }}</span>
+        <span v-else>{{ t('clip.scroll_more') }}</span>
       </div>
-      <div v-else-if="notes.length" class="py-6 text-center text-xs text-ink-faint">{{ t('clip.noMore') }}</div>
+      <div v-else-if="notes.length" class="py-6 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
 
       <div v-if="notes.length === 0" class="py-20 text-center">
         <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -250,7 +250,7 @@ const createNote = async () => {
   await clipboardService.insertNote(newNote)
   prepend(newNote)
   editingId.value = newNote.id
-  showHint(t('note.newCreatedHint'))
+  showHint(t('note.new_created_hint'))
 }
 
 /** Ctrl+N 新建便签（CreateNoteCommand 派发 create-note 事件） */
@@ -286,7 +286,7 @@ const updateNote = async (id: string, content: string) => {
       await clipboardService.updateNote(note)
     } catch (e) {
       console.error('保存便签失败:', e)
-      showHint(t('note.saveFailed'))
+      showHint(t('note.save_failed'))
     }
   }
 }
@@ -302,7 +302,7 @@ const confirmDelete = async () => {
     showHint(t('note.deleted'))
   } catch (e) {
     console.error('删除便签失败:', e)
-    showHint(t('note.deleteFailed'))
+    showHint(t('note.delete_failed'))
   }
 }
 
@@ -332,7 +332,7 @@ const changeNoteColor = async (id: string, color: string) => {
       await clipboardService.updateNote(note)
     } catch (e) {
       console.error('保存便签配色失败:', e)
-      showHint(t('note.colorSaveFailed'))
+      showHint(t('note.color_save_failed'))
     }
   }
 }

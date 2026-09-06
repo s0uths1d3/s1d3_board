@@ -49,13 +49,13 @@ const emit = defineEmits<{
             :class="recording ? 'border-gold ring-1 ring-gold/60 animate-pulse' : ''"
             @click="emit('record')"
         >
-          {{ recording ? t('shortcut.pressNewKey') : item.display }}
+          {{ recording ? t('shortcut.press_new_key') : item.display }}
         </button>
         <button
             v-if="item.isModified"
             type="button"
             class="btn-soft p-2"
-            v-tip="t('setting.shortcuts.resetToDefault')"
+            v-tip="t('setting.shortcuts.reset_to_default')"
             @click="emit('reset')"
         >
           <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

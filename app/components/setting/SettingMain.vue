@@ -49,12 +49,12 @@ const apiKey = ref('');
 const maxLimit = ref('');
 // ===== 配色：琥珀（当前暖米色）/ 跟随系统 / 浅色 / 深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 =====
 const { scheme } = useColorScheme();
-const colorSchemeOptions = computed(() => COLOR_SCHEME_ORDER.map(value => ({ value, label: t(`colorScheme.${value}`) })));
-const colorSchemeLabel = computed(() => t(`colorScheme.${scheme.value}`));
+const colorSchemeOptions = computed(() => COLOR_SCHEME_ORDER.map(value => ({ value, label: t(`color_scheme.${value}`) })));
+const colorSchemeLabel = computed(() => t(`color_scheme.${scheme.value}`));
 async function selectColorScheme(value: ColorSchemeMode) {
   if (scheme.value === value) return;
   await setColorScheme(value);
-  showHint(t('setting.general.colorSchemeSaved', { name: t(`colorScheme.${value}`) }));
+  showHint(t('setting.general.color_scheme_saved', { name: t(`color_scheme.${value}`) }));
 }
 // ===== 语言：跟随系统 / 中文 / English（useI18n 统一管理，含首次系统探测与跨窗口同步）=====
 const { localeMode, t } = useI18n();
@@ -68,7 +68,7 @@ const localeLabel = computed(() =>
 async function selectLocale(value: LocaleMode) {
   if (localeMode.value === value) return;
   await setLocaleMode(value);
-  showHint(t('setting.general.localeChanged', { name: localeOptions.value.find(o => o.value === value)?.label ?? '' }));
+  showHint(t('setting.general.locale_changed', { name: localeOptions.value.find(o => o.value === value)?.label ?? '' }));
 }
 /** 开机自启状态（系统级设置，使用 tauri autostart 插件，不存数据库） */
 const autoStartEnabled = ref(false);
@@ -91,15 +91,15 @@ watch(tooltipEnabled, async (val) => {
 // ===== 窗口弹出位置（快捷键唤出主窗口时的落点） =====
 const { popupPositionMode } = usePopupPosition();/** 三个候选模式：光标处 / 上次打开位置 / 光标所在屏幕居中 */
 const POPUP_POSITION_OPTIONS = computed<{ value: PopupPositionMode; label: string; tip: string }[]>(() => [
-  { value: 'cursor', label: t('setting.general.popupPositions.cursor'), tip: t('setting.general.popupPositions.cursorTip') },
-  { value: 'last', label: t('setting.general.popupPositions.last'), tip: t('setting.general.popupPositions.lastTip') },
-  { value: 'center', label: t('setting.general.popupPositions.center'), tip: t('setting.general.popupPositions.centerTip') },
+  { value: 'cursor', label: t('setting.general.popup_positions.cursor'), tip: t('setting.general.popup_positions.cursor_tip') },
+  { value: 'last', label: t('setting.general.popup_positions.last'), tip: t('setting.general.popup_positions.last_tip') },
+  { value: 'center', label: t('setting.general.popup_positions.center'), tip: t('setting.general.popup_positions.center_tip') },
 ]);
 /** 切换弹出位置模式并持久化（UiSegmented 回传字符串值，此处收敛为模式类型） */
 function selectPopupPosition(v: string) {
   const mode = v as PopupPositionMode;
   void setPopupPositionMode(mode);
-  showHint(t('setting.general.popupPositionSaved'));
+  showHint(t('setting.general.popup_position_saved'));
 }
 /** 是否开启搜索高亮，与所有搜索框共享同一状态 */
 const { searchHighlightEnabled } = useSearchHighlight();
@@ -108,16 +108,16 @@ const { searchHighlightEnabled } = useSearchHighlight();
 const { smartRemindEnabled } = useTodoSmartRemind();
 async function onSmartRemindToggle(val: boolean) {
   await setTodoSmartRemindEnabled(val);
-  showHint(val ? t('setting.general.smartRemindOn') : t('setting.general.smartRemindOff'));
+  showHint(val ? t('setting.general.smart_remind_on') : t('setting.general.smart_remind_off'));
 }
 
 /** 应用使用时长记录开关：默认关闭（隐私）；切换失败时 composable 已回滚 UI，这里提示重试 */
 async function onAppUsageToggle(val: boolean) {
   try {
     await setAppUsageEnabled(val);
-    showHint(val ? t('setting.general.appUsageOn') : t('setting.general.appUsageOff'));
+    showHint(val ? t('setting.general.app_usage_on') : t('setting.general.app_usage_off'));
   } catch {
-    showHint(t('setting.general.appUsageFailed'));
+    showHint(t('setting.general.app_usage_failed'));
   }
 }
 watch(searchHighlightEnabled, async (val) => {
@@ -159,14 +159,14 @@ watch(autoStartEnabled, async (val) => {
     } else {
       await disable();
     }
-    showHint(val ? t('setting.general.startupOn') : t('setting.general.startupOff'));
+    showHint(val ? t('setting.general.startup_on') : t('setting.general.startup_off'));
   } catch (e) {
     console.error('设置开机自启失败:', e);
     // 失败回滚 UI 状态
     autoStartEnabled.value = !val;
     // 提示用户：Tauri autostart 默认写当前用户注册表（HKCU），一般无需管理员权限，
     // 失败多因系统策略/注册表权限限制
-    showHint(t('setting.general.startupFailed'));
+    showHint(t('setting.general.startup_failed'));
   }
 });
 
@@ -208,7 +208,7 @@ async function undoClearDatabase() {
   undoActive.value = false;
   try {
     const ok = await dbService.undoClearDatabase();
-    clearMsg.value = ok ? t('setting.general.clearRestored') : t('setting.general.clearedDetail');
+    clearMsg.value = ok ? t('setting.general.clear_restored') : t('setting.general.cleared_detail');
     if (ok) {
       // 触发剪贴板列表刷新（若在其他页已挂载），待办/统计由各自 Tab 重新挂载时拉取
       try {
@@ -217,7 +217,7 @@ async function undoClearDatabase() {
       } catch (_) { /* 列表未挂载时忽略 */ }
     }
   } catch (e) {
-    clearMsg.value = t('setting.general.clearFailed') + (e as Error).message;
+    clearMsg.value = t('setting.general.clear_failed') + (e as Error).message;
   }
 }
 
@@ -245,11 +245,11 @@ async function confirmClearDatabase() {
     }, 1000);
     undoExpireTimer = setTimeout(() => {
       void expireUndoWindow().then(() => {
-        if (!clearMsg.value) clearMsg.value = t('setting.general.clearedDetail');
+        if (!clearMsg.value) clearMsg.value = t('setting.general.cleared_detail');
       });
     }, 5000);
   } catch (e) {
-    clearMsg.value = t('setting.general.clearFailed') + (e as Error).message;
+    clearMsg.value = t('setting.general.clear_failed') + (e as Error).message;
   } finally {
     clearing.value = false;
     showClearConfirm.value = false;
@@ -281,7 +281,7 @@ const settings: SettingGroup[] = [
     type: 'ai_setting',
     items: [
       {
-        label: 'setting.general.apiKey',
+        label: 'setting.general.api_key',
         value: '',
         type: 'input'
       }
@@ -291,42 +291,42 @@ const settings: SettingGroup[] = [
     title: 'setting.categories.general',
     type: 'general',    items: [
       {
-        label: 'setting.general.clipboardLimit',
+        label: 'setting.general.clipboard_limit',
         value: '',
         type: 'input'
       },
       {
-        label: 'setting.general.launchAtStartup',
+        label: 'setting.general.launch_at_startup',
         value: '',
         type: 'checkbox'
       },
       {
-        label: 'setting.general.tooltipWindow',
+        label: 'setting.general.tooltip_window',
         value: '',
         type: 'checkbox'
       },
       {
-        label: 'setting.general.smartReminder',
+        label: 'setting.general.smart_reminder',
         value: '',
         type: 'checkbox'
       },
       {
-        label: 'setting.general.appUsageTracking',
+        label: 'setting.general.app_usage_tracking',
         value: '',
         type: 'checkbox'
       },
       {
-        label: 'setting.general.popupPosition',
+        label: 'setting.general.popup_position',
         value: '',
         type: 'select'
       },
       {
-        label: 'setting.general.searchHighlight',
+        label: 'setting.general.search_highlight',
         value: '',
         type: 'checkbox'
       },
       {
-        label: 'setting.general.colorScheme',
+        label: 'setting.general.color_scheme',
         value: '',
         type: 'select'
       },
@@ -336,7 +336,7 @@ const settings: SettingGroup[] = [
         type: 'select'
       },
       {
-        label: 'setting.general.clearDatabase',
+        label: 'setting.general.clear_database',
         value: '',
         type: 'action'
       }
@@ -391,7 +391,7 @@ async function checkUpdate(options?: { silent?: boolean }) {
   const silent = options?.silent ?? false;
   if (updateState.value === 'checking') return;
   updateState.value = 'checking';
-  if (!silent) showHint(t('setting.about.checkingHint'));
+  if (!silent) showHint(t('setting.about.checking_hint'));
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 10000);
@@ -404,7 +404,7 @@ async function checkUpdate(options?: { silent?: boolean }) {
       // 仓库还没有任何 Release：不存在更新
       latestVersion.value = '';
       updateState.value = 'latest';
-      if (!silent) showHint(t('setting.about.upToDateHint'));
+      if (!silent) showHint(t('setting.about.up_to_date_hint'));
       return;
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -413,11 +413,11 @@ async function checkUpdate(options?: { silent?: boolean }) {
     releaseUrl.value = String(data.html_url || `${APP_REPO}/releases`);
     const hasNew = compareVersions(latestVersion.value, appVersion.value) > 0;
     updateState.value = hasNew ? 'available' : 'latest';
-    if (!silent) showHint(hasNew ? t('setting.about.newVersionHint', { version: latestVersion.value }) : t('setting.about.upToDateHint'));
+    if (!silent) showHint(hasNew ? t('setting.about.new_version_hint', { version: latestVersion.value }) : t('setting.about.up_to_date_hint'));
   } catch (e) {
     console.error('检查更新失败:', e);
     updateState.value = 'error';
-    if (!silent) showHint(t('setting.about.updateFailedHint'));
+    if (!silent) showHint(t('setting.about.update_failed_hint'));
   }
 }
 
@@ -427,7 +427,7 @@ async function openRepoPage() {
     else window.open(APP_REPO, '_blank', 'noopener');
   } catch (e) {
     console.error('打开主页失败:', e);
-    showHint(t('setting.about.openRepoFailed'));
+    showHint(t('setting.about.open_repo_failed'));
   }
 }
 
@@ -438,7 +438,7 @@ async function openReleasePage() {
     else window.open(url, '_blank', 'noopener');
   } catch (e) {
     console.error('打开发布页失败:', e);
-    showHint(t('setting.about.openReleaseFailed'));
+    showHint(t('setting.about.open_release_failed'));
   }
 }
 
@@ -446,10 +446,10 @@ async function copyRepoLink() {
   try {
     if (isTauri()) await writeText(APP_REPO);
     else await navigator.clipboard.writeText(APP_REPO);
-    showHint(t('setting.about.repoLinkCopied'));
+    showHint(t('setting.about.repo_link_copied'));
   } catch (e) {
     console.error('复制链接失败:', e);
-    showHint(t('setting.about.copyFailed'));
+    showHint(t('setting.about.copy_failed'));
   }
 }
 
@@ -566,7 +566,7 @@ const shortcutGroups = computed(() =>
   (['global', 'local'] as const).map(scope => {
     const items = shortcutItems.value.filter(i => i.scope === scope && i.group === 'normal');
     return {
-      title: scope === 'global' ? t('shortcut.groupGlobal') : t('shortcut.groupLocal'),
+      title: scope === 'global' ? t('shortcut.group_global') : t('shortcut.group_local'),
       scope,
       items,
       hasModified: items.some(i => i.isModified),
@@ -576,8 +576,8 @@ const shortcutGroups = computed(() =>
 
 /** 两组可折叠的数字快捷粘贴（默认折叠，支持一键开启/关闭/还原） */
 const collapsibleGroups = computed(() => [
-  { key: 'pinned', title: t('shortcut.groupPinned'), items: shortcutItems.value.filter(i => i.group === 'pinned') },
-  { key: 'slot', title: t('shortcut.groupSlot'), items: shortcutItems.value.filter(i => i.group === 'slot') },
+  { key: 'pinned', title: t('shortcut.group_pinned'), items: shortcutItems.value.filter(i => i.group === 'pinned') },
+  { key: 'slot', title: t('shortcut.group_slot'), items: shortcutItems.value.filter(i => i.group === 'slot') },
 ]);
 /** 折叠状态（默认收起） */
 const collapsed = ref<Record<string, boolean>>({ pinned: true, slot: true });
@@ -596,20 +596,20 @@ function toggleShortcutWithHint(id: string) {
   const item = shortcuts.value.find(s => s.id === id);
   const next = !item?.enabled;
   toggleShortcutEnabled(id);
-  showHint(next ? t('setting.shortcuts.enabledHint') : t('setting.shortcuts.disabledHint'));
+  showHint(next ? t('setting.shortcuts.enabled_hint') : t('setting.shortcuts.disabled_hint'));
 }
 
 /** 整组胶囊开关：点击在「全部启用 / 全部禁用」间切换 */
 async function toggleGroup(group: { key: string; items: { id: string; enabled: boolean }[] }) {
   const enable = !groupAllEnabled(group);
   await setShortcutGroupEnabled(group.items.map(i => i.id), enable);
-  showHint(enable ? t('setting.shortcuts.groupEnabled') : t('setting.shortcuts.groupDisabled'));
+  showHint(enable ? t('setting.shortcuts.group_enabled') : t('setting.shortcuts.group_disabled'));
 }
 
 /** 一键还原组内全部快捷键为默认（图标按钮） */
 async function resetGroup(group: { key: string; items: { id: string }[] }) {
   await resetShortcutGroup(group.items.map(i => i.id));
-  showHint(t('setting.shortcuts.groupReset'));
+  showHint(t('setting.shortcuts.group_reset'));
 }
 
 function startRecording(id: string) {
@@ -643,10 +643,10 @@ async function commitRecording(id: string, newKey: string) {
   const err = await updateShortcutKey(id, newKey);
   if (err) {
     errorMap.value[id] = err;
-    showHint(t('setting.shortcuts.saveFailed') + err);
+    showHint(t('setting.shortcuts.save_failed') + err);
   } else {
     delete errorMap.value[id];
-    showHint(t('setting.shortcuts.savedHint'));
+    showHint(t('setting.shortcuts.saved_hint'));
   }
 }
 
@@ -654,10 +654,10 @@ async function resetOne(id: string) {
   const err = await resetShortcut(id);
   if (err) {
     errorMap.value[id] = err;
-    showHint(t('setting.shortcuts.resetFailed') + err);
+    showHint(t('setting.shortcuts.reset_failed') + err);
   } else {
     delete errorMap.value[id];
-    showHint(t('setting.shortcuts.resetDoneHint'));
+    showHint(t('setting.shortcuts.reset_done_hint'));
   }
 }
 
@@ -665,7 +665,7 @@ async function resetAll(scope?: 'global' | 'local') {
   cancelRecording();
   await resetAllShortcuts(scope);
   errorMap.value = {};
-  showHint(t('setting.shortcuts.allResetHint'));
+  showHint(t('setting.shortcuts.all_reset_hint'));
 }
 
 // 切换设置组时取消录制
@@ -770,7 +770,7 @@ onMounted(async () => {
                     <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                     <path d="M3 3v5h5" />
                   </svg>
-                  {{ t('shortcut.resetAll') }}
+                  {{ t('shortcut.reset_all') }}
                 </button>
               </div>
             </div>
@@ -793,7 +793,7 @@ onMounted(async () => {
                   <UiToggleSwitch
                       size="sm"
                       :model-value="groupAllEnabled(cg)"
-                      :tip-on="t('setting.shortcuts.disableGroupTip')" :tip-off="t('setting.shortcuts.enableGroupTip')"
+                      :tip-on="t('setting.shortcuts.disable_group_tip')" :tip-off="t('setting.shortcuts.enable_group_tip')"
                       :label="cg.title"
                       @change="toggleGroup(cg)"
                   />
@@ -801,7 +801,7 @@ onMounted(async () => {
                   <button
                       type="button"
                       class="btn-soft p-2"
-                      v-tip="t('setting.shortcuts.resetGroup')"
+                      v-tip="t('setting.shortcuts.reset_group')"
                       @click="resetGroup(cg)"
                   >
                     <svg class="size-[1.2em]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -826,7 +826,7 @@ onMounted(async () => {
             </div>
 
             <p class="text-xs text-ink-faint">
-              {{ t('setting.shortcuts.shortcutHint') }}
+              {{ t('setting.shortcuts.shortcut_hint') }}
             </p>
           </div>
 
@@ -842,7 +842,7 @@ onMounted(async () => {
                     <span class="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-xs text-gold tabular-nums">v{{ appVersion }}</span>
                   </div>
                   <p class="mt-1 text-xs leading-relaxed text-ink-faint">{{ t('setting.about.description') }}</p>
-                  <p class="mt-1 text-xs text-ink-faint">{{ t('setting.about.authorLabel') }}<span class="text-ink-soft">{{ APP_AUTHOR }}</span></p>
+                  <p class="mt-1 text-xs text-ink-faint">{{ t('setting.about.author_label') }}<span class="text-ink-soft">{{ APP_AUTHOR }}</span></p>
                 </div>
               </div>
             </div>
@@ -855,11 +855,11 @@ onMounted(async () => {
                   <div class="truncate text-xs text-ink-faint">{{ APP_REPO }}</div>
                 </div>
                 <div class="flex shrink-0 gap-2">
-                  <button type="button" class="btn-soft px-3 py-1.5 text-xs" v-tip="t('setting.about.copyRepo')" @click="copyRepoLink">
-                    {{ t('setting.about.copyLink') }}
+                  <button type="button" class="btn-soft px-3 py-1.5 text-xs" v-tip="t('setting.about.copy_repo')" @click="copyRepoLink">
+                    {{ t('setting.about.copy_link') }}
                   </button>
-                  <button type="button" class="btn-gold px-3 py-1.5 text-xs" v-tip="t('setting.about.openRepo')" @click="openRepoPage">
-                    {{ t('setting.about.openRepoShort') }}
+                  <button type="button" class="btn-gold px-3 py-1.5 text-xs" v-tip="t('setting.about.open_repo')" @click="openRepoPage">
+                    {{ t('setting.about.open_repo_short') }}
                   </button>
                 </div>
               </div>
@@ -869,16 +869,16 @@ onMounted(async () => {
             <div class="glass-card rounded-2xl p-4">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-ink">{{ t('setting.about.checkUpdate') }}</div>
+                  <div class="text-sm text-ink">{{ t('setting.about.check_update') }}</div>
                   <div class="mt-0.5 text-xs text-ink-faint">
-                    <template v-if="updateState === 'checking'">{{ t('setting.about.checkingNew') }}</template>
-                    <template v-else-if="updateState === 'latest'">{{ t('setting.about.upToDateWithVersion', { version: appVersion }) }}</template>
+                    <template v-if="updateState === 'checking'">{{ t('setting.about.checking_new') }}</template>
+                    <template v-else-if="updateState === 'latest'">{{ t('setting.about.up_to_date_with_version', { version: appVersion }) }}</template>
                     <template v-else-if="updateState === 'available'">
-                      {{ t('setting.about.newVersion') }} <span class="font-semibold text-gold">v{{ latestVersion }}</span>
-                      <button type="button" class="text-gold underline underline-offset-2" @click="openReleasePage">{{ t('setting.about.viewRelease') }}</button>
+                      {{ t('setting.about.new_version') }} <span class="font-semibold text-gold">v{{ latestVersion }}</span>
+                      <button type="button" class="text-gold underline underline-offset-2" @click="openReleasePage">{{ t('setting.about.view_release') }}</button>
                     </template>
-                    <template v-else-if="updateState === 'error'">{{ t('setting.about.checkFailed') }}</template>
-                    <template v-else>{{ t('setting.about.checkOnline') }}</template>
+                    <template v-else-if="updateState === 'error'">{{ t('setting.about.check_failed') }}</template>
+                    <template v-else>{{ t('setting.about.check_online') }}</template>
                   </div>
                 </div>
                 <button
@@ -887,13 +887,13 @@ onMounted(async () => {
                     :disabled="updateState === 'checking'"
                     @click="checkUpdate()"
                 >
-                  {{ updateState === 'checking' ? t('setting.about.checking') : t('setting.about.checkUpdate') }}
+                  {{ updateState === 'checking' ? t('setting.about.checking') : t('setting.about.check_update') }}
                 </button>
               </div>
             </div>
 
             <p class="text-xs text-ink-faint">
-              {{ t('setting.about.starHint') }}
+              {{ t('setting.about.star_hint') }}
             </p>
           </div>
 
@@ -910,7 +910,7 @@ onMounted(async () => {
                   <div v-if="item.type === 'action' && (clearMsg || undoActive)"
                        class="mt-1 flex flex-wrap items-center gap-2 text-xs">
                     <span class="text-ink-faint">
-                      {{ undoActive ? t('setting.general.clearUndoHint', { n: undoRemaining }) : clearMsg }}
+                      {{ undoActive ? t('setting.general.clear_undo_hint', { n: undoRemaining }) : clearMsg }}
                     </span>
                     <!-- 撤回：窗口期内整表恢复清空前的数据 -->
                     <button
@@ -919,7 +919,7 @@ onMounted(async () => {
                         class="btn-soft px-2 py-0.5 text-xs text-gold"
                         @click="undoClearDatabase"
                     >
-                      {{ t('setting.general.clearUndoBtn') }}
+                      {{ t('setting.general.clear_undo_btn') }}
                     </button>
                   </div>
                 </div>
@@ -929,12 +929,12 @@ onMounted(async () => {
                     <button v-if="!showClearConfirm" type="button"
                             class="btn-soft w-full text-danger"
                             @click="showClearConfirm = true">
-                      {{ t('setting.general.clearDatabase') }}
+                      {{ t('setting.general.clear_database') }}
                     </button>
                     <div v-else class="flex gap-2">
                       <button type="button" class="btn-soft flex-1 text-danger"
                               :disabled="clearing" @click="confirmClearDatabase">
-                        {{ clearing ? t('setting.general.clearing') : t('setting.general.clearConfirmBtn') }}
+                        {{ clearing ? t('setting.general.clearing') : t('setting.general.clear_confirm_btn') }}
                       </button>
                       <button type="button" class="btn-soft flex-1"
                               :disabled="clearing" @click="showClearConfirm = false">
@@ -943,48 +943,48 @@ onMounted(async () => {
                     </div>
                   </template>
                   <SettingInput
-                      v-else-if="item.type === 'input' && item.label === 'setting.general.apiKey'"
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.api_key'"
                       v-model="apiKey"
-                      :placeholder="t('setting.general.apiKeyPlaceholder')"
-                      @save="showHint(t('setting.general.apiKeySaved'))"
+                      :placeholder="t('setting.general.api_key_placeholder')"
+                      @save="showHint(t('setting.general.api_key_saved'))"
                   />
                   <SettingInput
-                      v-else-if="item.type === 'input' && item.label === 'setting.general.clipboardLimit'"
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.clipboard_limit'"
                       v-model="maxLimit"
-                      :placeholder="t('setting.general.clipboardLimitPlaceholder')"
-                      @save="showHint(t('setting.general.clipboardLimitSaved'))"
+                      :placeholder="t('setting.general.clipboard_limit_placeholder')"
+                      @save="showHint(t('setting.general.clipboard_limit_saved'))"
                   />                  <UiToggleSwitch
-                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.launchAtStartup'"
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.launch_at_startup'"
                       v-model="autoStartEnabled"
-                      :label="t('setting.general.launchAtStartup')"
+                      :label="t('setting.general.launch_at_startup')"
                   />
                   <UiToggleSwitch
-                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.tooltipWindow'"
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.tooltip_window'"
                       v-model="tooltipEnabled"
-                      :tip-on="t('setting.shortcuts.clickDisable')" :tip-off="t('setting.shortcuts.clickEnable')"
-                      :label="t('setting.general.tooltipWindow')"
-                      @change="showHint(tooltipEnabled ? t('setting.general.tooltipOn') : t('setting.general.tooltipOff'))"
+                      :tip-on="t('setting.shortcuts.click_disable')" :tip-off="t('setting.shortcuts.click_enable')"
+                      :label="t('setting.general.tooltip_window')"
+                      @change="showHint(tooltipEnabled ? t('setting.general.tooltip_on') : t('setting.general.tooltip_off'))"
                   />
                   <UiToggleSwitch
-                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.searchHighlight'"
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.search_highlight'"
                       v-model="searchHighlightEnabled"
-                      :tip-on="t('setting.shortcuts.clickDisable')" :tip-off="t('setting.shortcuts.clickEnable')"
-                      :label="t('setting.general.searchHighlight')"
-                      @change="showHint(searchHighlightEnabled ? t('setting.general.highlightOn') : t('setting.general.highlightOff'))"
+                      :tip-on="t('setting.shortcuts.click_disable')" :tip-off="t('setting.shortcuts.click_enable')"
+                      :label="t('setting.general.search_highlight')"
+                      @change="showHint(searchHighlightEnabled ? t('setting.general.highlight_on') : t('setting.general.highlight_off'))"
                   />
                   <UiToggleSwitch
-                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.smartReminder'"
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.smart_reminder'"
                       :model-value="smartRemindEnabled"
-                      :tip-on="t('setting.general.smartRemindTipOn')" :tip-off="t('setting.general.smartRemindTipOff')"
-                      :label="t('setting.general.smartReminder')"
+                      :tip-on="t('setting.general.smart_remind_tip_on')" :tip-off="t('setting.general.smart_remind_tip_off')"
+                      :label="t('setting.general.smart_reminder')"
                       @change="onSmartRemindToggle"
                   />
                   <!-- 应用使用时长记录：默认关闭（隐私），开启后 Rust 侧监听前台应用并按天累计 -->
                   <UiToggleSwitch
-                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.appUsageTracking'"
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.app_usage_tracking'"
                       :model-value="appUsageEnabled"
-                      :tip-on="t('setting.general.appUsageTipOn')" :tip-off="t('setting.general.appUsageTipOff')"
-                      :label="t('setting.general.appUsageTracking')"
+                      :tip-on="t('setting.general.app_usage_tip_on')" :tip-off="t('setting.general.app_usage_tip_off')"
+                      :label="t('setting.general.app_usage_tracking')"
                       @change="onAppUsageToggle"
                   />
                   <!-- 语言：跟随系统 / 中文 / English（放在配色兜底分支之前） -->
@@ -1022,11 +1022,11 @@ onMounted(async () => {
                   </UiDropdown>
                   <!-- 窗口弹出位置：三选一分段控件（跟随系统风格，选中金色高亮） -->
                   <UiSegmented
-                      v-else-if="item.type === 'select' && item.label === 'setting.general.popupPosition'"
+                      v-else-if="item.type === 'select' && item.label === 'setting.general.popup_position'"
                       :model-value="popupPositionMode"
                       :options="POPUP_POSITION_OPTIONS"
                       block
-                      :label="t('setting.general.popupPosition')"
+                      :label="t('setting.general.popup_position')"
                       @update:model-value="selectPopupPosition"
                   />
                   <!-- 配色：琥珀/跟随系统/浅色/深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 -->
@@ -1035,7 +1035,7 @@ onMounted(async () => {
                       class="w-full"
                       align="end"
                       match-trigger-width
-                      :aria-label="t('setting.general.colorScheme')"
+                      :aria-label="t('setting.general.color_scheme')"
                       panel-class="glass-card menu w-full rounded-2xl p-2"
                   >
                     <template #trigger="{ open }">
@@ -1072,7 +1072,7 @@ onMounted(async () => {
             <div class="glass-card rounded-2xl shadow-soft" data-nav-config-list>
               <TransitionGroup name="reorder-list" tag="ul">
                 <li key="__header__" class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
-                  {{ t('setting.shortcuts.navSectionTitle') }}
+                  {{ t('setting.shortcuts.nav_section_title') }}
                 </li>
                 <li
                     v-for="row in navRows"
@@ -1097,7 +1097,7 @@ onMounted(async () => {
                         <path d="M8 11V7a4 4 0 0 1 8 0v4" />
                       </svg>
                     </div>
-                    <div v-if="row.locked" class="text-xs text-ink-faint">{{ t('setting.shortcuts.builtinLocked') }}</div>
+                    <div v-if="row.locked" class="text-xs text-ink-faint">{{ t('setting.shortcuts.builtin_locked') }}</div>
                   </div>
                 </div>
                 <!-- 右侧操作：内置项显示锁定图标；未解锁统计显示禁用开关；其余为可切换胶囊开关 -->
@@ -1106,7 +1106,7 @@ onMounted(async () => {
                     class="h-4 w-4 text-ink-faint/70"
                     viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                     stroke-linecap="round" stroke-linejoin="round"
-                    v-tip="t('setting.shortcuts.builtinLocked')"
+                    v-tip="t('setting.shortcuts.builtin_locked')"
                 >
                   <rect x="5" y="11" width="14" height="10" rx="2" />
                   <path d="M8 11V7a4 4 0 0 1 8 0v4" />
@@ -1114,7 +1114,7 @@ onMounted(async () => {
                 <UiToggleSwitch
                     v-else
                     :model-value="row.enabled"
-                    :tip-on="t('setting.shortcuts.navHideTip')" :tip-off="t('setting.shortcuts.navShowTip')"
+                    :tip-on="t('setting.shortcuts.nav_hide_tip')" :tip-off="t('setting.shortcuts.nav_show_tip')"
                     :label="t('titlebar.' + row.key)"
                     @change="onNavRowToggle(row)"
                 />
@@ -1122,7 +1122,7 @@ onMounted(async () => {
               </TransitionGroup>
             </div>
             <p class="text-xs text-ink-faint">
-              {{ t('setting.shortcuts.navHint') }}
+              {{ t('setting.shortcuts.nav_hint') }}
             </p>
           </div>
         </div>

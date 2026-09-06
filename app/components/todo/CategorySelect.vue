@@ -58,7 +58,7 @@ const submitNew = async () => {
     emit('update:modelValue', name)
     open.value = false
   } else {
-    errorMsg.value = t('todo.categoryExists')
+    errorMsg.value = t('todo.category_exists')
   }
 }
 
@@ -109,7 +109,7 @@ watch(open, (v) => {
           </button>
           <button
               type="button"
-              v-tip="t('common.deleteCategory')"
+              v-tip="t('common.delete_category')"
               class="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
               @click.stop="onDelete(c, $event)"
           >
@@ -126,7 +126,7 @@ watch(open, (v) => {
             ref="inputEl"
             v-model="newName"
             type="text"
-            :placeholder="t('todo.newCategoryPlaceholder')"
+            :placeholder="t('todo.new_category_placeholder')"
             maxlength="10"
             class="w-36 rounded-md border border-accent bg-surface-field px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
             @keydown.enter.prevent="submitNew"

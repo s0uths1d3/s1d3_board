@@ -70,15 +70,15 @@ const schemeDot: Record<ColorSchemeMode, string> = {
 };
 const nextSchemeLabel = computed(() => {
   const next = COLOR_SCHEME_ORDER[(COLOR_SCHEME_ORDER.indexOf(scheme.value) + 1) % COLOR_SCHEME_ORDER.length]!;
-  return t(`colorScheme.${next}`);
+  return t(`color_scheme.${next}`);
 });
-const currentSchemeLabel = computed(() => t(`colorScheme.${scheme.value}`));
+const currentSchemeLabel = computed(() => t(`color_scheme.${scheme.value}`));
 /** system 模式下提示里附带当前解析到的配色，避免"看起来没反应"的困惑 */
 const { t } = useI18n();
 const schemeTip = computed(() => {
-  const base = `${t('titlebar.switchColorScheme')}: ${currentSchemeLabel.value}`;
-  const resolved = scheme.value === 'system' ? ` (${t('titlebar.currentScheme', { name: t(`colorScheme.${resolvedScheme.value}`) })})` : '';
-  return `${base}${resolved}, ${t('titlebar.clickSwitchTo')} ${nextSchemeLabel.value}`;
+  const base = `${t('titlebar.switch_color_scheme')}: ${currentSchemeLabel.value}`;
+  const resolved = scheme.value === 'system' ? ` (${t('titlebar.current_scheme', { name: t(`color_scheme.${resolvedScheme.value}`) })})` : '';
+  return `${base}${resolved}, ${t('titlebar.click_switch_to')} ${nextSchemeLabel.value}`;
 });
 async function onSchemeClick() {
   await cycleColorScheme();
@@ -175,7 +175,7 @@ onBeforeUnmount(() => {
       <button
           class="relative flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
           v-tip="schemeTip"
-          :aria-label="t('titlebar.switchColorScheme')"
+          :aria-label="t('titlebar.switch_color_scheme')"
           @click="onSchemeClick"
       >
         <!-- 调色盘图标 + 当前配色小色点 -->
@@ -222,7 +222,7 @@ onBeforeUnmount(() => {
       <button
           class="flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:shadow-sm"
           :class="alwaysOnTop ? 'text-gold bg-gold/15 hover:bg-gold/25' : 'text-ink-soft hover:bg-secondary'"
-          v-tip="t(alwaysOnTop ? 'titlebar.unpinWindow' : 'titlebar.pinWindow')"
+          v-tip="t(alwaysOnTop ? 'titlebar.unpin_window' : 'titlebar.pin_window')"
           @click="toggleAlwaysOnTop"
       >
         <svg class="h-3.5 w-3.5" :class="alwaysOnTop ? 'rotate-45' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

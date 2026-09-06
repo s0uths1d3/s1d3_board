@@ -115,7 +115,7 @@ function syncView() {
 }
 
 const { locale, t } = useI18n();
-const fmtYearMonth = (y: number, m: number) => t('date.yearMonth', { y, m });
+const fmtYearMonth = (y: number, m: number) => t('date.year_month', { y, m });
 
 const viewTitle = computed(() => fmtYearMonth(view.value.year, view.value.month + 1));
 

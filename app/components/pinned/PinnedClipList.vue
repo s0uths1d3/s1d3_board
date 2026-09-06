@@ -16,7 +16,7 @@ const formatDateLocalized = useFormatDate();
 const { items: clips, loading, hasMore, sentinel, refreshLoaded } = useInfiniteList<PinnedClip>({
   fetchPage: (offset, limit) => clipboardService.fetchPinnedClips({ offset, limit }),
   pageSize: 40,
-  onError: () => { errorMsg.value = t('clip.pinnedLoadFailed'); },
+  onError: () => { errorMsg.value = t('clip.pinned_load_failed'); },
 });
 
 const errorMsg = ref('');
@@ -83,7 +83,7 @@ async function saveEdit() {
     await load();
   } catch (e) {
     console.error('保存常用剪贴失败:', e);
-    showHint(t('clip.pinnedSaveFailed'));
+    showHint(t('clip.pinned_save_failed'));
   }
 }
 
@@ -98,7 +98,7 @@ async function togglePin(item: PinnedClip) {
     await load();
   } catch (e) {
     console.error('置顶操作失败:', e);
-    showHint(t('clip.pinOperationFailed'));
+    showHint(t('clip.pin_operation_failed'));
   }
 }
 
@@ -175,7 +175,7 @@ onUnmounted(() => {
       <p v-if="errorMsg" class="mb-2 text-sm text-danger">{{ errorMsg }}</p>
       <p v-if="loading && clips.length === 0" class="mb-2 text-sm text-ink-faint">{{ t('common.loading') }}</p>
       <p v-if="!loading && clips.length === 0" class="mb-2 text-sm text-ink-faint">
-        {{ t('clip.pinnedEmpty') }}
+        {{ t('clip.pinned_empty') }}
       </p>
       <p v-if="hint" class="mb-2 text-sm text-gold">{{ hint }}</p>
 
@@ -207,7 +207,7 @@ onUnmounted(() => {
                 <div class="p-3 pt-10">
                   <input
                       v-model="editingName"
-                      :placeholder="t('clip.nameOptional')"
+                      :placeholder="t('clip.name_optional')"
                       class="w-full rounded-xl border border-accent bg-surface-field px-3 py-1.5 text-sm text-ink focus:border-gold focus:outline-none"
                   />
                   <textarea
@@ -216,7 +216,7 @@ onUnmounted(() => {
                       rows="3"
                       class="mt-2 w-full rounded-xl border border-accent bg-surface-field px-3 py-1.5 text-sm text-ink focus:border-gold focus:outline-none"
                   ></textarea>
-                  <p v-else class="mt-2 text-xs text-ink-faint">{{ t('common.imageNotEditable') }}</p>
+                  <p v-else class="mt-2 text-xs text-ink-faint">{{ t('common.image_not_editable') }}</p>
                   <div class="mt-2 flex flex-wrap gap-2">
                     <button type="button" class="btn-soft border-gold text-gold" @click="saveEdit" @pointerdown.stop.prevent>{{ t('common.save') }}</button>
                     <button type="button" class="btn-soft" @click="cancelEdit" @pointerdown.stop.prevent>{{ t('common.cancel') }}</button>
@@ -232,7 +232,7 @@ onUnmounted(() => {
                   <img
                       v-if="item.type === 'image'"
                       :src="item.content"
-                      :alt="t('clip.pinnedImage')"
+                      :alt="t('clip.pinned_image')"
                       class="w-full rounded-lg object-contain"
                   />
                   <!-- 文本/链接预览 -->
@@ -286,10 +286,10 @@ onUnmounted(() => {
           ref="sentinel"
           class="flex items-center justify-center gap-2 py-4 text-xs text-ink-faint"
       >
-        <span v-if="loading">{{ t('clip.loadingMore') }}</span>
-        <span v-else>{{ t('clip.scrollMore') }}</span>
+        <span v-if="loading">{{ t('clip.loading_more') }}</span>
+        <span v-else>{{ t('clip.scroll_more') }}</span>
       </div>
-      <div v-else-if="clips.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.noMore') }}</div>
+      <div v-else-if="clips.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
     </div>
   </div>
 </template>

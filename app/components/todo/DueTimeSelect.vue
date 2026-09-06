@@ -56,19 +56,19 @@ function atTime(base: Date, h: number, m: number) {
 
 /** 常用日期快捷项（基于当前日期，默认沿用当前时刻的时:分） */
 const dateOptionsBase = computed(() => [
-  { key: 'today', label: t('todo.quickToday'), compute: () => atTime(new Date(), 23, 59) },
-  { key: 'tomorrow', label: t('todo.quickTomorrow'), compute: () => { const d = new Date(); d.setDate(d.getDate() + 1); return d } },
-  { key: 'dayAfter', label: t('todo.quickDayAfter'), compute: () => { const d = new Date(); d.setDate(d.getDate() + 2); return d } },
-  { key: 'nextWeek', label: t('todo.quickNextWeek'), compute: () => { const d = new Date(); d.setDate(d.getDate() + 7); return d } },
+  { key: 'today', label: t('todo.quick_today'), compute: () => atTime(new Date(), 23, 59) },
+  { key: 'tomorrow', label: t('todo.quick_tomorrow'), compute: () => { const d = new Date(); d.setDate(d.getDate() + 1); return d } },
+  { key: 'dayAfter', label: t('todo.quick_day_after'), compute: () => { const d = new Date(); d.setDate(d.getDate() + 2); return d } },
+  { key: 'nextWeek', label: t('todo.quick_next_week'), compute: () => { const d = new Date(); d.setDate(d.getDate() + 7); return d } },
 ])
 
 /** 常用时长快捷项（相对当前时刻） */
 const durationOptionsBase = computed(() => [
-  { key: '10m', label: t('todo.durationMin', { n: 10 }), compute: () => new Date(Date.now() + 10 * 60_000) },
-  { key: '30m', label: t('todo.durationMin', { n: 30 }), compute: () => new Date(Date.now() + 30 * 60_000) },
-  { key: '1h', label: t('todo.durationHour', { n: 1 }), compute: () => new Date(Date.now() + 60 * 60_000) },
-  { key: '2h', label: t('todo.durationHour', { n: 2 }), compute: () => new Date(Date.now() + 2 * 60 * 60_000) },
-  { key: '3h', label: t('todo.durationHour', { n: 3 }), compute: () => new Date(Date.now() + 3 * 60 * 60_000) },
+  { key: '10m', label: t('todo.duration_min', { n: 10 }), compute: () => new Date(Date.now() + 10 * 60_000) },
+  { key: '30m', label: t('todo.duration_min', { n: 30 }), compute: () => new Date(Date.now() + 30 * 60_000) },
+  { key: '1h', label: t('todo.duration_hour', { n: 1 }), compute: () => new Date(Date.now() + 60 * 60_000) },
+  { key: '2h', label: t('todo.duration_hour', { n: 2 }), compute: () => new Date(Date.now() + 2 * 60 * 60_000) },
+  { key: '3h', label: t('todo.duration_hour', { n: 3 }), compute: () => new Date(Date.now() + 3 * 60 * 60_000) },
 ])
 
 /** 显示用默认项（过滤已被删除/隐藏的项；label 含自定义别名，如「别名称 + 原标签」） */
@@ -86,7 +86,7 @@ const durationOptions = computed(() =>
 
 /** 已选 / 上次选择的友好展示：今天/明天/后天/具体日期 */
 const display = (iso: string): string => {
-  const ph = props.placeholder || t('todo.duePlaceholder')
+  const ph = props.placeholder || t('todo.due_placeholder')
   if (!iso) return ph
   const d = new Date(iso)
   if (isNaN(d.getTime())) return ph
@@ -96,10 +96,10 @@ const display = (iso: string): string => {
     (new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - todayStart) / 86_400_000,
   )
   const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`
-  if (dayDiff === 0) return t('todo.displayToday', { time })
-  if (dayDiff === 1) return t('todo.displayTomorrow', { time })
-  if (dayDiff === 2) return t('todo.displayDayAfter', { time })
-  return t('todo.dueDisplay', { m: d.getMonth() + 1, d: d.getDate(), hh: pad(d.getHours()), mm: pad(d.getMinutes()) })
+  if (dayDiff === 0) return t('todo.display_today', { time })
+  if (dayDiff === 1) return t('todo.display_tomorrow', { time })
+  if (dayDiff === 2) return t('todo.display_day_after', { time })
+  return t('todo.due_display', { m: d.getMonth() + 1, d: d.getDate(), hh: pad(d.getHours()), mm: pad(d.getMinutes()) })
 }
 
 const triggerDisplay = computed(() => display(props.modelValue))
@@ -302,25 +302,25 @@ const ctxMenuItems = computed(() => {
   const targetGroups = visibleGroups.value.filter(g => g.id !== ctxGroupId.value)
   if (ctxIsDefault.value) {
     const addItems = targetGroups.map(g => ({
-      label: t('todo.ctxAddTo', { name: dueGroupName(g) }),
+      label: t('todo.ctx_add_to', { name: dueGroupName(g) }),
       action: () => addCtxToGroup(g.id),
     }))
     return [
-      { label: t('todo.ctxRename'), action: startRename },
+      { label: t('todo.ctx_rename'), action: startRename },
       ...addItems,
       { label: t('common.delete'), danger: true, action: deleteCtxItem },
     ]
   }
   const isCustomGroup = ctxGroupId.value !== 'recent'
   const addItems = targetGroups.map(g => ({
-    label: t('todo.ctxAddTo', { name: g.name }),
+    label: t('todo.ctx_add_to', { name: g.name }),
     action: () => addCtxToGroup(g.id),
   }))
   return [
-    { label: t('todo.ctxRename'), action: startRename },
+    { label: t('todo.ctx_rename'), action: startRename },
     ...addItems,
     ...(isCustomGroup
-      ? [{ label: t('todo.ctxRemoveFromGroup'), action: () => { void removeFromGroup(ctxValue.value, ctxGroupId.value) } }]
+      ? [{ label: t('todo.ctx_remove_from_group'), action: () => { void removeFromGroup(ctxValue.value, ctxGroupId.value) } }]
       : []),
     { label: t('common.delete'), danger: true, action: deleteCtxItem },
   ]
@@ -402,10 +402,10 @@ const groupCtxMenuItems = computed(() => {
   const g = groupOf(groupCtxId.value)
   if (!g) return []
   return [
-    { label: t('todo.ctxNewGroup'), action: startCreateGroup },
-    { label: t('todo.ctxRename'), action: startRenameGroup },
-    { label: t(isExpanded(g.id) ? 'todo.ctxUnsetDefaultExpand' : 'todo.ctxSetDefaultExpand'), action: toggleExpandedGroup },
-    { label: t(g.builtin ? 'todo.ctxDeleteGroupRecoverable' : 'todo.ctxDeleteGroup'), danger: true, action: deleteCtxGroup },
+    { label: t('todo.ctx_new_group'), action: startCreateGroup },
+    { label: t('todo.ctx_rename'), action: startRenameGroup },
+    { label: t(isExpanded(g.id) ? 'todo.ctx_unset_default_expand' : 'todo.ctx_set_default_expand'), action: toggleExpandedGroup },
+    { label: t(g.builtin ? 'todo.ctx_delete_group_recoverable' : 'todo.ctx_delete_group'), danger: true, action: deleteCtxGroup },
   ]
 })
 
@@ -548,7 +548,7 @@ onBeforeUnmount(() => {
               class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm text-ink transition-colors hover:bg-secondary"
               @click.stop="choose(lastOption!.value)"
             >
-              <span class="truncate">{{ t('todo.lastPick') }}</span>
+              <span class="truncate">{{ t('todo.last_pick') }}</span>
               <span class="shrink-0 text-xs text-ink-faint">{{ lastOption!.label }}</span>
             </button>
           </li>
@@ -563,7 +563,7 @@ onBeforeUnmount(() => {
                   v-model="groupRenameDraft"
                   type="text"
                   maxlength="12"
-                  :placeholder="t('todo.groupNamePlaceholder')"
+                  :placeholder="t('todo.group_name_placeholder')"
                   class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
                   @keydown.enter.prevent="submitGroupName"
                   @keydown.esc.prevent="cancelGroupRename"
@@ -598,7 +598,7 @@ onBeforeUnmount(() => {
                   v-model="groupRenameDraft"
                   type="text"
                   maxlength="12"
-                  :placeholder="t('todo.newGroupNamePlaceholder')"
+                  :placeholder="t('todo.new_group_name_placeholder')"
                   class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
                   @keydown.enter.prevent="submitGroupName"
                   @keydown.esc.prevent="cancelGroupRename"
@@ -644,7 +644,7 @@ onBeforeUnmount(() => {
                     {{ opt.label }}
                   </button>
                 </li>
-                <li v-if="!recentOptions.length" class="px-2 py-1 text-xs text-ink-faint">{{ t('todo.noRecent') }}</li>
+                <li v-if="!recentOptions.length" class="px-2 py-1 text-xs text-ink-faint">{{ t('todo.no_recent') }}</li>
               </template>
 
               <!-- 内置 duration：预设时长 + 自定义固定项 -->
@@ -807,7 +807,7 @@ onBeforeUnmount(() => {
                     {{ opt.label }}
                   </button>
                 </li>
-                <li v-if="!customGroupOptions(g.id).length" class="px-2 py-1 text-xs text-ink-faint">{{ t('todo.emptyGroupHint') }}</li>
+                <li v-if="!customGroupOptions(g.id).length" class="px-2 py-1 text-xs text-ink-faint">{{ t('todo.empty_group_hint') }}</li>
               </template>
             </template>
           </template>
@@ -819,7 +819,7 @@ onBeforeUnmount(() => {
               class="w-full rounded-md px-2 py-1.5 text-left text-xs text-ink-soft transition-colors hover:bg-secondary"
               @click.stop="restoreDeletedGroups"
             >
-              {{ t('todo.restoreDeletedGroups') }}
+              {{ t('todo.restore_deleted_groups') }}
             </button>
           </li>
 
@@ -830,7 +830,7 @@ onBeforeUnmount(() => {
               class="w-full rounded-md px-2 py-1.5 text-left text-sm text-gold transition-colors hover:bg-secondary"
               @click.stop="openCustom"
             >
-              {{ t('todo.pickCustomDate') }}
+              {{ t('todo.pick_custom_date') }}
             </button>
           </li>
           <li v-if="modelValue">
@@ -839,7 +839,7 @@ onBeforeUnmount(() => {
               class="w-full rounded-md px-2 py-1.5 text-left text-sm text-danger transition-colors hover:bg-danger/10"
               @click.stop="clearValue"
             >
-              {{ t('todo.clearDue') }}
+              {{ t('todo.clear_due') }}
             </button>
           </li>
         </ul>

@@ -23,7 +23,7 @@ const props = defineProps<{
 
 // prop 默认值会被编译提升到 setup() 外部，无法引用局部 t，
 // 故改用 computed 提供缺省文案
-const displayMessage = computed(() => props.message ?? t('common.deleteConfirm'))
+const displayMessage = computed(() => props.message ?? t('common.delete_confirm'))
 
 const emit = defineEmits<{
   (e: 'confirm'): void

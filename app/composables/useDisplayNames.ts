@@ -12,18 +12,18 @@ import { BUILTIN_DUE_GROUPS } from './useDueDateMemory'
 
 /** 默认分类 → i18n key（顺序对应 DEFAULT_CATEGORIES） */
 const CATEGORY_KEYS = [
-  'todo.categoryWork',
-  'todo.categoryStudy',
-  'todo.categoryLife',
-  'todo.categoryFun',
-  'todo.categoryOther',
+  'todo.category_work',
+  'todo.category_study',
+  'todo.category_life',
+  'todo.category_fun',
+  'todo.category_other',
 ] as const
 
 /** 内置截止时间分组 id → i18n key */
 const DUE_GROUP_KEYS: Record<string, string> = {
-  recent: 'todo.dueGroupRecent',
-  duration: 'todo.dueGroupDuration',
-  date: 'todo.dueGroupDate',
+  recent: 'todo.due_group_recent',
+  duration: 'todo.due_group_duration',
+  date: 'todo.due_group_date',
 }
 
 export function useDisplayNames() {
@@ -39,9 +39,9 @@ export function useDisplayNames() {
    *  自动生成的占位名「等级{n}」同样翻译，其余（用户自定义）原样 */
   const priorityName = (p: { level: number; name: string }): string => {
     const i = DEFAULT_PRIORITY_LEVELS.findIndex(d => d.level === p.level && d.name === p.name)
-    if (i >= 0) return t(['todo.priorityLow', 'todo.priorityMid', 'todo.priorityHigh'][i]!)
+    if (i >= 0) return t(['todo.priority_low', 'todo.priority_mid', 'todo.priority_high'][i]!)
     const m = /^等级(\d+)$/.exec(p.name)
-    return m ? t('todo.levelName', { n: m[1]! }) : p.name
+    return m ? t('todo.level_name', { n: m[1]! }) : p.name
   }
 
   /** 截止时间分组显示名：内置分组且名称未被用户重命名时按语言显示 */

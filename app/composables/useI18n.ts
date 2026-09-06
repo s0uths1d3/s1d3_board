@@ -109,9 +109,12 @@ export async function setLocaleMode(m: LocaleMode): Promise<void> {
 export function useI18n() {
   const t = (path: string, params?: Record<string, string | number>): string =>
     resolve(messages[locale.value] as Record<string, unknown>, path, params);
-  const tName = (zh: string): string => {
-    if (locale.value === 'zh-cn' || !zh) return zh;
-    return TAG_NAMES[zh] ?? zh;
+  const tName = (name: string): string => {
+    // 标签数据名为英文；en-us 原样返回，zh-cn 查语言文件的中文显示名
+    if (locale.value === 'en-us' || !name) return name;
+    // 键为 snake_case 裸键（英文标签名小写、空格转下划线）
+    const key = name.toLowerCase().replace(/ /g, '_');
+    return TAG_NAMES[key] ?? name;
   };
   return { locale, localeMode, t, tName };
 }

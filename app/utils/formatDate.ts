@@ -11,7 +11,7 @@ import { messages, type AppLocale } from '~/i18n/messages';
 const formatDate = (value: number | string, locale: AppLocale = 'zh-cn'): string => {
     const now = new Date();
     const tm = (messages[locale] as Record<string, unknown>).time as {
-        justNow: string; secAgo: string; minAgo: string; hourAgo: string; dayAgo: string;
+        just_now: string; sec_ago: string; min_ago: string; hour_ago: string; day_ago: string;
         md: string; ymd: string; invalid: string;
     };
 
@@ -25,11 +25,11 @@ const formatDate = (value: number | string, locale: AppLocale = 'zh-cn'): string
         const hours = Math.floor(minutes / 60);
         const days = Math.floor(hours / 24);
 
-        if (seconds < 10) return tm.justNow;
-        if (seconds < 60) return tm.secAgo.replace('{n}', String(seconds));
-        if (minutes < 60) return tm.minAgo.replace('{n}', String(minutes));
-        if (hours < 24) return tm.hourAgo.replace('{n}', String(hours));
-        if (days < 7) return tm.dayAgo.replace('{n}', String(days));
+        if (seconds < 10) return tm.just_now;
+        if (seconds < 60) return tm.sec_ago.replace('{n}', String(seconds));
+        if (minutes < 60) return tm.min_ago.replace('{n}', String(minutes));
+        if (hours < 24) return tm.hour_ago.replace('{n}', String(hours));
+        if (days < 7) return tm.day_ago.replace('{n}', String(days));
 
         const date = new Date(now.getTime() - milliseconds);
         const year = date.getFullYear();

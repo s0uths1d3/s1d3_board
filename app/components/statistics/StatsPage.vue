@@ -89,12 +89,12 @@ const titleScores = ref<{ name: string; score: number }[]>([]);
 const kingClip = ref<{ content: string; count: number } | null>(null);
 
 const trendOptions = computed<{ key: string; name: string; fields: StatField[] }[]>(() => [
-  { key: 'activity', name: t('statistics.trendActivity'), fields: ['clip_text', 'clip_image', 'clip_use'] },
-  { key: 'clip_use', name: t('statistics.trendPaste'), fields: ['clip_use'] },
-  { key: 'usage', name: t('statistics.trendDuration'), fields: ['usage_seconds'] },
-  { key: 'shortcut', name: t('statistics.trendShortcut'), fields: ['shortcut_count'] },
+  { key: 'activity', name: t('statistics.trend_activity'), fields: ['clip_text', 'clip_image', 'clip_use'] },
+  { key: 'clip_use', name: t('statistics.trend_paste'), fields: ['clip_use'] },
+  { key: 'usage', name: t('statistics.trend_duration'), fields: ['usage_seconds'] },
+  { key: 'shortcut', name: t('statistics.trend_shortcut'), fields: ['shortcut_count'] },
   { key: 'todo', name: t('todo.title'), fields: ['todo_added', 'todo_completed', 'todo_reminded'] },
-  { key: 'todo_chars', name: t('statistics.trendTodoChars'), fields: ['todo_chars'] },
+  { key: 'todo_chars', name: t('statistics.trend_todo_chars'), fields: ['todo_chars'] },
   { key: 'note', name: t('note.title'), fields: ['note_added'] },
 ]);
 
@@ -192,26 +192,26 @@ const hasData = computed(() => {
 /** 使用时长格式化：xx 小时 xx 分 / xx 分钟 / xx 秒（§7.3） */
 function formatDuration(seconds: number): string {
   const sec = Math.round(seconds || 0);
-  if (sec < 60) return t('statistics.durSec', { n: sec });
+  if (sec < 60) return t('statistics.dur_sec', { n: sec });
   const minutes = Math.floor(sec / 60);
-  if (minutes < 60) return t('statistics.durMin', { n: minutes });
+  if (minutes < 60) return t('statistics.dur_min', { n: minutes });
   const hours = Math.floor(minutes / 60);
   const restMin = minutes % 60;
-  return restMin > 0 ? t('statistics.durHourMin', { n: hours, m: restMin }) : t('statistics.durHour', { n: hours });
+  return restMin > 0 ? t('statistics.dur_hour_min', { n: hours, m: restMin }) : t('statistics.dur_hour', { n: hours });
 }
 
 const metricCards = computed(() => {
   const s = stats.value;
   return [
-    { name: t('statistics.metricClipTotal'), value: (s.clip_text ?? 0) + (s.clip_image ?? 0), hint: t('statistics.metricClipTotalHint'), icon: 'clip' },
-    { name: t('statistics.metricImage'), value: s.clip_image ?? 0, hint: t('statistics.metricImageHint'), icon: 'image' },
-    { name: t('statistics.metricPaste'), value: s.clip_use ?? 0, hint: t('statistics.metricPasteHint'), icon: 'paste' },
-    { name: t('statistics.metricTodoOps'), value: (s.todo_added ?? 0) + (s.todo_completed ?? 0), hint: t('statistics.metricTodoOpsHint'), icon: 'todo' },
-    { name: t('statistics.metricTodoChars'), value: fmtNum(s.todo_chars ?? 0), hint: t('statistics.metricTodoCharsHint'), icon: 'todo_text' },
-    { name: t('statistics.metricNote'), value: s.note_added ?? 0, hint: t('statistics.metricNoteHint'), icon: 'note' },
-    { name: t('statistics.metricFavorite'), value: s.favorite_toggle ?? 0, hint: t('statistics.metricFavoriteHint'), icon: 'star' },
-    { name: t('statistics.metricUsage'), value: formatDuration(s.usage_seconds ?? 0), hint: t('statistics.metricUsageHint'), icon: 'clock' },
-    { name: t('statistics.metricShortcut'), value: s.shortcut_count ?? 0, hint: t('statistics.metricShortcutHint'), icon: 'keyboard' },
+    { name: t('statistics.metric_clip_total'), value: (s.clip_text ?? 0) + (s.clip_image ?? 0), hint: t('statistics.metric_clip_total_hint'), icon: 'clip' },
+    { name: t('statistics.metric_image'), value: s.clip_image ?? 0, hint: t('statistics.metric_image_hint'), icon: 'image' },
+    { name: t('statistics.metric_paste'), value: s.clip_use ?? 0, hint: t('statistics.metric_paste_hint'), icon: 'paste' },
+    { name: t('statistics.metric_todo_ops'), value: (s.todo_added ?? 0) + (s.todo_completed ?? 0), hint: t('statistics.metric_todo_ops_hint'), icon: 'todo' },
+    { name: t('statistics.metric_todo_chars'), value: fmtNum(s.todo_chars ?? 0), hint: t('statistics.metric_todo_chars_hint'), icon: 'todo_text' },
+    { name: t('statistics.metric_note'), value: s.note_added ?? 0, hint: t('statistics.metric_note_hint'), icon: 'note' },
+    { name: t('statistics.metric_favorite'), value: s.favorite_toggle ?? 0, hint: t('statistics.metric_favorite_hint'), icon: 'star' },
+    { name: t('statistics.metric_usage'), value: formatDuration(s.usage_seconds ?? 0), hint: t('statistics.metric_usage_hint'), icon: 'clock' },
+    { name: t('statistics.metric_shortcut'), value: s.shortcut_count ?? 0, hint: t('statistics.metric_shortcut_hint'), icon: 'keyboard' },
   ];
 });
 
@@ -235,7 +235,7 @@ const tabDist = computed(() => {
 /** 打字量（复制字符总量）→ "约 X 万字" */
 const typingChars = computed(() => {
   const chars = stats.value.clip_chars ?? 0;
-  return chars > 0 ? t('statistics.typingWan', { n: (chars / 10000).toFixed(1) }) : t('statistics.typingZero');
+  return chars > 0 ? t('statistics.typing_wan', { n: (chars / 10000).toFixed(1) }) : t('statistics.typing_zero');
 });
 
 /** 最长连续使用天数（基于趋势序列的日期集合）；月降采样时单位为"月" */
@@ -263,17 +263,17 @@ const longestStreak = computed(() => {
 
 /** 展示文案：降采样视图统计的是"连续活跃月"，单位不能仍写"天" */
 const longestStreakLabel = computed(() =>
-  isDownsampled.value ? t('statistics.streakMonths', { n: longestStreak.value }) : t('statistics.streakDays', { n: longestStreak.value })
+  isDownsampled.value ? t('statistics.streak_months', { n: longestStreak.value }) : t('statistics.streak_days', { n: longestStreak.value })
 );
 
 /** 活跃时段分布（4 段条形，最高高亮，§7.5） */
 const periodDist = computed(() => {
   const s = stats.value;
   const items = [
-    { name: t('statistics.periodDawn'), time: t('statistics.periodDawnHours'), value: s.active_dawn ?? 0 },
-    { name: t('statistics.periodDay'), time: t('statistics.periodDayHours'), value: s.active_day ?? 0 },
-    { name: t('statistics.periodEvening'), time: t('statistics.periodEveningHours'), value: s.active_evening ?? 0 },
-    { name: t('statistics.periodNight'), time: t('statistics.periodNightHours'), value: s.active_night ?? 0 },
+    { name: t('statistics.period_dawn'), time: t('statistics.period_dawn_hours'), value: s.active_dawn ?? 0 },
+    { name: t('statistics.period_day'), time: t('statistics.period_day_hours'), value: s.active_day ?? 0 },
+    { name: t('statistics.period_evening'), time: t('statistics.period_evening_hours'), value: s.active_evening ?? 0 },
+    { name: t('statistics.period_night'), time: t('statistics.period_night_hours'), value: s.active_night ?? 0 },
   ];
   const total = items.reduce((sum, i) => sum + i.value, 0);
   const max = Math.max(...items.map(i => i.value), 0);
@@ -294,7 +294,7 @@ const movieEquiv = computed(() => {
 const kingPreview = computed(() => {
   const c = kingClip.value?.content ?? '';
   const clean = c.replace(/\s+/g, ' ').trim();
-  return clean.length > 20 ? `${clean.slice(0, 20)}…` : (clean || t('statistics.noCopyRecord'));
+  return clean.length > 20 ? `${clean.slice(0, 20)}…` : (clean || t('statistics.no_copy_record'));
 });
 
 /** 图标渲染 */
@@ -355,8 +355,8 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
     <template v-else>
       <!-- 查询失败态（与"暂无数据"空态区分，提供重试入口） -->
       <div v-if="loadError" class="glass-card rounded-2xl p-12 text-center">
-        <p class="text-lg text-ink">{{ t('statistics.loadFailed') }}</p>
-        <p class="mt-1 text-sm text-ink-faint">{{ t('statistics.statLoadFailedDesc') }}</p>
+        <p class="text-lg text-ink">{{ t('statistics.load_failed') }}</p>
+        <p class="mt-1 text-sm text-ink-faint">{{ t('statistics.stat_load_failed_desc') }}</p>
         <button type="button" class="btn-soft mt-4 px-4 py-1.5 text-sm" @click="load({ skeleton: true })">
           {{ t('statistics.retry') }}
         </button>
@@ -371,8 +371,8 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
             <path d="M7 15l3-3 3 3 4-5" />
           </svg>
         </div>
-        <p class="text-lg text-ink">{{ t('statistics.noStatsData') }}</p>
-        <p class="mt-1 text-sm text-ink-faint">{{ t('statistics.noStatsDataDesc') }}</p>
+        <p class="text-lg text-ink">{{ t('statistics.no_stats_data') }}</p>
+        <p class="mt-1 text-sm text-ink-faint">{{ t('statistics.no_stats_data_desc') }}</p>
       </div>
 
       <template v-else>
@@ -380,9 +380,9 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         <div v-if="title" class="glass-card overflow-hidden rounded-2xl">
           <div class="relative flex items-center gap-4 bg-gradient-to-r from-gold/25 via-gold/10 to-transparent p-5">
             <div class="gold-bar min-w-0">
-              <div class="text-xs uppercase tracking-widest text-gold">{{ t('statistics.uniqueTitle') }} · Unique Title</div>
+              <div class="text-xs uppercase tracking-widest text-gold">{{ t('statistics.unique_title') }} · Unique Title</div>
               <div class="mt-0.5 text-2xl font-bold text-ink">{{ tName(title.name) }}</div>
-              <div class="mt-0.5 text-xs text-ink-faint">{{ t('statistics.uniqueTitleDesc') }}</div>
+              <div class="mt-0.5 text-xs text-ink-faint">{{ t('statistics.unique_title_desc') }}</div>
             </div>
             <button
               v-if="titleScores.length > 0"
@@ -390,7 +390,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
               class="btn-soft ml-auto shrink-0 px-3 py-1.5 text-xs"
               @click="showTitleScores = !showTitleScores"
             >
-              {{ showTitleScores ? t('statistics.hideScores') : t('statistics.scoreDetails') }}
+              {{ showTitleScores ? t('statistics.hide_scores') : t('statistics.score_details') }}
             </button>
           </div>
           <div v-if="showTitleScores && titleScores.length > 0" class="border-t border-accent/60 px-5 py-3">
@@ -410,9 +410,9 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
 
         <!-- ===== 我的标签（§7.8，受区间跨度门槛控制：跨度 < 15 天时整块不显示）===== -->
         <div v-if="tagSpanOK" class="glass-card card-lift rounded-2xl p-4">
-          <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.myTags') }}</h2>
+          <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.my_tags') }}</h2>
           <div v-if="tags.length === 0" class="rounded-xl border border-dashed border-accent px-4 py-3 text-sm text-ink-faint">
-            {{ t('statistics.noTags') }}
+            {{ t('statistics.no_tags') }}
           </div>
           <div v-else class="space-y-3">
             <div v-for="group in tagsByCategory" :key="group.cat">
@@ -454,39 +454,39 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
           <!-- 打字量 -->
           <div class="glass-card card-lift rounded-2xl p-4">
-            <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.typingTitle') }}</div>
+            <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.typing_title') }}</div>
             <div class="mt-1 text-2xl font-semibold text-ink tabular-nums">{{ typingChars }}</div>
-            <div class="mt-1 text-xs text-ink-faint">{{ t('statistics.typingDesc') }}</div>
+            <div class="mt-1 text-xs text-ink-faint">{{ t('statistics.typing_desc') }}</div>
           </div>
 
           <!-- 复制之王 -->
           <div class="glass-card card-lift rounded-2xl p-4">
             <div class="flex items-center justify-between">
-              <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.copyKing') }}</span>
-              <span v-if="kingClip" class="text-xs text-gold tabular-nums">{{ t('statistics.usedTimes', { n: kingClip.count }) }}</span>
+              <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.copy_king') }}</span>
+              <span v-if="kingClip" class="text-xs text-gold tabular-nums">{{ t('statistics.used_times', { n: kingClip.count }) }}</span>
             </div>
             <div class="mt-1 truncate text-lg font-medium text-ink" v-tip="kingClip?.content ?? ''">
               {{ kingPreview }}
             </div>
-            <div class="mt-1 text-xs text-ink-faint">{{ t('statistics.copyKingDesc') }}</div>
+            <div class="mt-1 text-xs text-ink-faint">{{ t('statistics.copy_king_desc') }}</div>
           </div>
 
           <!-- 最长连续使用 -->
           <div class="glass-card card-lift rounded-2xl p-4">
-            <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.longestStreak') }}</div>
+            <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.longest_streak') }}</div>
             <div class="mt-1 text-2xl font-semibold text-ink tabular-nums">
               {{ longestStreakLabel }}
             </div>
-            <div class="mt-1 text-xs text-ink-faint">{{ isDownsampled ? t('statistics.streakDescMonth') : t('statistics.streakDescRecord') }}</div>
+            <div class="mt-1 text-xs text-ink-faint">{{ isDownsampled ? t('statistics.streak_desc_month') : t('statistics.streak_desc_record') }}</div>
           </div>
 
           <!-- 时长换算 -->
           <div class="glass-card card-lift rounded-2xl p-4">
-            <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.durationEquiv') }}</div>
+            <div class="text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.duration_equiv') }}</div>
             <div class="mt-1 text-2xl font-semibold text-ink tabular-nums">
-              {{ movieEquiv > 0 ? t('statistics.movieEq', { n: movieEquiv }) : t('statistics.movieLess') }}
+              {{ movieEquiv > 0 ? t('statistics.movie_eq', { n: movieEquiv }) : t('statistics.movie_less') }}
             </div>
-            <div class="mt-1 text-xs text-ink-faint">{{ movieEquiv > 0 ? t('statistics.movieDesc', { n: movieEquiv }) : t('statistics.movieDescLess') }}</div>
+            <div class="mt-1 text-xs text-ink-faint">{{ movieEquiv > 0 ? t('statistics.movie_desc', { n: movieEquiv }) : t('statistics.movie_desc_less') }}</div>
             </div>
           </div>
         </LazySection>
@@ -494,12 +494,12 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         <!-- ===== 活跃时段（§7.5）· 流式加载 ===== -->
         <LazySection :key="`period-${lazyKey}`" skeleton-class="h-44">
           <div class="glass-card card-lift rounded-2xl p-4">
-            <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.periodTitle') }}</h2>
+            <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.period_title') }}</h2>
           <div class="space-y-2.5">
             <div v-for="p in periodDist" :key="p.name" class="flex items-center gap-3">
               <span class="w-12 shrink-0 truncate text-sm text-ink">{{ p.name }}</span>
               <span class="w-14 shrink-0 truncate text-xs text-ink-faint tabular-nums">{{ p.time }}</span>
-              <span class="w-16 shrink-0 text-xs text-ink-faint tabular-nums">{{ t('statistics.countTimes', { n: p.value }) }}</span>
+              <span class="w-16 shrink-0 text-xs text-ink-faint tabular-nums">{{ t('statistics.count_times', { n: p.value }) }}</span>
               <div class="h-3 flex-1 overflow-hidden rounded-full bg-secondary">
                 <div
                   class="h-full rounded-full transition-all duration-500 ease-soft"
@@ -518,8 +518,8 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         <!-- ===== Tab 访问分布（§7.4）· 流式加载 ===== -->
         <LazySection :key="`tabs-${lazyKey}`" skeleton-class="h-44">
           <div class="glass-card card-lift rounded-2xl p-4">
-            <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.tabDistTitle') }}</h2>
-          <div v-if="tabDist.length === 0" class="text-sm text-ink-faint">{{ t('statistics.noTabDist') }}</div>
+            <h2 class="gold-bar mb-3 text-sm font-semibold text-ink">{{ t('statistics.tab_dist_title') }}</h2>
+          <div v-if="tabDist.length === 0" class="text-sm text-ink-faint">{{ t('statistics.no_tab_dist') }}</div>
           <div v-else class="space-y-2">
             <div v-for="tab in tabDist" :key="tab.key" class="flex items-center gap-3">
               <span class="w-20 shrink-0 text-sm text-ink">{{ tab.key }}</span>
@@ -540,7 +540,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         <LazySection v-if="range !== 'day'" :key="`trend-${lazyKey}`" skeleton-class="h-52">
           <div class="glass-card card-lift rounded-2xl p-4">
           <div class="mb-3 flex flex-wrap items-center gap-2">
-            <h2 class="gold-bar mr-2 text-sm font-semibold text-ink">{{ t('statistics.dailyTrend') }}</h2>
+            <h2 class="gold-bar mr-2 text-sm font-semibold text-ink">{{ t('statistics.daily_trend') }}</h2>
             <button
               v-for="opt in trendOptions"
               :key="opt.key"
@@ -555,7 +555,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
               区间超 {{ TREND_DOWNSAMPLE_DAYS }} 天，已按月聚合（{{ series.length }} 个月）
             </span>
           </div>
-          <div v-if="series.length === 0" class="text-sm text-ink-faint">{{ t('statistics.noTrendData') }}</div>
+          <div v-if="series.length === 0" class="text-sm text-ink-faint">{{ t('statistics.no_trend_data') }}</div>
           <div v-else class="flex h-40 items-end gap-[2px] overflow-x-auto pb-1">
             <div
               v-for="(point, idx) in series"
