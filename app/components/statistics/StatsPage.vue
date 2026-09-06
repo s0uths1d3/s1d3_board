@@ -14,7 +14,7 @@ import {
   CATEGORY_LABEL, type UserTag, type UserTagCategory,
 } from '~/src/statistics/userTags';
 import { toDateString } from '~/utils/datetime';
-import DatePicker from '~/components/common/DatePicker.vue';
+import RangeBar from '~/components/statistics/RangeBar.vue';
 import LazySection from '~/components/statistics/LazySection.vue';
 
 const { t, tName } = useI18n();
@@ -72,25 +72,8 @@ const rangeDates = computed<{ from: string; to: string }>(() => {
   }
 });
 
-/** 左箭头禁用：自定义范围无"阶段"概念 */
-const leftDisabled = computed(() => range.value === 'custom');
-/** 右箭头禁用：自定义范围，或已处于当前（最新）阶段不可再往后 */
-const rightDisabled = computed(() => range.value === 'custom' || rangeOffset.value >= 0);
-
-function selectRange(key: RangeKey) {
-  if (range.value !== key) {
-    range.value = key;
-    rangeOffset.value = 0;
-  }
-}
-
-/** 阶段切换：delta=-1 上一阶段，delta=1 下一阶段；不允许进入未来阶段 */
-function shiftRange(delta: number) {
-  if (range.value === 'custom') return;
-  const next = rangeOffset.value + delta;
-  if (next > 0) return;
-  rangeOffset.value = next;
-}
+// 范围选择/阶段切换的交互逻辑在共用组件 RangeBar 内（v-model 同步 range 与 rangeOffset）；
+// rangeDates 变化（含 150ms 防抖）驱动下方 load 重新查询。
 
 // ===== 数据（§14.5：聚合结果用 shallowRef，避免大对象深层响应）=====
 const loading = ref(false);
@@ -352,63 +335,15 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
 
 <template>
   <div class="space-y-4 pb-8">
-    <!-- ===== 范围切换栏（§7.2）===== -->
-    <div class="glass-card card-lift rounded-2xl p-4">
-      <!-- 默认窗口尺寸下始终单行：禁用换行，靠紧凑间距 + 日期控件定宽保证 -->
-      <div class="flex flex-nowrap items-center gap-2">
-        <button
-          v-for="opt in rangeOptions"
-          :key="opt.key"
-          type="button"
-          class="btn-soft shrink-0 whitespace-nowrap px-2.5 py-1.5 text-sm"
-          :class="range === opt.key ? 'border-gold bg-secondary text-gold' : ''"
-          @click="selectRange(opt.key)"
-        >
-          {{ opt.name }}
-        </button>
-        <div class="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-ink-faint">
-          <span v-if="range === 'custom'" class="flex min-w-0 items-center gap-1">
-            <span class="w-36 min-w-0">
-              <DatePicker v-model="customFrom" :placeholder="t('statistics.fromDate')" :max="customTo || undefined" />
-            </span>
-            <span class="text-ink-faint">—</span>
-            <span class="w-36 min-w-0">
-              <DatePicker v-model="customTo" :placeholder="t('statistics.toDate')" :min="customFrom || undefined" />
-            </span>
-          </span>
-          <!-- 阶段切换箭头：左右选择上一阶段/下一阶段，无可用方向时置灰禁用 -->
-          <div class="flex items-center gap-1">
-            <button
-              type="button"
-              class="flex h-8 w-8 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
-              :class="leftDisabled ? 'cursor-not-allowed text-ink-faint/40' : 'text-gold hover:bg-secondary'"
-              :disabled="leftDisabled"
-              v-tip="t('statistics.prevPhase')"
-              @click="shiftRange(-1)"
-            >
-              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-                   stroke-linecap="round" stroke-linejoin="round">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-            </button>
-            <span class="min-w-[8.5rem] max-w-full truncate whitespace-nowrap text-center tabular-nums">{{ rangeDates.from }} ~ {{ rangeDates.to }}</span>
-            <button
-              type="button"
-              class="flex h-8 w-8 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
-              :class="rightDisabled ? 'cursor-not-allowed text-ink-faint/40' : 'text-gold hover:bg-secondary'"
-              :disabled="rightDisabled"
-              v-tip="t('statistics.nextPhase')"
-              @click="shiftRange(1)"
-            >
-              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-                   stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 6l6 6-6 6" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <!-- ===== 范围切换栏（§7.2，与应用时长页共用 RangeBar）===== -->
+    <RangeBar
+      v-model="range"
+      :options="rangeOptions"
+      v-model:offset="rangeOffset"
+      v-model:custom-from="customFrom"
+      v-model:custom-to="customTo"
+      :label="`${rangeDates.from} ~ ${rangeDates.to}`"
+    />
 
     <div v-if="loading" class="space-y-4">
       <div class="glass-card h-24 animate-pulse rounded-2xl"></div>
