@@ -1,6 +1,7 @@
 <template>
-  <div class="min-h-full p-4">
-    <div class="relative max-w-6xl mx-auto">
+  <div>
+    <!-- 边距与宽度由外壳统一提供（main px-4 + max-w-6xl），各模块保持一致 -->
+    <div class="relative">
       <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
         <button
             @click="createNote"

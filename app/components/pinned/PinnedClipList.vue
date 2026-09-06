@@ -169,7 +169,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div id="pinned-clip-root" class="mx-auto max-w-6xl p-4">
+  <!-- 边距与宽度由外壳统一提供（main px-4 + max-w-6xl），各模块保持一致 -->
+  <div id="pinned-clip-root">
     <div class="rounded-2xl p-4">
       <p v-if="errorMsg" class="mb-2 text-sm text-danger">{{ errorMsg }}</p>
       <p v-if="loading && clips.length === 0" class="mb-2 text-sm text-ink-faint">{{ t('common.loading') }}</p>

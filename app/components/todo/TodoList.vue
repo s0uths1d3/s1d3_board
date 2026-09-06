@@ -1,6 +1,7 @@
 <template>
-  <div class="min-h-screen p-4">
-    <div class="max-w-6xl mx-auto">
+  <div>
+    <!-- 边距与宽度由外壳统一提供（main px-4 + max-w-6xl），各模块保持一致 -->
+    <div>
       <div class="mb-8">
 
         <div class="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
