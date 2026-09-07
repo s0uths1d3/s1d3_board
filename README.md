@@ -43,6 +43,16 @@ It isn't a window you keep open all day. It stays in the tray until a global sho
 - **Local-first**: everything lives in a local SQLite file — no account, no cloud
 - **Trim it to fit**: tabs can be reordered and toggled off, so only the modules you actually use remain
 
+## 🖼️ Screenshots
+
+| Clipboard | Todos |
+|:---:|:---:|
+| ![Clipboard](.docs/images/clips.png) | ![Todos](.docs/images/todos.png) |
+| **Notes** | **Pinned clips** |
+| ![Notes](.docs/images/notes.png) | ![Pinned clips](.docs/images/pinned.png) |
+| **Statistics** | **App usage** |
+| ![Statistics](.docs/images/stats.png) | ![App usage](.docs/images/app_usage.png) |
+
 ## 🎯 Core features
 
 | Module | What it solves | Key capabilities |
