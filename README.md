@@ -1,187 +1,248 @@
+<div align="center">
+
 # S1d3 Board
 
-一个基于 **Tauri 2 + Nuxt 4 + Vue 3 + Tailwind CSS** 的桌面效率工具，为剪贴板、待办、便签、统计等日常高频操作提供系统托盘内快捷访问。
+**A tray-resident productivity panel — clipboard, todos, notes and stats, one shortcut away**
 
-## ✨ 功能特性
+[English](./README.md) · [简体中文](./README.zh-CN.md)
 
-### 剪贴板管理（clip）
-- **实时剪贴板监听**：复制的内容自动入库，支持文本与图片（base64）
-- **全文搜索**：关键词过滤 + 匹配文本金色高亮
-- **收藏夹**：一键收藏/取消收藏重要内容
-- **粘贴命令**：选中后按 `Enter` 或 `Ctrl+数字` 直接模拟粘贴到光标处
-- **悬停提示窗口**：独立 tooltip 窗口展示截断内容的完整信息
-- **删除确认**：删除前弹出独立确认窗口，支持 `Enter`/`Esc`/`←→` 键盘操作
-- **存储上限**：可配置「剪贴板最大存储数量」，超出自动淘汰最旧记录
-- **流式加载**：列表分页按需加载，滚动到底自动追加下一页，数据量大不卡顿
+<br/>
 
-### 常用剪贴板（pinned）
-- 将常用内容**置顶固定**为可快速粘贴的常用项，瀑布流布局展示
-- `Ctrl+U` 快速把当前选中项添加为常用剪贴
-- `Ctrl+1 ~ Ctrl+0` 前 10 项快捷粘贴
-- **方向键导航**：`↑↓←→` 几何最近邻选中，`Delete` 删除（内联确认框）
-- **流式加载**：列表分页按需加载，滚动到底自动追加下一页
+![Tauri](https://img.shields.io/badge/Tauri-2.x-FFC131?style=flat-square&logo=tauri&logoColor=black)
+![Nuxt](https://img.shields.io/badge/Nuxt-4.x-00DC82?style=flat-square&logo=nuxt&logoColor=white)
+![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
 
-### 待办事项（todo）
-- 创建/编辑/删除待办，支持优先级（低/中/高）与分类
-- 完成状态切换，**列表流式加载**：分页按需加载，滚动/方向键到底自动追加下一页
-- **截止日期**：统一暖色主题日期时间选择器
-- **重复提醒**：智能/自定义闹钟规则，到期提醒
+![License](https://img.shields.io/badge/License-Apache_2.0-D22128?style=flat-square)
+![Version](https://img.shields.io/badge/Version-0.3.0-2ea44f?style=flat-square)
+![Status](https://img.shields.io/badge/Status-active_development-2ea043?style=flat-square)
 
-### 便签（note）
-- 多色便签（蓝/黄/粉/绿/紫/橙），瀑布流布局
-- **双击 / Ctrl+Enter** 进入编辑，**Ctrl+Enter** 保存，`Ctrl+N` 新建
-- 删除带内联确认框 + 即时 toast 反馈
-- 流式分批渲染 + 滚动加载，大数据量不卡顿
+</div>
 
-### 统计（statistics）
-- **多维使用数据**：剪贴/图片/粘贴/待办/便签/收藏/使用时长/快捷键/Tab 访问
-- **时间范围**：日/周/月/年/自定义，左右箭头切换上一阶段/下一阶段
-- **核心指标卡片 + Tab 访问分布 + 活跃时段**
-- **趣味数据**：打字量（复制字符总量）、复制之王、最长连续使用、时长换算
-- **每日趋势图**：逐日柱状，超一季自动按月降采样
-- **用户画像标签**：实时生成使用习惯标签（按类别分组）
-- **专属大标签**：唯一专属称号 + 评分明细
-- 统计模块直接出现在标题栏导航中
-- 流式加载：区块随滚动渐进渲染，首屏更轻
+## 🤔 Why S1d3 Board
 
-### 全局快捷键系统
-- 所有快捷键可在设置页**录制、修改、启停、重置**
-- 关键默认键位：
-  | 快捷键 | 功能 |
-  |---|---|
-  | `Ctrl+I` | 显示/隐藏主窗口 |
-  | `Ctrl+← / Ctrl+→` | 切换标签页 |
-  | `Ctrl+U` | 添加选中项为常用剪贴 |
-  | `Ctrl+1 ~ Ctrl+0` | 常用剪贴前 10 项快捷粘贴 |
-  | `Ctrl+Enter` | 保存便签 |
-  | `Ctrl+N` | 新建便签 |
-  | 方向键 | 页面内几何最近邻导航选中项 |
-  | `Delete` / `Backspace` | 删除选中项（带确认） |
-- 修饰键**精确匹配**，`Ctrl+←/→` 切标签拥有最高优先级
+The most frequent things you do on a computer are often the most trivial — and the most over-served by tools:
 
-### 设置（setting）
-- **开机自启**（Tauri autostart 插件，无需管理员权限）
-- 剪贴板最大存储数量
-- 快捷键自定义、**提示窗口开关**、配色
-- 各分类切换带丝滑过渡动画
+- **One app per habit**: clipboard history, todos and notes each demand their own window, their own shortcut and their own data format
+- **Heavy tools for light tasks**: jotting down one line shouldn't mean launching a full application and giving it a slice of your screen
+- **Some data shouldn't leave the machine**: copied text, todos and notes are deeply personal — local beats cloud for these
+- **A resident tool must not slow the machine down**: anything that runs all day has to stay lean — the backend is written in Rust for better performance and a lower memory footprint
 
-### 多语言（i18n）
-- **中 / 英双语**，设置页一键切换，即时生效
-- **显示层翻译**：内置默认数据（分类、优先级档位、时段分组等）跟随界面语言显示；用户自定义的名称（改过的档位名、自建分类等）始终保留原文
-- 相对时间（刚刚 / X 分钟前 / 3 days ago）与日期格式跟随语言
-- 全部界面文案（含统计页、设置页、右键菜单、确认框、toast 提示）均走统一语言包
+S1d3 Board isn't *another* productivity app. It gathers these small, frequent chores into **one panel that answers on demand**: `Ctrl+I` to summon, `Esc` to dismiss — it gets out of the way the moment you're done.
 
-### 其他
-- 各标签页**独立保存滚动位置**
-- 切换标签自动聚焦剪贴板搜索框
-- 统一暖色主题**日期选择器**（DatePicker）与**悬停提示气泡**（v-tip）
-- **统一下拉组件**（UiDropdown）：视口边界自动收进 + 上翻翻转 + 动态重定位，任何屏幕尺寸下面板完整可见
-- 内容卡片悬停轻微上浮（card-lift），交互动效统一
-- 窗口无边框 / 透明，托盘常驻
+## 💡 What it is
 
-## 🧱 技术栈
+A **tray-resident productivity panel** for the desktop.
 
-| 层级 | 技术 |
+It isn't a window you keep open all day. It stays in the tray until a global shortcut brings it up:
+
+- **Tray-resident + global shortcut**: `Ctrl+I` from anywhere, auto-hides on focus loss, single-instance (relaunching just focuses the running window)
+- **Borderless / transparent window**: feels like a native panel rather than another application
+- **Local-first**: everything lives in a local SQLite file — no account, no cloud
+- **Trim it to fit**: tabs can be reordered and toggled off, so only the modules you actually use remain
+
+## 🎯 Core features
+
+| Module | What it solves | Key capabilities |
+|---|---|---|
+| 📋 **Clipboard** | Copied things vanish | Text & images captured automatically, full-text search, favorites, one-key paste, image viewer |
+| 📌 **Pinned** | Re-finding the same snippets | Pin frequent items, paste directly with `Ctrl+1 ~ Ctrl+0` |
+| ✅ **Todo** | Things living in your head | Priority, category, due date, smart/custom recurring reminders |
+| 🗒️ **Notes** | Nowhere to put stray thoughts | Multi-color masonry notes, `Ctrl+N` to create, `Ctrl+Enter` to save |
+| 📊 **Statistics** | Not knowing where time goes | Multi-dimensional usage data, range switching, fun facts & persona tags |
+| ⏱️ **App usage** | Which apps eat your day | Per-app foreground time, active/idle split, donut chart (off by default) |
+| ⚙️ **Settings** | Tools should adapt to you | Shortcut recording & conflict detection, theme, language, popup position, navigation |
+
+Across every module: a **global shortcut system** (fully customizable), a **bilingual UI** (can follow the system), **multi-window collaboration** (hover tooltip / image viewer / delete confirm) and **streaming lists** that stay smooth at any data size.
+
+Key capabilities by module:
+
+### 📋 Clipboard
+- **Automatic capture**: copied text and images are stored on the fly; the oldest entries are evicted past the configured limit
+- **Full-text search**: keyword filtering with golden highlighting on matches
+- **Favorites**: `Ctrl+L` to star / unstar
+- **One-key paste**: `Enter` pastes the selection; `Ctrl+Shift+1 ~ Ctrl+Shift+0` pastes the top 10 globally
+- **Dedicated viewers**: a hover tooltip shows full content (original indentation preserved); an image viewer supports zoom / rotate / switching
+
+### 📌 Pinned
+- Pin frequently used clips as fast-paste items, shown in a masonry layout
+- `Ctrl+U` adds the current selection, `Ctrl+1 ~ Ctrl+0` pastes the top 10 directly
+- **Arrow-key navigation**: `↑↓←→` picks the geometrically nearest item, `Delete` removes it (inline confirm)
+
+### ✅ Todo
+- Create / edit / delete with priority (low / medium / high) and categories
+- **Due dates**: unified warm-toned date & time picker
+- **Recurring reminders**: smart or custom alarm rules with due notifications
+
+### 🗒️ Notes
+- Multi-color notes (blue / yellow / pink / green / purple / orange) in a masonry layout
+- **Double-click / Ctrl+Enter** to edit, `Ctrl+Enter` to save, `Ctrl+N` to create
+- Inline delete confirmation with instant toast feedback
+
+### 📊 Statistics
+- **Multi-dimensional data**: clips / images / pastes / todos / notes / favorites / usage time / shortcuts / tab visits
+- **Time range**: a shared `RangeBar` (day / week / month / year / custom), reused by App usage
+- **Trends & distribution**: key metric cards, tab visit distribution, active hours, daily trend chart
+- **Fun facts**: typing volume, top copier, longest streak, time conversions
+- **User persona**: habit tags generated live, plus a personal title with score breakdown
+
+### ⏱️ App usage
+- **Foreground tracking**: Rust watches the foreground window, settles in 30s segments and aggregates per app
+- **Totals & ranking**: total / active / idle cards, a time-descending ranking (with app icons) and a donut chart
+- **Range switching**: shares the `RangeBar` with Statistics (day / week / month / year / custom)
+- **Privacy first**: off by default — nothing is counted until you turn it on (Windows / macOS / Linux)
+
+### ⌨️ Global shortcuts
+- Every shortcut is **recordable, toggleable and resettable**, individually or per group
+- **Conflict detection**: conflicts are checked on save and a failed registration rolls back; scopes are `global` (system-wide) / `local` (window-level)
+- The full default keymap is viewable and editable in-app under **Settings → Shortcuts**
+
+### ⚙️ Settings
+- **Theme**: follow system / amber (warm) / light / dark — the tray and child windows follow along
+- **Language**: follow system / 中文 / English
+- **Popup position**: at cursor / last position / centered on the cursor's screen
+- **Toggles**: launch at login, max clipboard entries, hover tooltip, search highlight, smart reminders, app-usage tracking
+- **Shortcuts**: record / toggle / reset (individually or per group)
+- **Navigation**: tab order (long-press drag or move up/down) and visibility — Clipboard and Settings are locked
+- **Data**: clear the database, with a **5-second undo window**
+
+### 🌐 Languages (i18n)
+- **Chinese / English**, with a **follow system / 中文 / English** mode
+- **Display-layer translation**: built-in defaults (categories, priorities, time buckets, persona tags) follow the UI language; names you customize always stay as typed
+- **Full coverage**: statistics, settings, context menus, confirm dialogs and toasts all share one catalogue — switching syncs across windows
+
+### 🪟 Windows & tray
+- **Tray-resident**: borderless / transparent main window; the close button hides to the tray, `Ctrl+I` summons it and it auto-hides on focus loss
+- **Multi-window**: hover tooltip / image viewer / delete confirm are separate windows communicating via events
+- **Single instance**: relaunching focuses the running window instead of spawning a new one
+- **Production hardening**: packaged builds disable the context menu and debug shortcuts; dev builds keep full debugging
+
+### ✨ Other details
+- Each tab remembers its scroll position; switching tabs focuses the search box automatically
+- Shared components: date picker (DatePicker), dropdown (UiDropdown — auto-clamps and flips at viewport edges), hover bubble (v-tip)
+- Tabs can be long-press dragged or moved up/down; order and visibility persist
+
+## 🧱 Tech stack
+
+| Layer | Technology |
 |---|---|
-| 桌面容器 | [Tauri 2](https://tauri.app) |
-| 前端框架 | [Nuxt 4](https://nuxt.com) + [Vue 3](https://vuejs.org) |
-| 样式 | [Tailwind CSS 3](https://tailwindcss.com) |
-| 数据库 | SQLite（[@tauri-apps/plugin-sql](https://github.com/tauri-apps/plugins-workspace/tree/v2/plugins/sql)） |
-| 系统能力 | 全局快捷键、剪贴板 API、通知、窗口控制、开机自启、文件系统 |
-| 语言 | TypeScript（前端）+ Rust（Tauri 壳） |
+| Desktop shell | [Tauri 2](https://tauri.app) |
+| Frontend | [Nuxt 4](https://nuxt.com) + [Vue 3](https://vuejs.org) |
+| Styling | [Tailwind CSS 3](https://tailwindcss.com) |
+| Database | SQLite ([@tauri-apps/plugin-sql](https://github.com/tauri-apps/plugins-workspace/tree/v2/plugins/sql)) |
+| System | global shortcuts, clipboard read/write, notifications, window control, tray, autostart, single instance, external links |
+| Data collection | Rust foreground-app watcher (per-platform for Windows / macOS / Linux, 30s segments) |
+| Internationalization | lightweight in-house i18n + TOML catalogues (no third-party i18n dependency) |
+| Languages | TypeScript (frontend) + Rust (Tauri shell) |
 
-## 🚀 快速开始
+## 🚀 Getting started
 
-### 环境要求
+### Prerequisites
 - [Node.js](https://nodejs.org) ≥ 20
-- [Rust](https://www.rust-lang.org)（Tauri 2 构建需要）
-- 各平台系统依赖（参考 [Tauri 环境准备](https://tauri.app/start/prerequisites/)）
+- [Rust](https://www.rust-lang.org) (required to build Tauri 2)
+- Platform-specific dependencies — see [Tauri prerequisites](https://tauri.app/start/prerequisites/)
 
-### 安装依赖
+### Run from source
 
 ```bash
+# 1. Clone the repository
+git clone https://github.com/s0uths1d3/s1d3_board.git
+cd s1d3_board
+
+# 2. Install dependencies
 npm install
-```
 
-### 启动前端（仅 Web 预览）
-
-```bash
-npm run dev
-```
-
-### 启动桌面应用（开发模式）
-
-```bash
+# 3. Launch the desktop app
 npm run tauri:dev
 ```
 
-### 开发端口
+- `tauri:dev` starts the frontend dev server (port 12321) first, then compiles and opens the desktop window
+- **The first launch compiles Rust dependencies and takes a while**; later runs reuse the cache
+- Dev builds keep the context menu and debug shortcuts such as `F5` / `F12` (disabled after packaging)
 
-| 端 | 端口 | 配置位置 |
+> The database, clipboard watcher, tray, global shortcuts and app-usage tracking all depend on the Tauri runtime — launch via `tauri:dev`; a plain browser preview can't use any of them.
+
+### Dev ports
+
+| Side | Port | Configured in |
 |---|---|---|
-| 前端（Nuxt dev server） | `12321` | `package.json` dev script（`nuxt dev --port 12321`） |
-| 后端（Tauri 开发变量） | `12921` | `.env`（`TAURI_DEV_PORT`） |
-| Tauri devUrl（指向前端） | `http://localhost:12321` | `src-tauri/tauri.conf.json` |
+| Frontend (Nuxt dev server) | `12321` | `package.json` dev script (`nuxt dev --port 12321`) |
+| Backend (Tauri dev variable) | `12921` | `.env` (`TAURI_DEV_PORT`) |
+| Tauri devUrl (points at frontend) | `http://localhost:12321` | `src-tauri/tauri.conf.json` |
 
-前端端口由 dev script 显式指定（Nuxt 4 CLI 端口由命令行层管理），并与 `devUrl` 保持一致，否则 dev 模式无法连通。
+The frontend port is set explicitly by the dev script (Nuxt 4's CLI owns the port) and must match `devUrl`, otherwise dev mode can't connect.
 
-### 构建生产包
+### Build for production
 
 ```bash
 npm run tauri:build
 ```
 
-产物输出在 `src-tauri/target/release/bundle/`。
+Output lands in `src-tauri/target/release/bundle/`; you can also run `src-tauri/target/release/s1d3_board.exe` (Windows) directly to verify release behavior.
 
-## 📁 目录结构
+For a build with debug symbols (troubleshooting): `npm run tauri build -- --debug`, output in `src-tauri/target/debug/`.
+
+## 📁 Project layout
 
 ```
-├── app/                    # 前端（Nuxt/Vue）
-│   ├── assets/css/         # 全局样式（Tailwind + 动画 + 统一提示气泡）
-│   ├── components/         # 页面组件
-│   │   ├── common/         # 通用组件（DatePicker 日期选择器、DeleteConfirm 确认框）
-│   │   ├── mainpage/       # 剪贴板主界面
-│   │   ├── note/           # 便签
-│   │   ├── pinned/         # 常用剪贴板
-│   │   ├── setting/        # 设置
-│   │   ├── statistics/     # 统计页（StatsPage / LazySection 流式区块）
-│   │   ├── todo/           # 待办（含 ReminderPicker 提醒选择器）
-│   │   └── ui/             # 基础组件（UiDropdown 统一下拉）
-│   ├── composables/        # 组合式函数（标签状态、i18n、显示名映射、日期格式化等）
-│   ├── i18n/               # 语言包（messages.ts 中英双语）
-│   ├── pages/              # 路由页面
-│   ├── plugins/            # Vue 插件（v-tip 全局指令、i18n 等）
-│   └── src/
-│       ├── commands/       # 命令模式
-│       │   ├── global/     # 全局快捷键命令
-│       │   ├── local/      # 局部快捷键命令
-│       │   └── shortcuts/  # 快捷键注册/管理
-│       ├── db/             # SQLite 数据访问
-│       ├── statistics/     # 统计服务（statsService / userTags / mockData）
-│       ├── utils/          # 工具函数（v-tip 指令、几何导航等）
-│       ├── clip.ts
-│       └── Entities.ts     # 数据实体类型
-├── public/                 # 静态资源
-├── server/                 # Nuxt server
-├── src-tauri/              # Tauri 壳（Rust，含 SQL migration）
+├── app/                     # Frontend (Nuxt/Vue)
+│   ├── app.vue              # Root component (window focus/visibility, global state)
+│   ├── assets/
+│   │   ├── css/             # Global styles (Tailwind + animations + shared tooltip)
+│   │   ├── lang/            # Language catalogues (zh-cn.toml / en-us.toml)
+│   │   ├── icon/            # App icons
+│   │   └── svg/             # Inline icon assets
+│   ├── components/
+│   │   ├── appusage/        # App usage page
+│   │   ├── common/          # Shared components (DatePicker, DeleteConfirm)
+│   │   ├── mainpage/        # Clipboard UI (TitleBar / ContextMenu / HighlightText)
+│   │   ├── note/            # Notes
+│   │   ├── pinned/          # Pinned clips
+│   │   ├── setting/         # Settings (SettingMain / ShortcutRow / SettingInput)
+│   │   ├── statistics/      # Statistics (StatsPage / RangeBar / LazySection)
+│   │   ├── todo/            # Todos (incl. ReminderPicker)
+│   │   └── ui/              # Primitives (UiDropdown / UiSegmented / UiToggleSwitch / UiColorPicker)
+│   ├── composables/         # Composables (tabs & nav, i18n, theme, popup position, infinite list, ...)
+│   ├── i18n/                # i18n entry (messages.ts, loaded from assets/lang)
+│   ├── pages/               # Routes (index main window / tooltip hover / viewer image)
+│   ├── plugins/             # Nuxt plugins (tray init, v-tip, i18n, theme, production behavior)
+│   ├── src/
+│   │   ├── commands/        # Command pattern
+│   │   │   ├── global/      # Global shortcut commands
+│   │   │   ├── local/       # Local shortcut commands
+│   │   │   └── shortcuts/   # Registration / conflict detection / persistence
+│   │   ├── db/              # SQLite data access (dbService)
+│   │   ├── statistics/      # Statistics service (statsService / userTags)
+│   │   ├── todo/            # Todo domain logic
+│   │   └── entities.ts      # Entity types
+│   └── utils/               # Utilities (dates, TOML parsing, shortcut formatting, focus navigation)
+├── public/                  # Static assets
+├── server/                  # Nuxt server
+├── src-tauri/               # Tauri shell (Rust)
+│   └── src/app_usage/       # Foreground app tracking (windows / macos / linux / unsupported)
 ├── nuxt.config.ts
 ├── tailwind.config.js
 └── tsconfig.json
 ```
 
-## ⚙️ 架构说明
+## ⚙️ Architecture
 
-- **命令模式**：快捷键统一映射到 `Command`，全局/局部作用域区分，避免冲突
-- **事件解耦**：快捷键命令通过 `window.dispatchEvent` 派发业务事件，页面监听处理
-- **几何最近邻导航**：方向键选中基于元素视觉坐标计算最近项，适配网格/瀑布流
-- **流式渲染**：剪贴板/置顶/便签/待办列表分页按需加载（`LIMIT/OFFSET`），滚动到底自动追加，统计页区块随滚动渐进渲染
-- **统计写入合并**：统计埋点先入内存累加器，节流批量 UPSERT，退出时强制落库（数据零丢失）
-- **显示层翻译**：数据库只存原始值，默认数据（分类/优先级/分组）渲染时按语言映射，用户自定义数据保留原文
-- **统一组件**：DatePicker 日期选择器、UiDropdown 下拉、v-tip 悬停提示，全站样式一致
+- **Command pattern**: shortcuts map to `Command` objects with global / local scopes to avoid collisions
+- **Event decoupling**: shortcut commands dispatch business events via `window.dispatchEvent`; pages listen and react
+- **Geometric nearest-neighbor navigation**: arrow keys pick the visually nearest item, working for grids and masonry layouts
+- **Streaming rendering**: clipboard / pinned / notes / todo lists page in on demand (`LIMIT/OFFSET`) and append on scroll; statistics sections render progressively
+- **Batched statistics writes**: counters accumulate in memory, flush through throttled UPSERTs and force-flush on exit (no data loss)
+- **App usage pipeline**: Rust accumulates foreground time in 30s segments (nothing is collected while the toggle is off); the frontend pulls deltas into the `app_usage` table and the page aggregates by range
+- **Multi-window collaboration**: the main window and the tooltip / image viewer / delete confirm windows communicate over Tauri events (show, hide, hover, activate); theme and language changes broadcast to every window
+- **Settings persistence**: lightweight settings live in a `settings` key-value table (`getKeyValue/setKeyValue`); text inputs debounce before writing and flush on unmount
+- **Display-layer translation**: the database stores raw values only; built-in data (categories / priorities / buckets) is mapped at render time, while user-authored data is kept verbatim
+- **Shared components**: DatePicker, UiDropdown and the v-tip bubble keep styling consistent everywhere
 
-## 📄 开源协议
+## 📄 License
 
-本项目基于 **Apache License 2.0** 开源，详见 [LICENSE](./LICENSE)。
+Released under the **Apache License 2.0** — see [LICENSE](./LICENSE).
 
 ```
 Copyright 2026 S1d3
