@@ -3,7 +3,7 @@
 //! Wayland 无统一前台窗口协议，暂不支持（connect 失败时按不支持处理）。
 
 #[cfg(target_os = "linux")]
-use super::{state, Sample};
+use super::{state, encode_data_url, Sample};
 use std::time::Duration;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, ChangeWindowAttributesAux, ConnectionExt, EventMask};
@@ -88,7 +88,7 @@ let name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
     .map(|s| s.trim().to_lowercase())
     .unwrap_or_else(|_| "system".to_string());
 let name = if name.is_empty() { "system".to_string() } else { name };
-let icon = desktop_icons::icon_data_url_of_app(&name);
+let icon = linux_icon::icon_data_url_of_app(&name);
 Some(Sample { name, icon })
 }
 pub fn foreground_sample(_app: &tauri::AppHandle) -> Option<Sample> {
