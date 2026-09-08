@@ -51,6 +51,9 @@ async function createTrayMenu(): Promise<Menu> {
 let trayIconRef: TrayIcon | null = null;
 /** 重建去重：setMenu 异步串行进行，避免连续切换配色时并发重建 */
 let rebuildingMenu = false;
+/** 托盘固定 id：同一窗口多次执行插件（F5 / 语言切换 location.reload / dev HMR）时
+ *  通过 getById 复用已有托盘，避免 TrayIcon.new 每次都新建一个托盘图标 */
+const TRAY_ID = 'main-tray';
 
 async function rebuildTrayMenu() {
     if (!trayIconRef || rebuildingMenu) return;
@@ -83,6 +86,16 @@ export default defineNuxtPlugin(async (nuxtApp) => {
     });
 
     try {
+        // 复用检查：窗口 reload / dev HMR 会让插件重新执行，TrayIcon.new 每次都会
+        // 新建一个托盘图标（旧的不随窗口销毁），导致托盘区图标累积。已有同 id
+        // 托盘时直接复用并重建菜单，跳过创建。
+        const existing = await TrayIcon.getById(TRAY_ID);
+        if (existing) {
+            trayIconRef = existing;
+            void rebuildTrayMenu();
+            return;
+        }
+
         const menu = await createTrayMenu();
 
         // 图标：通过 resolveResource 解析打包资源（bundle.resources 已配置 icons/icon_256x256.ico）
@@ -91,6 +104,7 @@ export default defineNuxtPlugin(async (nuxtApp) => {
         const trayIcon = await Image.fromPath(iconPath);
 
         const options = {
+            id: TRAY_ID,
             menu,
             menuOnLeftClick: true,
             title: 's1d3 board',
