@@ -4,7 +4,7 @@
 #[cfg(target_os = "macos")]
 use super::{state, Sample};
 use block2::RcBlock;
-use objc2::top_level_traits::AnyThread;
+use objc2::AnyThread;
 use objc2_app_kit::{
 NSBitmapImageFileType, NSBitmapImageRep, NSWorkspace,
 NSWorkspaceDidActivateApplicationNotification,
