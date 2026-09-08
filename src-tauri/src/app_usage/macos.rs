@@ -4,6 +4,7 @@
 #[cfg(target_os = "macos")]
 use super::{state, Sample};
 use block2::RcBlock;
+use objc2::top_level_traits::AnyThread;
 use objc2_app_kit::{
 NSBitmapImageFileType, NSBitmapImageRep, NSWorkspace,
 NSWorkspaceDidActivateApplicationNotification,
@@ -18,7 +19,7 @@ unsafe {
     let center = workspace.notificationCenter();
     // NSWorkspace 为线程安全接口，回调里直接重取前台应用（thread-safe）
     let block = RcBlock::new(|_notification: NonNull<NSNotification>| {
-        if let Some(sample) = foreground_sample() {
+        if let Some(sample) = sample_frontmost() {
             state().on_switch(sample);
         }
     });
