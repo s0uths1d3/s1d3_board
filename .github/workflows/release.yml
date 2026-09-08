@@ -71,25 +71,7 @@ jobs:
       - name: Build frontend
         run: npm run generate
 
-      - name: Build Tauri application
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run tauri build 2>&1 | tee build-output.log
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-      # 构建失败时上传完整构建日志（公开仓库 artifact 可匿名下载），便于离线排查
-      - name: Upload build log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log-${{ matrix.platform }}
-          path: build-output.log
-          if-no-files-found: ignore
-          retention-days: 7
-
+      # 提前确定 tag：失败时把构建日志挂到 Release 供匿名下载排查
       - name: Determine release tag
         id: tag
         shell: bash
@@ -102,6 +84,34 @@ jobs:
           else
             echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Build Tauri application
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run tauri build 2>&1 | tee build-output.log
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # 构建失败时：完整日志挂到 Release assets（匿名可下载）+ rustc 错误摘要写入 commit status（匿名可读）
+      - name: Attach build log to Release on failure
+        if: failure()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          files: build-output.log
+
+      - name: Publish error snippet to commit status
+        if: failure()
+        shell: bash
+        run: |
+          SNIPPET=$(grep -E '^error(\[[^]]*\])?:' -A 4 build-output.log | head -c 400 | tr '\n' ' ' | tr '"' "'" | cut -c1-125)
+          curl -s -X POST \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -d "{\"state\":\"failure\",\"context\":\"rust-errors/${{ matrix.platform }}\",\"description\":\"${SNIPPET}\"}"
 
       - name: Upload artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
