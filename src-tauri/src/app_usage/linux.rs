@@ -27,7 +27,7 @@ let net_active_atom = conn.intern_atom(false, b"_NET_ACTIVE_WINDOW")?.reply()?.a
 let net_wm_pid_atom = conn.intern_atom(false, b"_NET_WM_PID")?.reply()?.atom;
 conn.change_window_attributes(
     root,
-    &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE_MASK),
+    &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE),
 )?
 .check()?;
 conn.flush()?;
@@ -117,13 +117,16 @@ let Ok((conn, screen_num)) = x11rb::connect(None) else {
 let Some(root) = conn.setup().roots.get(screen_num).map(|r| r.root) else {
     return 0;
 };
-match x11rb::protocol::screensaver::query_info(&conn, root) {
+// 先落局部变量再返回：块尾表达式的临时 Cookie 会借用 conn 到块尾，
+// 与 conn 的 drop 顺序冲突（E0597）
+let secs = match x11rb::protocol::screensaver::query_info(&conn, root) {
     Ok(cookie) => match cookie.reply() {
         Ok(reply) => (reply.ms_since_user_input as u64) / 1000,
         Err(_) => 0,
     },
     Err(_) => 0,
-}
+};
+secs
 }
 
 mod linux_icon {
