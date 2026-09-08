@@ -33,7 +33,7 @@ unsafe {
 }
 }
 /// 前台应用采样：localizedName + icon（NSImage → TIFF → NSBitmapImageRep → PNG data URL）
-fn foreground_sample() -> Option<Sample> {
+fn sample_frontmost() -> Option<Sample> {
 unsafe {
     let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
     let name = app.localizedName().map(|n| n.to_string())?;
@@ -53,7 +53,7 @@ unsafe {
 }
 }
 pub fn foreground_sample(_app: &tauri::AppHandle) -> Option<Sample> {
-foreground_sample()
+sample_frontmost()
 }
 pub fn idle_secs() -> u64 {
 // CoreGraphics 手动绑定：kCGEventSourceStateHIDSystemState = 1，kCGAnyInputEventType = u64::MAX
