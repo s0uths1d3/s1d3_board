@@ -153,6 +153,20 @@ watch(autoStartEnabled, async (val) => {
   // 初始化读取系统状态时跳过，避免每次进入设置页都误触发 enable/disable 和提示
   if (initializingAutoStart) return;
   if (!isTauri()) return;
+  // 开发模式：autostart 注册的是 target/debug 二进制，开机时 Nuxt dev server
+  // 尚未运行，WebView 加载 devUrl（localhost:12321）直接 ERR_CONNECTION_REFUSED。
+  // 因此 dev 下不支持开启；若此前误注册过，顺带清理注册项。
+  if (import.meta.env.DEV) {
+    if (val) {
+      autoStartEnabled.value = false;
+      showHint(t('setting.general.startup_dev_unsupported'));
+    } else {
+      try {
+        await disable();
+      } catch { /* 本就未注册时忽略 */ }
+    }
+    return;
+  }
   try {
     if (val) {
       await enable();
@@ -708,6 +722,12 @@ onMounted(async () => {
     initializingAutoStart = true;
     try {
       autoStartEnabled.value = await isEnabled();
+      // dev 下清理误注册的自启项（指向 debug 二进制，开机无 dev server 必然白屏）
+      if (import.meta.env.DEV && autoStartEnabled.value) {
+        await disable();
+        autoStartEnabled.value = false;
+        console.warn('[autostart] 开发模式下检测到开机自启注册，已清理');
+      }
     } catch (e) {
       console.error('读取开机自启状态失败:', e);
     }
