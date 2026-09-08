@@ -85,6 +85,8 @@ class StatsService {
   private appFlushing = false;
   /** 应用使用拉取定时器（30s invoke Rust 侧增量） */
   private appUsageTimer: ReturnType<typeof setInterval> | null = null;
+  /** 应用使用拉取进行中标记（定时器与页面切入时的手动拉取可能并发，去重） */
+  private appUsagePullInFlight: Promise<void> | null = null;
 
   /** 使用时长跟踪状态（§4.5）：30s 结算一次，仅主窗口启动 */
   private usageInterval: ReturnType<typeof setInterval> | null = null;
@@ -264,15 +266,30 @@ class StatsService {
   }
 
 /** 应用使用时长跟踪：30s 拉取 Rust 侧前台监听增量（设置页开关开启后由 app.vue 启动） */
+/** 立即拉取一次 Rust 侧内存增量并落库。
+ *  供应用时长页切入 Tab 时调用，消除 30s 定时拉取周期带来的数据滞后；
+ *  与定时器并发安全：Rust 侧 pull 为原子 drain，in-flight 去重避免重复 invoke。 */
+public pullAppUsageNow(): Promise<void> {
+    return this.pullAppUsageOnce();
+}
+
+private pullAppUsageOnce(): Promise<void> {
+    if (!isTauri()) return Promise.resolve();
+    if (this.appUsagePullInFlight) return this.appUsagePullInFlight;
+    this.appUsagePullInFlight = invoke<PullResult>('pull_app_usage')
+      .then((res) => {
+        this.recordAppUsage(res.entries);
+        if (res.icons?.length) void this.recordAppIcons(res.icons);
+      })
+      .catch(() => { /* 命令缺失/非 Tauri 环境静默忽略 */ })
+      .finally(() => { this.appUsagePullInFlight = null; });
+    return this.appUsagePullInFlight;
+}
+
 public startAppUsageTracking(): void {
     if (this.appUsageTimer != null || !isTauri()) return;
     const pull = () => {
-      void invoke<PullResult>('pull_app_usage')
-        .then((res) => {
-          this.recordAppUsage(res.entries);
-          if (res.icons?.length) void this.recordAppIcons(res.icons);
-        })
-        .catch(() => { /* 命令缺失/非 Tauri 环境静默忽略 */ });
+      void this.pullAppUsageOnce();
     };
     void pull();
     this.appUsageTimer = setInterval(pull, 30_000);
@@ -283,11 +300,7 @@ public stopAppUsageTracking(): void {
     if (this.appUsageTimer == null) return;
     clearInterval(this.appUsageTimer);
     this.appUsageTimer = null;
-    void invoke<PullResult>('pull_app_usage')
-      .then((res) => {
-        this.recordAppUsage(res.entries);
-        if (res.icons?.length) void this.recordAppIcons(res.icons);
-      })
+    void this.pullAppUsageOnce()
       .finally(() => void this.flushAppUsage());
 }
 

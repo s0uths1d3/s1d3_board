@@ -178,7 +178,13 @@ async function onToggle(enabled: boolean): Promise<void> {
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
-  void load();
+  // 切入本 Tab 时先立即拉取 Rust 侧内存增量并落库，再读表展示，
+  // 消除 30s 定时拉取周期带来的数据滞后，保证切入瞬间所见即最新
+  if (appUsageEnabled.value) {
+    void statsService.pullAppUsageNow().finally(() => void load());
+  } else {
+    void load();
+  }
   // 与 30s 拉取节奏对齐的自动刷新（仅开启时才有新数据）
   refreshTimer = setInterval(() => {
     if (appUsageEnabled.value) void load();
