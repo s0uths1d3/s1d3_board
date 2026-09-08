@@ -47,6 +47,8 @@ windows-sys = { version = "0.59", features = [
 
 # 应用使用时长：macOS 前台应用名/图标与切换通知（AppKit）
 [target.'cfg(target_os = "macos")'.dependencies]
+# objc2 直接依赖：macos.rs 需要 AnyThread trait（NSBitmapImageRep::alloc）
+objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication", "NSImage", "NSBitmapImageRep"] }
 objc2-foundation = { version = "0.3", features = ["NSNotification", "NSOperation", "NSString", "NSData", "NSDictionary", "block2"] }
 block2 = "0.6"
