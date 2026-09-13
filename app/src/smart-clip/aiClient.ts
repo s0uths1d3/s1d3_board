@@ -12,24 +12,27 @@ export interface AiClientConfig {
     baseUrl: string;
     apiKey: string;
     model: string;
+    defaultPrompt: string;
 }
 
-/** 默认 AI 加工指令：无模板时对剪贴板原文的兜底处理 */
+/** 默认 AI 加工指令：无模板 / {ai:} 占位符留空时的兜底指令（输出契约由 template.ts 统一附加） */
 export const DEFAULT_AI_PROMPT =
-    '将内容整理为结构化片段，逐行输出，不要额外解释。';
+    '将内容整理为结构化片段，逐行输出，每行一个片段，不要额外解释。';
 
 export async function loadAiConfig(): Promise<AiClientConfig> {
-    const [provider, baseUrl, apiKey, model] = await Promise.all([
+    const [provider, baseUrl, apiKey, model, defaultPrompt] = await Promise.all([
         dbService.getKeyValue('ai_provider'),
         dbService.getKeyValue('ai_base_url'),
         dbService.getKeyValue('api_key'),
         dbService.getKeyValue('ai_model'),
+        dbService.getKeyValue('ai_default_prompt'),
     ]);
     return {
         provider: provider || 'openai-compat',
         baseUrl: baseUrl || '',
         apiKey: apiKey || '',
         model: model || 'gpt-4o-mini',
+        defaultPrompt: defaultPrompt || '',
     };
 }
 
