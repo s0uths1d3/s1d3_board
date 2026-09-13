@@ -1,6 +1,8 @@
+mod ai;
 mod app_usage;
 mod commands;
 mod migrations;
+mod open_api;
 
 use tauri::Manager;
 
@@ -45,6 +47,10 @@ pub fn run() {
             commands::quit_app,
             app_usage::set_app_usage_enabled,
             app_usage::pull_app_usage,
+            ai::ai_test_connection,
+            ai::ai_complete,
+            open_api::open_api_apply,
+            open_api::open_api_broadcast_copy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

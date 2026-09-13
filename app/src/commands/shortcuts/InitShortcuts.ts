@@ -16,11 +16,13 @@ import {ContextEditCommand} from "~/src/commands/local/ContextEditCommand"
 import {CreateNoteCommand} from "~/src/commands/local/CreateNoteCommand"
 import {FocusSearchCommand} from "~/src/commands/local/FocusSearchCommand"
 import {CycleColorSchemeCommand} from "~/src/commands/local/CycleColorSchemeCommand"
+import {BubbleToggleCommand} from "~/src/commands/local/BubbleToggleCommand"
 import dbService from "~/src/db/dbService";
 import { normalizeShortcutKey } from "~/utils/shortcutFormat";
 
 const toggleWindowCommand = new ToggleWindowCommand();
 const hideWindowCommand = new HideWindowCommand();
+const bubbleToggleCommand = new BubbleToggleCommand();
 const arrowUpCursorMoveCommand = new CursorMoveCommand(-1)
 const arrowDownCursorMoveCommand = new CursorMoveCommand(1)
 const pasteCommand = new PasteCommand()
@@ -47,6 +49,16 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         scope: 'global',
         command: toggleWindowCommand,
         title: 'shortcut.toggle_window',
+        enabled: true
+    },
+    {
+        // 气泡窗口为全局快捷粘贴入口：应用隐藏/任意前台应用下按 Ctrl+B 均可唤出（scope: global）
+        id: 'bubble_toggle',
+        key: 'CommandOrControl+B',
+        defaultKey: 'CommandOrControl+B',
+        scope: 'global',
+        command: bubbleToggleCommand,
+        title: 'shortcut.bubble_toggle',
         enabled: true
     },
     {

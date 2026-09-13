@@ -20,7 +20,11 @@ tauri-build = { version = "2.2.0", features = [] }
 [dependencies]
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tauri = { version = "2.11.5", features = ["tray-icon", "image-png", "image-ico"] }
+# 智能剪贴板 AI 通道（设计文档 §4.2）：Rust 侧代理调用 AI API（OpenAI 兼容 / Anthropic 原生），
+# 前端不直接 fetch：CSP 无需放宽任意域名、API Key 不暴露给 WebView；rustls 跨平台无系统依赖
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tauri-plugin-log = "2"
 tauri-plugin-clipboard = "2.1.11"
 tauri-plugin-autostart = "2"

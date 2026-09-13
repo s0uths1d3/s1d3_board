@@ -63,6 +63,7 @@ It isn't a window you keep open all day. It stays in the tray until a global sho
 | 🗒️ **Notes** | Nowhere to put stray thoughts | Multi-color masonry notes, `Ctrl+N` to create, `Ctrl+Enter` to save |
 | 📊 **Statistics** | Not knowing where time goes | Multi-dimensional usage data, range switching, fun facts & persona tags |
 | ⏱️ **App usage** | Which apps eat your day | Per-app foreground time, active/idle split, donut chart (off by default) |
+| 🧠 **Smart clipboard** | Copied content deserves processing | Rule-based tokenizing, AI processing (OpenAI-compatible / Anthropic), templates, bubble windows, open API |
 | ⚙️ **Settings** | Tools should adapt to you | Shortcut recording & conflict detection, theme, language, popup position, navigation |
 
 Across every module: a **global shortcut system** (fully customizable), a **bilingual UI** (can follow the system), **multi-window collaboration** (hover tooltip / image viewer / delete confirm) and **streaming lists** that stay smooth at any data size.
@@ -103,6 +104,17 @@ Key capabilities by module:
 - **Totals & ranking**: total / active / idle cards, a time-descending ranking (with app icons) and a donut chart
 - **Range switching**: shares the `RangeBar` with Statistics (day / week / month / year / custom)
 - **Privacy first**: off by default — nothing is counted until you turn it on (Windows / macOS / Linux)
+
+### 🧠 Smart clipboard
+
+Copied text can be **parsed into segments** through a configurable pipeline, then consumed by bubble windows or external tools:
+
+- **Processing modes**: off / rule-based / AI — a single switch in settings
+- **Tokenizing rules**: separator or regex patterns (capture groups become segments), priority-ordered; parsing never drops content (falls back to the raw text)
+- **AI processing**: OpenAI-compatible and Anthropic native providers, proxied through the Rust side (CSP untouched, API key never exposed to the webview); a connection test button lives in the API settings group
+- **Templates**: `{content}` / `{segN}` / `{date}` / `{time}` placeholders plus `{ai:instruction}` for on-the-fly AI processing
+- **Bubble window**: global hotkey (default `Ctrl+B`) summons a segment list — `↑↓` select, `Enter` paste, `Esc` close; any segment can be **pinned** into its own always-on-top mini bubble
+- **Open API**: a localhost-only HTTP/SSE endpoint (port configurable, optional token) pushes `copy` events to external popups or a custom "dynamic island" window
 
 ### ⌨️ Global shortcuts
 - Every shortcut is **recordable, toggleable and resettable**, individually or per group

@@ -64,3 +64,25 @@ export interface Note {
     created_at?: string;
     updated_at: string;
 }
+
+/** 智能剪贴板：clip 分词/复制规则（separator 分隔符拆分 / regex 正则提取） */
+export interface ClipRule {
+    id: string;
+    name: string;
+    type: 'separator' | 'regex';
+    pattern: string;
+    priority: number;
+    enabled: 0 | 1;
+    created_at?: string;
+    updated_at?: string;
+}
+
+/** 智能剪贴板：片段重组/加工模板（body 支持占位符，见 smart-clip/template.ts） */
+export interface ClipTemplate {
+    id: string;
+    name: string;
+    body: string;
+    enabled: 0 | 1;
+    created_at?: string;
+    updated_at?: string;
+}

@@ -1,7 +1,7 @@
 <template>
   <div class="flex h-screen flex-col overflow-hidden rounded-2xl">
-    <!-- 图片查看器/tooltip 等子窗口不渲染主窗口的自定义 TitleBar -->
-    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/tooltip'" />
+    <!-- 图片查看器/tooltip/智能剪贴板气泡等子窗口不渲染主窗口的自定义 TitleBar -->
+    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/tooltip' && route.path !== '/bubble'" />
     <main id="app-main" class="flex-1 overflow-y-auto">
       <NuxtPage />
     </main>
@@ -19,6 +19,8 @@ import statsService from "~/src/statistics/statsService";
 import reminderService from "~/src/todo/reminderService";
 import { restoreAppUsageSetting } from "~/composables/useAppUsage";
 import { savePopupLastPosition } from "~/composables/usePopupPosition";
+import { initSmartClipListener } from "~/src/smart-clip/smartClip";
+import { restoreOpenApiSetting } from "~/src/smart-clip/openApi";
 
 /** 剪贴板监听与全局快捷键只需在主窗口注册一次；
  * 子窗口（如图片查看器）跳过，避免重复监听，以及关闭子窗口时误注销主窗口的全局快捷键。 */
@@ -133,6 +135,8 @@ onMounted(async () => {
 
   // 剪贴板监听依赖 Tauri 插件，纯 Web 环境跳过（否则 onTextUpdate 每次启动报错）
   if (isTauri()) {
+    // 智能剪贴板处理层：先挂复制事件监听，再启动剪贴板监听器（不遗漏最早的复制事件）
+    initSmartClipListener();
     try {
       await clipboardService.startClipboardListener();
       console.log('✅ 数据库初始化完成，剪贴板监听已启动');
@@ -161,6 +165,8 @@ onMounted(async () => {
   // ===== 待办智能提醒 =====
   // 调度服务挂主窗口：切 Tab（TodoList 卸载）不丢定时器；内部幂等，TodoList 侧会兜底再调
   void reminderService.start();
+  // ===== 智能剪贴板开放 API（复制成功事件推送；按持久化开关恢复）=====
+  void restoreOpenApiSetting();
   // 退出前强制落库 pending（防崩溃/强制退出丢失当日未落库数据，§14.1.1）
   window.addEventListener('beforeunload', flushStatsOnExit);
   if (isTauri()) {

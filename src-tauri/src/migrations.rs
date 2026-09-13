@@ -355,6 +355,36 @@ CREATE TABLE IF NOT EXISTS app_icons
     icon     TEXT NOT NULL
 );
                             "#
+                        },
+                        Migration {
+                            version: 17,
+                            description: "Create smart-clip rule and template tables",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 智能剪贴板：clip 分词/复制规则（separator 分隔符拆分 / regex 正则提取）
+CREATE TABLE IF NOT EXISTS clip_rules
+(
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    type       TEXT NOT NULL CHECK (type IN ('separator', 'regex')),
+    pattern    TEXT NOT NULL,
+    priority   INTEGER NOT NULL DEFAULT 0,
+    enabled    INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 智能剪贴板：片段重组/加工模板（body 支持占位符，见 smart-clip/template.ts）
+CREATE TABLE IF NOT EXISTS clip_templates
+(
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+                            "#
                         }
     ]
 }

@@ -13,6 +13,11 @@ import {
 import { formatShortcutForDisplay, parseKeyEvent } from "~/utils/shortcutFormat";
 import { getOsTypeFromNavigator } from "~/utils/systemOS";
 import dbService from '~/src/db/dbService';
+import { invoke } from '@tauri-apps/api/core';
+import type { ClipRule, ClipTemplate } from '~/src/entities';
+import type { SmartClipMode } from '~/src/smart-clip/types';
+import { updateSmartClipConfig } from '~/src/smart-clip/smartClip';
+import { OPEN_API_DEFAULT_PORT, applyOpenApi } from '~/src/smart-clip/openApi';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
@@ -144,6 +149,174 @@ watch(apiKey, async (val) => {
 });
 watch(maxLimit, async (val) => {
   debouncePersist('max_save_count', () => dbService.setKeyValue('max_save_count', val ?? ''));
+});
+
+// ===== AI 通道配置（设计文档 §4.2）：提供商 / 地址 / 模型 + 连接测试 =====
+type AiProviderKind = 'openai-compat' | 'anthropic';
+const aiProvider = ref<AiProviderKind>('openai-compat');
+const aiBaseUrl = ref('');
+const aiModel = ref('');
+const aiTestState = ref<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+const aiTestLatency = ref(0);
+const aiTestError = ref('');
+const AI_PROVIDER_OPTIONS = computed(() => [
+  { value: 'openai-compat' as const, label: t('setting.general.ai_provider_openai') },
+  { value: 'anthropic' as const, label: t('setting.general.ai_provider_anthropic') },
+]);
+function selectAiProvider(v: string) {
+  aiProvider.value = v as AiProviderKind;
+}
+watch(aiProvider, (val) => {
+  debouncePersist('ai_provider', () => dbService.setKeyValue('ai_provider', val));
+});
+watch(aiBaseUrl, (val) => {
+  debouncePersist('ai_base_url', () => dbService.setKeyValue('ai_base_url', val ?? ''));
+});
+watch(aiModel, (val) => {
+  debouncePersist('ai_model', () => dbService.setKeyValue('ai_model', val ?? ''));
+});
+/** 连接测试：invoke Rust ai_test_connection（请求细节在 Rust 侧，Key 不进 fetch） */
+async function testAiConnection(): Promise<void> {
+  if (aiTestState.value === 'testing') return;
+  const key = await dbService.getKeyValue('api_key');
+  if (!key) {
+    showHint(t('setting.general.api_key_missing'));
+    return;
+  }
+  aiTestState.value = 'testing';
+  try {
+    const res = await invoke<{ ok: boolean; latency_ms: number; error?: string }>(
+      'ai_test_connection',
+      { provider: aiProvider.value, baseUrl: aiBaseUrl.value, apiKey: key, model: aiModel.value },
+    );
+    aiTestLatency.value = res.latency_ms;
+    aiTestState.value = res.ok ? 'ok' : 'fail';
+    aiTestError.value = res.error ?? '';
+    showHint(res.ok
+      ? t('setting.general.ai_test_ok', { ms: res.latency_ms })
+      : t('setting.general.ai_test_fail', { error: res.error ?? '' }));
+  } catch (e) {
+    aiTestState.value = 'fail';
+    aiTestError.value = String(e);
+    showHint(t('setting.general.ai_test_fail', { error: String(e) }));
+  }
+}
+
+// ===== 智能剪贴板（设计文档 §4.1/§4.3/§4.5）：模式 / 规则 / 模板 / 开放 API =====
+const smartMode = ref<SmartClipMode>('off');
+const rules = ref<ClipRule[]>([]);
+const templates = ref<ClipTemplate[]>([]);
+const defaultRuleId = ref('');
+const defaultTemplateId = ref('');
+const openApiEnabled = ref(false);
+const openApiPort = ref(String(OPEN_API_DEFAULT_PORT));
+const openApiToken = ref('');
+
+const SMART_MODE_OPTIONS = computed(() => [
+  { value: 'off' as const, label: t('smart.mode_off') },
+  { value: 'rule' as const, label: t('smart.mode_rule') },
+  { value: 'ai' as const, label: t('smart.mode_ai') },
+]);
+function selectSmartMode(v: string) {
+  smartMode.value = v as SmartClipMode;
+}
+const RULE_TYPE_OPTIONS = computed(() => [
+  { value: 'separator' as const, label: t('smart.type_separator') },
+  { value: 'regex' as const, label: t('smart.type_regex') },
+]);
+const defaultRuleLabel = computed(() => {
+  const r = rules.value.find((x) => x.id === defaultRuleId.value);
+  return r ? r.name : t('smart.none');
+});
+const defaultTemplateLabel = computed(() => {
+  const tpl = templates.value.find((x) => x.id === defaultTemplateId.value);
+  return tpl ? tpl.name : t('smart.none');
+});
+
+/** 把当前配置快照推送给处理层（smartClip 的 mode/rule/template 缓存） */
+function refreshSmartClipConfig(): void {
+  const rule = rules.value.find((r) => r.id === defaultRuleId.value && r.enabled === 1) ?? null;
+  const template = templates.value.find((x) => x.id === defaultTemplateId.value && x.enabled === 1) ?? null;
+  updateSmartClipConfig({ mode: smartMode.value, rule, template });
+}
+
+function addRule(): void {
+  const rule: ClipRule = {
+    id: crypto.randomUUID(),
+    name: t('smart.new_rule'),
+    type: 'separator',
+    pattern: '\n',
+    priority: 0,
+    enabled: 1,
+  };
+  rules.value.unshift(rule);
+  defaultRuleId.value = rule.id;
+  void dbService.saveClipRule(rule);
+  refreshSmartClipConfig();
+}
+
+function saveRule(rule: ClipRule): void {
+  if (!rule.name.trim() || !rule.pattern.trim()) return;
+  void dbService.saveClipRule(rule);
+  refreshSmartClipConfig();
+}
+
+async function removeRule(rule: ClipRule): Promise<void> {
+  rules.value = rules.value.filter((r) => r.id !== rule.id);
+  if (defaultRuleId.value === rule.id) defaultRuleId.value = '';
+  await dbService.deleteClipRule(rule.id);
+  refreshSmartClipConfig();
+}
+
+function addTemplate(): void {
+  const tpl: ClipTemplate = {
+    id: crypto.randomUUID(),
+    name: t('smart.new_template'),
+    body: '{content}',
+    enabled: 1,
+  };
+  templates.value.unshift(tpl);
+  defaultTemplateId.value = tpl.id;
+  void dbService.saveClipTemplate(tpl);
+  refreshSmartClipConfig();
+}
+
+function saveTemplate(tpl: ClipTemplate): void {
+  if (!tpl.name.trim() || !tpl.body.trim()) return;
+  void dbService.saveClipTemplate(tpl);
+  refreshSmartClipConfig();
+}
+
+async function removeTemplate(tpl: ClipTemplate): Promise<void> {
+  templates.value = templates.value.filter((x) => x.id !== tpl.id);
+  if (defaultTemplateId.value === tpl.id) defaultTemplateId.value = '';
+  await dbService.deleteClipTemplate(tpl.id);
+  refreshSmartClipConfig();
+}
+
+// 开放 API：开关/端口/令牌任一变化即应用（非法端口不应用，避免打字过程误触发）
+watch([openApiEnabled, openApiPort, openApiToken], async ([en, p, tk]) => {
+  const portNum = Number(p);
+  if (!en) {
+    await applyOpenApi(false, portNum || OPEN_API_DEFAULT_PORT, tk);
+    return;
+  }
+  if (!portNum || portNum < 1 || portNum > 65535) return;
+  await applyOpenApi(true, portNum, tk);
+});
+
+// 处理模式/默认规则/默认模板变化：持久化 + 推送配置快照给处理层
+watch(smartMode, (val) => {
+  void dbService.setKeyValue('smart_clip_mode', val);
+  refreshSmartClipConfig();
+});
+watch(defaultRuleId, (val) => {
+  void dbService.setKeyValue('smart_default_rule_id', val);
+  refreshSmartClipConfig();
+});
+watch(defaultTemplateId, (val) => {
+  void dbService.setKeyValue('smart_default_template_id', val);
+  refreshSmartClipConfig();
 });
 
 // 提示窗口 / 搜索高亮的切换提示已在模板 @change 中内联处理
@@ -295,11 +468,36 @@ const settings: SettingGroup[] = [
     type: 'ai_setting',
     items: [
       {
+        label: 'setting.general.ai_provider',
+        value: '',
+        type: 'select'
+      },
+      {
+        label: 'setting.general.ai_base_url',
+        value: '',
+        type: 'input'
+      },
+      {
+        label: 'setting.general.ai_model',
+        value: '',
+        type: 'input'
+      },
+      {
+        label: 'setting.general.ai_test',
+        value: '',
+        type: 'action'
+      },
+      {
         label: 'setting.general.api_key',
         value: '',
         type: 'input'
       }
     ]
+  },
+  {
+    title: 'setting.categories.smart',
+    type: 'smart',
+    items: []
   },
   {
     title: 'setting.categories.general',
@@ -694,6 +892,24 @@ onMounted(async () => {
   osType.value = getOsTypeFromNavigator();
   maxLimit.value = await dbService.getKeyValue('max_save_count');
   apiKey.value = await dbService.getKeyValue('api_key');
+  // AI 通道配置恢复（设计文档 §4.2）：提供商缺省 openai-compat
+  aiProvider.value = ((await dbService.getKeyValue('ai_provider')) || 'openai-compat') as AiProviderKind;
+  aiBaseUrl.value = await dbService.getKeyValue('ai_base_url');
+  aiModel.value = await dbService.getKeyValue('ai_model');
+  // 智能剪贴板配置恢复（设计文档 §4.1/§4.3/§4.5）+ 推送处理层快照
+  try {
+    smartMode.value = ((await dbService.getKeyValue('smart_clip_mode')) || 'off') as SmartClipMode;
+    defaultRuleId.value = await dbService.getKeyValue('smart_default_rule_id');
+    defaultTemplateId.value = await dbService.getKeyValue('smart_default_template_id');
+    rules.value = await dbService.fetchClipRules();
+    templates.value = await dbService.fetchClipTemplates();
+    openApiEnabled.value = (await dbService.getKeyValue('open_api_enabled')) === '1';
+    openApiPort.value = (await dbService.getKeyValue('open_api_port')) || String(OPEN_API_DEFAULT_PORT);
+    openApiToken.value = await dbService.getKeyValue('open_api_token');
+    refreshSmartClipConfig();
+  } catch (e) {
+    console.error('智能剪贴板配置恢复失败:', e);
+  }
   // 「关于」页版本号：与 tauri.conf.json 的 version 同源；纯 Web 环境保持回退常量
   if (isTauri()) {
     try {
@@ -917,6 +1133,103 @@ onMounted(async () => {
             </p>
           </div>
 
+          <!-- 智能剪贴板：处理模式 / 默认规则与模板 / 规则与模板管理 / 开放 API（设计文档 §4/§5） -->
+          <div v-else-if="activeSetting.type === 'smart'">
+            <div class="glass-card rounded-2xl p-4 shadow-soft">
+              <div class="mb-3 text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.mode') }}</div>
+              <UiSegmented
+                  :model-value="smartMode"
+                  :options="SMART_MODE_OPTIONS"
+                  block
+                  :label="t('smart.mode')"
+                  @update:model-value="selectSmartMode"
+              />
+            </div>
+
+            <!-- 默认规则与模板（下拉，选项来自下方列表） -->
+            <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
+              <div class="mb-2 text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.defaults_section') }}</div>
+              <div class="mb-3">
+                <div class="mb-1 text-xs text-ink-faint">{{ t('smart.default_rule') }}</div>
+                <select v-model="defaultRuleId" class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink">
+                  <option value="">{{ t('smart.none') }}</option>
+                  <option v-for="r in rules" :key="r.id" :value="r.id">{{ r.name }}</option>
+                </select>
+              </div>
+              <div>
+                <div class="mb-1 text-xs text-ink-faint">{{ t('smart.default_template') }}</div>
+                <select v-model="defaultTemplateId" class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink">
+                  <option value="">{{ t('smart.none') }}</option>
+                  <option v-for="tpl in templates" :key="tpl.id" :value="tpl.id">{{ tpl.name }}</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 规则管理 -->
+            <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
+              <div class="mb-3 flex items-center justify-between">
+                <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.rules_section') }}</span>
+                <button type="button" class="btn-soft px-2 py-0.5 text-xs" @click="addRule">{{ t('smart.add_rule') }}</button>
+              </div>
+              <p v-if="rules.length === 0" class="text-xs text-ink-faint">{{ t('smart.no_rules') }}</p>
+              <div v-for="rule in rules" :key="rule.id" class="mb-2 rounded-xl border border-line bg-surface-field/40 p-2">
+                <div class="mb-1.5 flex items-center gap-2">
+                  <input v-model="rule.name" class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                         :placeholder="t('smart.rule_name_ph')" @change="saveRule(rule)" />
+                  <UiToggleSwitch :model-value="rule.enabled === 1" :label="''"
+                                  @update:model-value="(v: boolean) => { rule.enabled = v ? 1 : 0; saveRule(rule); }" />
+                  <button type="button" class="text-ink-faint transition-colors hover:text-danger"
+                          @click="removeRule(rule)">✕</button>
+                </div>
+                <div class="flex items-center gap-2">
+                  <UiSegmented :model-value="rule.type" :options="RULE_TYPE_OPTIONS"
+                               :label="t('smart.type')" @update:model-value="(v: string) => { rule.type = v as ClipRule['type']; saveRule(rule); }" />
+                  <input v-model="rule.pattern" class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                         :placeholder="t('smart.rule_pattern_ph')" @change="saveRule(rule)" />
+                </div>
+              </div>
+            </div>
+
+            <!-- 模板管理 -->
+            <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
+              <div class="mb-3 flex items-center justify-between">
+                <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.templates_section') }}</span>
+                <button type="button" class="btn-soft px-2 py-0.5 text-xs" @click="addTemplate">{{ t('smart.add_template') }}</button>
+              </div>
+              <p v-if="templates.length === 0" class="text-xs text-ink-faint">{{ t('smart.no_templates') }}</p>
+              <div v-for="tpl in templates" :key="tpl.id" class="mb-2 rounded-xl border border-line bg-surface-field/40 p-2">
+                <div class="mb-1.5 flex items-center gap-2">
+                  <input v-model="tpl.name" class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                         :placeholder="t('smart.template_name_ph')" @change="saveTemplate(tpl)" />
+                  <UiToggleSwitch :model-value="tpl.enabled === 1" :label="''"
+                                  @update:model-value="(v: boolean) => { tpl.enabled = v ? 1 : 0; saveTemplate(tpl); }" />
+                  <button type="button" class="text-ink-faint transition-colors hover:text-danger"
+                          @click="removeTemplate(tpl)">✕</button>
+                </div>
+                <textarea v-model="tpl.body" rows="3"
+                          class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                          :placeholder="t('smart.template_body_ph')" @change="saveTemplate(tpl)"></textarea>
+              </div>
+            </div>
+
+            <!-- 开放 API -->
+            <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
+              <div class="mb-3 flex items-center justify-between">
+                <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('openapi.section') }}</span>
+                <UiToggleSwitch v-model="openApiEnabled" :label="''" />
+              </div>
+              <div class="flex items-center gap-2">
+                <input v-model="openApiPort" class="w-28 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                       :placeholder="t('openapi.port')" @change="openApiPort = String(Number(openApiPort) || OPEN_API_DEFAULT_PORT)" />
+                <input v-model="openApiToken" class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                       :placeholder="t('openapi.token')" />
+              </div>
+              <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
+                {{ t('openapi.hint', { port: openApiPort }) }}
+              </p>
+            </div>
+          </div>
+
           <!-- 其他设置组（排除导航栏设置，导航栏有独立分支） -->
           <div v-else-if="activeSetting.type !== 'nav'">
             <ul class="glass-card rounded-2xl shadow-soft">
@@ -927,7 +1240,7 @@ onMounted(async () => {
                   class="flex items-center justify-between gap-4 p-4">
                 <div>
                   <div class="text-ink">{{ t(item.label) }}</div>
-                  <div v-if="item.type === 'action' && (clearMsg || undoActive)"
+                  <div v-if="item.type === 'action' && item.label === 'setting.general.clear_database' && (clearMsg || undoActive)"
                        class="mt-1 flex flex-wrap items-center gap-2 text-xs">
                     <span class="text-ink-faint">
                       {{ undoActive ? t('setting.general.clear_undo_hint', { n: undoRemaining }) : clearMsg }}
@@ -942,10 +1255,18 @@ onMounted(async () => {
                       {{ t('setting.general.clear_undo_btn') }}
                     </button>
                   </div>
+                  <div v-if="item.type === 'action' && item.label === 'setting.general.ai_test' && aiTestState !== 'idle'"
+                       class="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                    <span :class="aiTestState === 'ok' ? 'text-gold' : 'text-danger'">
+                      {{ aiTestState === 'testing' ? t('setting.general.ai_testing')
+                        : aiTestState === 'ok' ? t('setting.general.ai_test_ok', { ms: aiTestLatency })
+                        : t('setting.general.ai_test_fail', { error: aiTestError }) }}
+                    </span>
+                  </div>
                 </div>
                 <div class="w-56 shrink-0">
                   <!-- 操作型设置项（如清空数据库）：二次确认 -->
-                  <template v-if="item.type === 'action'">
+                  <template v-if="item.type === 'action' && item.label === 'setting.general.clear_database'">
                     <button v-if="!showClearConfirm" type="button"
                             class="btn-soft w-full text-danger"
                             @click="showClearConfirm = true">
@@ -962,11 +1283,39 @@ onMounted(async () => {
                       </button>
                     </div>
                   </template>
+                  <!-- AI 连接测试：invoke Rust ai_test_connection（设计文档 §4.2） -->
+                  <template v-else-if="item.type === 'action' && item.label === 'setting.general.ai_test'">
+                    <button type="button" class="btn-soft w-full"
+                            :disabled="aiTestState === 'testing'" @click="testAiConnection">
+                      {{ aiTestState === 'testing' ? t('setting.general.ai_testing') : t('setting.general.ai_test') }}
+                    </button>
+                  </template>
                   <SettingInput
                       v-else-if="item.type === 'input' && item.label === 'setting.general.api_key'"
                       v-model="apiKey"
                       :placeholder="t('setting.general.api_key_placeholder')"
                       @save="showHint(t('setting.general.api_key_saved'))"
+                  />
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.ai_base_url'"
+                      v-model="aiBaseUrl"
+                      :placeholder="t('setting.general.ai_base_url')"
+                      @save="showHint(t('setting.general.ai_base_url_saved'))"
+                  />
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.ai_model'"
+                      v-model="aiModel"
+                      :placeholder="t('setting.general.ai_model')"
+                      @save="showHint(t('setting.general.ai_model_saved'))"
+                  />
+                  <!-- AI 提供商：OpenAI 兼容（默认）/ Anthropic 原生（设计文档 §4.2） -->
+                  <UiSegmented
+                      v-else-if="item.type === 'select' && item.label === 'setting.general.ai_provider'"
+                      :model-value="aiProvider"
+                      :options="AI_PROVIDER_OPTIONS"
+                      block
+                      :label="t('setting.general.ai_provider')"
+                      @update:model-value="selectAiProvider"
                   />
                   <SettingInput
                       v-else-if="item.type === 'input' && item.label === 'setting.general.clipboard_limit'"

@@ -5,7 +5,8 @@
   "windows": [
     "main",
     "image-viewer-*",
-    "tooltip-*"
+    "tooltip-*",
+    "clipboard-bubble-*"
   ],
   "permissions": [
     "core:path:default",

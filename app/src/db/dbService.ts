@@ -1,6 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from 'tauri-plugin-clipboard-api';
-import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip } from "../entities";
+import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip,ClipRule,ClipTemplate } from "../entities";
 import statsService from "~/src/statistics/statsService";
 
 /** 优先级数值收敛：整数 0-255（越界/非法回退 127 中档） */
@@ -258,6 +258,15 @@ class DatabaseService {
         }
         // 新记录插入后按「剪贴板最大存储数量」裁剪最旧记录
         await this.trimClipboard();
+
+        // 智能剪贴板：新文本入库 → 广播复制事件（处理层 smartClip 解析进内存 store；
+        // 设计文档 §4.1 触发点 / §4.5 开放 API 的事件源）。仅文本参与解析管道。
+        if (type === 'text') {
+            const insertedId = Number((result as { lastInsertId?: number | bigint }).lastInsertId);
+            window.dispatchEvent(new CustomEvent('smart-clip:copy', {
+                detail: { id: insertedId, content, ts: Date.now() },
+            }));
+        }
     }
 
 
@@ -552,6 +561,66 @@ class DatabaseService {
         await this.ensureDbInitialized();
         const result: any[] = await this.db!.select("SELECT value FROM settings WHERE key = $1", [key]);
         return result.length > 0 ? result[0].value : '';
+    }
+
+    // ===================== 智能剪贴板：分词规则与模板（smart-clip，设计文档 §4.1/§4.3） =====================
+
+    /** 全量规则：按优先级降序（数值越大越先执行），同级按更新时间倒序 */
+    public async fetchClipRules(): Promise<ClipRule[]> {
+        await this.ensureDbInitialized();
+        return await this.db!.select(
+            "SELECT * FROM clip_rules ORDER BY priority DESC, updated_at DESC",
+        ) as ClipRule[];
+    }
+
+    /** UPSERT 单条规则（id 冲突时整体覆盖，updated_at 刷新） */
+    public async saveClipRule(rule: ClipRule): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute(
+            `INSERT INTO clip_rules (id, name, type, pattern, priority, enabled, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name,
+               type = excluded.type,
+               pattern = excluded.pattern,
+               priority = excluded.priority,
+               enabled = excluded.enabled,
+               updated_at = CURRENT_TIMESTAMP`,
+            [rule.id, rule.name, rule.type, rule.pattern, rule.priority, rule.enabled],
+        );
+    }
+
+    public async deleteClipRule(id: string): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute('DELETE FROM clip_rules WHERE id = $1', [id]);
+    }
+
+    /** 全量模板：按更新时间倒序 */
+    public async fetchClipTemplates(): Promise<ClipTemplate[]> {
+        await this.ensureDbInitialized();
+        return await this.db!.select(
+            'SELECT * FROM clip_templates ORDER BY updated_at DESC',
+        ) as ClipTemplate[];
+    }
+
+    /** UPSERT 单条模板 */
+    public async saveClipTemplate(template: ClipTemplate): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute(
+            `INSERT INTO clip_templates (id, name, body, enabled, updated_at)
+             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name,
+               body = excluded.body,
+               enabled = excluded.enabled,
+               updated_at = CURRENT_TIMESTAMP`,
+            [template.id, template.name, template.body, template.enabled],
+        );
+    }
+
+    public async deleteClipTemplate(id: string): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute('DELETE FROM clip_templates WHERE id = $1', [id]);
     }
 
     public async insertNote(note: Note): Promise<void> {
