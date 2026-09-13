@@ -14,6 +14,8 @@ export function setActiveTab(key: TabKey) {
   // 同值守卫：反复点击当前 Tab 不应计入统计（注释语义与行为一致，避免 tab_x 虚高）
   if (activeTabRef.value === key) return
   activeTabRef.value = key
+  // 持久化上次激活 Tab：启动时恢复到用户离开时的模块（fire-and-forget，不阻塞切换）
+  void dbService.setKeyValue(LAST_TAB_KEY, key).catch(() => {})
   // 统计埋点（fire-and-forget，§5.6）：仅在真正切换时 +1
   void statsService.record({ [`tab_${key}`]: 1 } as Partial<Record<StatField, number>>)
 }
@@ -36,6 +38,8 @@ export const tabItems: TabItem[] = [
 
 // ===== 导航栏自定义配置（顺序 + 启用状态，持久化到 settings 表） =====
 const NAV_CONFIG_KEY = 'nav_tab_config'
+/** 上次激活 Tab 的持久化键：启动时恢复到用户离开时的模块，而非固定剪贴板 */
+const LAST_TAB_KEY = 'nav_last_tab'
 
 /** 用户自定义的 tab 顺序（key 数组；新版本新增 tab 兜底追加到末尾） */
 const tabOrder = ref<TabKey[]>([])
@@ -58,6 +62,18 @@ async function loadNavConfig(): Promise<void> {
         )
       }
     }
+    // 恢复上次激活的 Tab：重启后回到用户离开时的模块，而非固定剪贴板。
+    // 放在 disabled 解析之后，恢复目标若已被禁用则保持默认剪贴板。
+    try {
+      const last = await dbService.getKeyValue(LAST_TAB_KEY)
+      if (
+        typeof last === 'string' &&
+        validKeys.has(last as TabKey) &&
+        !disabledTabs.value.includes(last as TabKey)
+      ) {
+        activeTabRef.value = last as TabKey
+      }
+    } catch { /* 读取失败保持默认剪贴板 */ }
   } catch { /* 忽略读取失败，使用默认配置 */ }
 }
 
@@ -132,8 +148,11 @@ export function setTabEnabled(key: TabKey, enabled: boolean) {
   if (enabled) set.delete(key)
   else set.add(key)
   disabledTabs.value = [...set]
-  // 当前激活 tab 被禁用时切回剪贴板，避免停在已隐藏的页面
-  if (!enabled && activeTabRef.value === key) activeTabRef.value = 'clip'
+  // 当前激活 tab 被禁用时切回剪贴板，避免停在已隐藏的页面（同步持久化恢复点）
+  if (!enabled && activeTabRef.value === key) {
+    activeTabRef.value = 'clip'
+    void dbService.setKeyValue(LAST_TAB_KEY, 'clip').catch(() => {})
+  }
   void saveNavConfig()
 }
 
