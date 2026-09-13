@@ -1,14 +1,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ClipExtractor, ClipScheme } from '../entities';
 import type { Segment } from './types';
-import { aiComplete, loadAiConfig, DEFAULT_AI_PROMPT } from './aiClient';
+import { aiComplete, loadAiConfig } from './aiClient';
 import { parseByRule } from './ruleEngine';
 
 /**
  * 方案渲染（设计文档 §4.3，概念重构后）：
  *
  * - **提取器**是单个内容的提取单元（正则 / 分隔符 / AI 指令），一次产出 0..n 条片段；
- * - **方案**是多个提取器的集成体：按 members 顺序跑每个提取器，合并产出片段；
+ * - **方案**是全部提取器的集成体：按提取器列表顺序依次执行，合并产出片段；
  *   再按可选 body 排版（{content} 原文 / {segN} 第 N 段 / {date} {time}），
  *   body 留空则直接输出合并后的片段。
  *
@@ -49,35 +49,37 @@ function sanitizeAiLines(out: string): string[] {
 /** 执行单个提取器：本地规则（正则/分隔符）或 AI 指令，产出 0..n 条片段 */
 export async function runExtractor(extractor: ClipExtractor, content: string): Promise<Segment[]> {
     if (extractor.method === 'ai') {
+        // 未填指令的 AI 提取器直接跳过（不再有全局默认指令兜底），避免无意义调用
+        const instruction = extractor.expression.trim();
+        if (!instruction) return [];
         const cfg = await loadAiConfig();
-        const instruction = extractor.expression.trim() || DEFAULT_AI_PROMPT;
         const out = await aiComplete(cfg, withOutputContract(instruction), content);
         return sanitizeAiLines(out).map((text, index) => ({ index, text, source: 'ai' as const }));
     }
     // 正则 / 分隔符：复用规则引擎（永不抛错，空结果返回原文单段）
     return parseByRule(content, {
-        id: extractor.id,
-        name: extractor.name,
         type: extractor.method,
         pattern: extractor.expression,
-        priority: 0,
-        enabled: 1,
     }).map((s, index) => ({ ...s, index }));
 }
 
-/** 执行方案：按 members 顺序跑成员提取器并合并片段（成员缺失/被删则跳过） */
+/**
+ * 执行方案：按 members 顺序跑成员提取器并合并片段；
+ * **成员为空 = 自动接入全部提取器**（声明式默认，新增提取器即参与），
+ * 非空 = 指定子集（缺失/已删的成员跳过）。
+ */
 export async function runScheme(
     scheme: ClipScheme,
     extractors: ClipExtractor[],
     content: string,
 ): Promise<Segment[]> {
     const byId = new Map(extractors.map((x) => [x.id, x]));
+    const members = scheme.members && scheme.members.length > 0
+        ? scheme.members.map((id) => byId.get(id)).filter((x): x is ClipExtractor => !!x)
+        : extractors;
     const out: Segment[] = [];
-    for (const id of scheme.members ?? []) {
-        const ex = byId.get(id);
-        if (!ex) continue;
-        const segs = await runExtractor(ex, content);
-        out.push(...segs);
+    for (const ex of members) {
+        out.push(...await runExtractor(ex, content));
     }
     return out.map((s, index) => ({ ...s, index }));
 }
@@ -102,18 +104,6 @@ export function renderSchemeBody(
     const lines = text.split('\n').map((s) => s.trim()).filter((s) => s.length > 0);
     if (lines.length === 0) return segments;
     return lines.map((t, index) => ({ index, text: t, source: 'template' as const }));
-}
-
-/** AI 直接加工（无方案时）：输出按行拆为片段（source: 'ai'） */
-export async function renderAiDirect(content: string): Promise<Segment[]> {
-    const cfg = await loadAiConfig();
-    const instruction = cfg.defaultPrompt && cfg.defaultPrompt.trim().length > 0
-        ? cfg.defaultPrompt
-        : DEFAULT_AI_PROMPT;
-    const out = await aiComplete(cfg, withOutputContract(instruction), content);
-    const lines = sanitizeAiLines(out);
-    if (lines.length === 0) throw new Error('AI 返回为空');
-    return lines.map((text, index) => ({ index, text, source: 'ai' as const }));
 }
 
 /** 连接测试（设置页按钮）：透传 Rust 侧 {ok, latency_ms, error} */

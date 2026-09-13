@@ -18,10 +18,12 @@ export type Translator = (key: string) => string;
 const EXTRACTORS_KEY = 'clip_extractors';
 
 /**
- * seed 版本：内置提取器文案调整时 +1。加载时若存量版本更低，把**未删除的内置项**
- * 刷新为当前语言的最新文案（自定义项不动）。注意：这会覆盖用户对内置项的手工编辑。
+ * seed 版本：内置提取器集合或文案调整时 +1。加载时若存量版本更低，做一次对账：
+ * - 移除已从内置集合中下线的内置项（如不再需要的默认提取器）；
+ * - 把仍在的内置项刷新为当前语言的最新文案（自定义项不动）。
+ * 注意：这会覆盖用户对内置项的手工编辑。
  */
-const SEED_VERSION = 1;
+const SEED_VERSION = 4;
 
 /** KV 存储结构：版本号 + 列表 */
 interface StoredExtractors {
@@ -68,14 +70,6 @@ export const BUILTIN_EXTRACTOR_DEFS: BuiltinExtractorDef[] = [
         descKey: 'extractor.smart_tokenize.desc',
         sampleKey: 'extractor.smart_tokenize.sample',
         expression: '([^\\n,，、]+)',
-    },
-    {
-        id: 'netdisk_extract',
-        method: 'regex',
-        nameKey: 'extractor.netdisk_extract.name',
-        descKey: 'extractor.netdisk_extract.desc',
-        sampleKey: 'extractor.netdisk_extract.sample',
-        expression: '链接[:：]\\s*(\\S+).*?提取码[:：]\\s*(\\S+)',
     },
     {
         id: 'ai_netdisk',
@@ -126,10 +120,12 @@ function normalize(raw: unknown): ClipExtractor | null {
     };
 }
 
-/** 把列表中未删除的内置项刷新为当前语言最新文案（自定义项原样保留） */
-function refreshBuiltinTexts(list: ClipExtractor[], t: Translator): ClipExtractor[] {
+/** 内置项对账：移除已下线的内置项，其余内置项刷新为当前语言最新文案（自定义项原样保留） */
+function reconcileBuiltinExtractors(list: ClipExtractor[], t: Translator): ClipExtractor[] {
     const built = new Map(buildBuiltinExtractors(t).map((p) => [p.id, p]));
-    return list.map((p) => (p.builtin === 1 && built.has(p.id) ? { ...built.get(p.id)! } : p));
+    return list
+        .filter((p) => p.builtin !== 1 || built.has(p.id))
+        .map((p) => (p.builtin === 1 && built.has(p.id) ? { ...built.get(p.id)! } : p));
 }
 
 /**
@@ -168,7 +164,7 @@ export async function loadExtractors(t: Translator): Promise<ClipExtractor[]> {
                 const list = stored.list.map(normalize).filter((x): x is ClipExtractor => x !== null);
                 if (list.length > 0) {
                     if (stored.v < SEED_VERSION) {
-                        const refreshed = refreshBuiltinTexts(list, t);
+                        const refreshed = reconcileBuiltinExtractors(list, t);
                         await persistExtractors(refreshed);
                         return refreshed;
                     }

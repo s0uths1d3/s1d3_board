@@ -1,7 +1,6 @@
-import type { ClipExtractor, ClipRule, ClipScheme } from '../entities';
+import type { ClipExtractor, ClipScheme } from '../entities';
 import type { CopyEventDetail, ProcessContext, Segment, SmartClipEntry, SmartClipMode } from './types';
-import { parseByRule } from './ruleEngine';
-import { runScheme, renderSchemeBody, renderAiDirect } from './template';
+import { runScheme, renderSchemeBody } from './template';
 import { broadcastCopy } from './openApi';
 import { readStoredExtractors } from './extractors';
 import dbService from '../db/dbService';
@@ -24,7 +23,6 @@ const COPY_EVENT = 'smart-clip:copy';
 const entries: SmartClipEntry[] = [];
 
 let mode: SmartClipMode = 'off';
-let activeRule: ClipRule | null = null;
 let activeScheme: ClipScheme | null = null;
 let activeExtractors: ClipExtractor[] = [];
 let configReady = false;
@@ -34,38 +32,33 @@ let configVersion = 0;
 /** 设置页 / 启动时推送配置快照（高内聚：调用方无需感知内部缓存形态） */
 export function updateSmartClipConfig(cfg: {
     mode: SmartClipMode;
-    rule: ClipRule | null;
     scheme: ClipScheme | null;
     extractors: ClipExtractor[];
 }): void {
     mode = cfg.mode;
-    activeRule = cfg.rule;
     activeScheme = cfg.scheme;
     activeExtractors = cfg.extractors;
     configReady = true;
-    // 规则/方案/提取器变化后旧解析结果不再可信：递增版本号，Ctrl+B 等按需解析会重跑管道
+    // 方案/提取器变化后旧解析结果不再可信：递增版本号，Ctrl+B 等按需解析会重跑管道
     configVersion += 1;
 }
 
-/** 处理管道统一入口（设计文档 §2）：off 直通单段 / rule 规则拆分 / ai 方案（多提取器集成） */
+/** 处理管道统一入口：off 直通单段原文 / scheme 按默认方案加工 */
 async function processContent(content: string, ctx: ProcessContext): Promise<Segment[]> {
     if (ctx.mode === 'off') return single(content, 'rule');
 
-    const ruleSegs = ctx.rule ? parseByRule(content, ctx.rule) : single(content, 'rule');
-    if (ctx.mode === 'rule') return ruleSegs;
-
-    // ai 模式：执行默认方案（按成员提取器顺序合并片段 + 可选 body 排版）；
-    // 无方案时按默认指令直接 AI 加工。失败一律降级为规则片段，保证数据不丢。
+    // 方案模式：执行方案（成员为空 = 全部提取器；非空 = 指定子集）+ 可选 body 排版；
+    // 未启用方案或无产出时退回原文单段。失败一律降级为原文，保证数据不丢。
     try {
         if (ctx.scheme && ctx.scheme.enabled === 1) {
             const segs = await runScheme(ctx.scheme, ctx.extractors, content);
-            if (segs.length === 0) return ruleSegs;
+            if (segs.length === 0) return single(content, 'rule');
             return renderSchemeBody(ctx.scheme, content, segs);
         }
-        return await renderAiDirect(content);
+        return single(content, 'rule');
     } catch (e) {
-        console.error('[smart-clip] 方案/AI 加工失败，降级为规则片段:', e);
-        return ruleSegs;
+        console.error('[smart-clip] 方案加工失败，降级为原文单段:', e);
+        return single(content, 'rule');
     }
 }
 
@@ -75,27 +68,24 @@ function single(content: string, source: Segment['source']): Segment[] {
 
 /** 配置快照未就绪时的兜底：从 settings 按需拉取一次（此后以推送为准） */
 async function resolveContext(): Promise<ProcessContext> {
-    if (configReady) return { mode, rule: activeRule, scheme: activeScheme, extractors: activeExtractors };
+    if (configReady) return { mode, scheme: activeScheme, extractors: activeExtractors };
     try {
-        const [m, ruleId, schemeId, legacySchemeId, rules, schemes] = await Promise.all([
+        const [m, schemeId, legacySchemeId, schemes] = await Promise.all([
             dbService.getKeyValue('smart_clip_mode'),
-            dbService.getKeyValue('smart_default_rule_id'),
             dbService.getKeyValue('smart_default_scheme_id'),
             dbService.getKeyValue('smart_default_template_id'),
-            dbService.fetchClipRules(),
             dbService.fetchClipSchemes(),
         ]);
-        mode = (['off', 'rule', 'ai'] as const).includes(m as SmartClipMode) ? (m as SmartClipMode) : 'off';
-        const ruleIdStr = typeof ruleId === 'string' ? ruleId : '';
+        // 旧版本存的 'ai' 按 'scheme' 处理；已移除的 'rule' 无对应规则，按关闭处理
+        mode = m === 'scheme' || m === 'ai' ? 'scheme' : 'off';
         const schemeIdStr = (typeof schemeId === 'string' && schemeId) ? schemeId : (typeof legacySchemeId === 'string' ? legacySchemeId : '');
-        activeRule = rules.find((r) => r.id === ruleIdStr && r.enabled === 1) ?? null;
         activeScheme = schemes.find((t) => t.id === schemeIdStr && t.enabled === 1) ?? null;
         activeExtractors = await readStoredExtractors();
         configReady = true;
     } catch (e) {
         console.error('[smart-clip] 处理配置恢复失败，按关闭模式处理:', e);
     }
-    return { mode, rule: activeRule, scheme: activeScheme, extractors: activeExtractors };
+    return { mode, scheme: activeScheme, extractors: activeExtractors };
 }
 
 /** 同 id 覆盖 + 新条目置顶 + 容量截断 */

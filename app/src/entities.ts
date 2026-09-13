@@ -66,24 +66,24 @@ export interface Note {
 }
 
 /** 智能剪贴板：clip 分词/复制规则（separator 分隔符拆分 / regex 正则提取） */
-export interface ClipRule {
-    id: string;
-    name: string;
+/**
+ * 拆分规则的**内部原语**（不再是可管理的用户实体）：
+ * 用户侧只维护「提取器」（单个提取单元）与「方案」（多提取器集成），
+ * 规则引擎据此按分隔符/正则拆分文本，见 smart-clip/ruleEngine.ts。
+ */
+export interface SplitRule {
     type: 'separator' | 'regex';
     pattern: string;
-    priority: number;
-    enabled: 0 | 1;
-    created_at?: string;
-    updated_at?: string;
 }
 
 /**
- * 智能剪贴板：**方案**（原「模板」）——多个提取器的集成体。
+ * 智能剪贴板：**方案**——多个提取器的集成体。
  *
- * - title / description：方案自身的标题与描述（区别于成员提取器的名称与描述）；
- * - members：成员提取器 id 的有序列表，执行时按序跑每个提取器并合并其产出片段；
- * - body：可选输出排版（{content} {segN} {date} {time}），留空则直接输出合并片段。
- * - 存储表仍沿用 clip_templates（表重命名需迁移，列名已按新语义补齐）。
+ * - title / description：方案自身的标题与描述；
+ * - members：成员提取器 id 有序列表，**空数组 = 自动接入全部提取器**（声明式默认，
+ *   新增提取器即参与），非空 = 指定子集（可由 AI 生成专属方案时挑选）；
+ * - body：可选输出排版（{content} {segN} {date} {time}），留空则直接输出合并片段；
+ * - 存储表仍沿用 clip_templates。
  */
 export interface ClipScheme {
     id: string;

@@ -12,27 +12,25 @@ export interface AiClientConfig {
     baseUrl: string;
     apiKey: string;
     model: string;
-    defaultPrompt: string;
 }
 
-/** 默认 AI 加工指令：无模板 / {ai:} 占位符留空时的兜底指令（输出契约由 template.ts 统一附加） */
-export const DEFAULT_AI_PROMPT =
-    '将内容整理为结构化片段，逐行输出，每行一个片段，不要额外解释。';
-
+/**
+ * 组装 AI 配置。
+ * 注：原「AI 加工默认指令」（KV ai_default_prompt）已移除——AI 加工统一由
+ * **AI 提取器**承载（方案引用它），指令写在提取器里，不再有全局兜底指令。
+ */
 export async function loadAiConfig(): Promise<AiClientConfig> {
-    const [provider, baseUrl, apiKey, model, defaultPrompt] = await Promise.all([
+    const [provider, baseUrl, apiKey, model] = await Promise.all([
         dbService.getKeyValue('ai_provider'),
         dbService.getKeyValue('ai_base_url'),
         dbService.getKeyValue('api_key'),
         dbService.getKeyValue('ai_model'),
-        dbService.getKeyValue('ai_default_prompt'),
     ]);
     return {
         provider: provider || 'openai-compat',
         baseUrl: baseUrl || '',
         apiKey: apiKey || '',
         model: model || 'gpt-4o-mini',
-        defaultPrompt: defaultPrompt || '',
     };
 }
 

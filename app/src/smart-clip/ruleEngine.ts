@@ -1,4 +1,4 @@
-import type { ClipRule } from '../entities';
+import type { SplitRule } from '../entities';
 import type { Segment } from './types';
 
 /**
@@ -39,7 +39,7 @@ function extractByRegex(content: string, pattern: string): string[] {
 }
 
 /** 按单条规则解析：trim 各段并去空；结果为空时降级为原文单段 */
-export function parseByRule(content: string, rule: ClipRule): Segment[] {
+export function parseByRule(content: string, rule: SplitRule): Segment[] {
     try {
         const raw = rule.type === 'regex'
             ? extractByRegex(content, rule.pattern)
@@ -49,7 +49,7 @@ export function parseByRule(content: string, rule: ClipRule): Segment[] {
         return cleaned.map((text, index) => ({ index, text, source: 'rule' as const }));
     } catch (e) {
         // 非法正则 / 分隔符等配置错误：不中断管道，降级为原文单段
-        console.error(`[smart-clip] 规则「${rule.name}」解析失败，降级为原文单段:`, e);
+        console.error(`[smart-clip] 规则（${rule.type}: ${rule.pattern}）解析失败，降级为原文单段:`, e);
         return single(content);
     }
 }

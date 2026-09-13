@@ -1,6 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from 'tauri-plugin-clipboard-api';
-import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip,ClipRule,ClipScheme } from "../entities";
+import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip,ClipScheme } from "../entities";
 import statsService from "~/src/statistics/statsService";
 
 /** 优先级数值收敛：整数 0-255（越界/非法回退 127 中档） */
@@ -61,7 +61,7 @@ function escapeLike(input: string): string {
     return input.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
-/** 方案成员（提取器 id 列表）JSON 列 → 字符串数组；脏数据返回空数组 */
+/** 方案成员（提取器 id 列表）JSON 列 → 字符串数组；脏数据返回空数组（= 自动接入全部提取器） */
 function parseMembers(raw?: string | null): string[] {
     if (!raw) return [];
     try {
@@ -129,7 +129,7 @@ class DatabaseService {
      * 与 Rust 侧 migration（同 DDL）互不冲突。
      */
     private async ensureFeatureColumns() {
-        // 兜底建表：app_usage / app_icons / clip_rules / clip_templates
+        // 兜底建表：app_usage / app_icons / clip_templates（方案）
         // ——防止旧二进制（无对应迁移）下前端查询/写入报 no such table
         try {
             await this.db!.execute(`
@@ -149,20 +149,7 @@ class DatabaseService {
                     icon     TEXT NOT NULL
                 )
             `);
-            // 智能剪贴板：规则（v17）与加工模板（v17），与 Rust 侧 migration 同 DDL
-            await this.db!.execute(`
-                CREATE TABLE IF NOT EXISTS clip_rules
-                (
-                    id         TEXT PRIMARY KEY,
-                    name       TEXT NOT NULL,
-                    type       TEXT NOT NULL CHECK (type IN ('separator', 'regex')),
-                    pattern    TEXT NOT NULL,
-                    priority   INTEGER NOT NULL DEFAULT 0,
-                    enabled    INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-            `);
+            // 智能剪贴板：方案表（clip_templates，v17），与 Rust 侧 migration 同 DDL
             await this.db!.execute(`
                 CREATE TABLE IF NOT EXISTS clip_templates
                 (
@@ -175,7 +162,7 @@ class DatabaseService {
                 )
             `);
         } catch (e) {
-            console.warn('[db] 兜底建表 app_usage/app_icons/clip_rules/clip_templates 失败:', e);
+            console.warn('[db] 兜底建表 app_usage/app_icons/clip_templates 失败:', e);
         }
         const wanted = [
             { table: 'todo', column: 'remind_mode', ddl: 'ALTER TABLE todo ADD COLUMN remind_mode TEXT' },
@@ -604,42 +591,14 @@ class DatabaseService {
         return result.length > 0 ? result[0].value : '';
     }
 
-    // ===================== 智能剪贴板：分词规则与模板（smart-clip，设计文档 §4.1/§4.3） =====================
-
-    /** 全量规则：按优先级降序（数值越大越先执行），同级按更新时间倒序 */
-    public async fetchClipRules(): Promise<ClipRule[]> {
-        await this.ensureDbInitialized();
-        return await this.db!.select(
-            "SELECT * FROM clip_rules ORDER BY priority DESC, updated_at DESC",
-        ) as ClipRule[];
-    }
-
-    /** UPSERT 单条规则（id 冲突时整体覆盖，updated_at 刷新） */
-    public async saveClipRule(rule: ClipRule): Promise<void> {
-        await this.ensureDbInitialized();
-        await this.db!.execute(
-            `INSERT INTO clip_rules (id, name, type, pattern, priority, enabled, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
-             ON CONFLICT(id) DO UPDATE SET
-               name = excluded.name,
-               type = excluded.type,
-               pattern = excluded.pattern,
-               priority = excluded.priority,
-               enabled = excluded.enabled,
-               updated_at = CURRENT_TIMESTAMP`,
-            [rule.id, rule.name, rule.type, rule.pattern, rule.priority, rule.enabled],
-        );
-    }
-
-    public async deleteClipRule(id: string): Promise<void> {
-        await this.ensureDbInitialized();
-        await this.db!.execute('DELETE FROM clip_rules WHERE id = $1', [id]);
-    }
+    // ===================== 智能剪贴板：方案（smart-clip，设计文档 §4.3） =====================
+    // 注：原「分词规则」clip_rules 已废弃——用户侧只维护提取器（单个提取单元）与方案（多提取器集成），
+    // 拆分能力由提取器的正则/分隔符承担，表与旧数据保留但不再读写。
 
     /**
      * 全量方案：按更新时间倒序。
      * 表沿用 clip_templates（表重命名需迁移），title/description/members 由 ensureFeatureColumns 补齐；
-     * 旧数据（只有 name）以 name 兜底 title，members 空串视为无成员。
+     * 旧数据（只有 name）以 name 兜底 title，members 空串/脏数据视为空数组（= 自动接入全部提取器）。
      */
     public async fetchClipSchemes(): Promise<ClipScheme[]> {
         await this.ensureDbInitialized();
