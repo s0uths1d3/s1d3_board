@@ -22,6 +22,7 @@ import {
   loadExtractors, persistExtractors, missingBuiltinExtractors,
   type Translator,
 } from '~/src/smart-clip/extractors';
+import { generateExtractorDraft, generateSchemeDraft } from '~/src/smart-clip/aiGenerate';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
@@ -360,6 +361,38 @@ function resetMembers(scheme: ClipScheme): void {
   showHint(t('smart.scheme_members_auto'));
 }
 
+/** AI 生成专属方案：按描述生成标题/描述，并从已有提取器中挑选成员组合 */
+const addingAiScheme = ref(false);
+const aiSchemeDesc = ref('');
+const generatingScheme = ref(false);
+async function generateSchemeByAi(): Promise<void> {
+  const desc = aiSchemeDesc.value.trim();
+  if (!desc || generatingScheme.value) return;
+  generatingScheme.value = true;
+  try {
+    const draft = await generateSchemeDraft(desc, extractors.value);
+    const scheme: ClipScheme = {
+      id: crypto.randomUUID(),
+      title: draft.title,
+      description: draft.description,
+      members: draft.members,
+      body: '',
+      enabled: 1,
+    };
+    schemes.value.unshift(scheme);
+    await dbService.saveClipScheme(scheme);
+    aiSchemeDesc.value = '';
+    addingAiScheme.value = false;
+    editingSchemeId.value = scheme.id;
+    refreshSmartClipConfig();
+    showHint(t('smart.ai_generate_scheme_done', { name: scheme.title }));
+  } catch (e) {
+    showHint(t('smart.ai_generate_failed', { error: String(e) }));
+  } finally {
+    generatingScheme.value = false;
+  }
+}
+
 // ===== 提取器：单个内容的提取单元，可自由 CRUD（内置项同样可改可删，可一键恢复） =====
 // 长按拖拽排序（与导航配置/设置分类同一套交互）：列表顺序 = 方案执行顺序
 const extractorDraggingKey = ref<string | null>(null);
@@ -421,6 +454,30 @@ function currentDraft(): string {
     return draftRegex.value;
 }
 
+/** AI 生成：用一句描述生成提取器配置并回填表单（不直接落库，用户确认后再添加） */
+const aiExtractorDesc = ref('');
+const generatingExtractor = ref(false);
+async function generateExtractorByAi(): Promise<void> {
+  const desc = aiExtractorDesc.value.trim();
+  if (!desc || generatingExtractor.value) return;
+  generatingExtractor.value = true;
+  try {
+    const draft = await generateExtractorDraft(desc);
+    newExtractorName.value = draft.name;
+    newExtractorDesc.value = draft.desc;
+    newExtractorMethod.value = draft.method;
+    if (draft.method === 'separator') draftSeparator.value = draft.expression;
+    else if (draft.method === 'ai') draftAi.value = draft.expression;
+    else draftRegex.value = draft.expression;
+    addingExtractor.value = true;
+    showHint(t('smart.ai_generate_done'));
+  } catch (e) {
+    showHint(t('smart.ai_generate_failed', { error: String(e) }));
+  } finally {
+    generatingExtractor.value = false;
+  }
+}
+
 function submitNewExtractor(): void {
     const expression = currentDraft().trim();
     if (!expression) return;
@@ -440,6 +497,7 @@ function submitNewExtractor(): void {
     // 清空草稿、收起面板，并让新建项直接进入编辑态以便补描述/示例
     newExtractorName.value = '';
     newExtractorDesc.value = '';
+    aiExtractorDesc.value = '';
     draftSeparator.value = '';
     draftRegex.value = '';
     draftAi.value = '';
@@ -1337,19 +1395,42 @@ onMounted(async () => {
               />
             </div>
 
-            <!-- 方案：可自由 CRUD；默认方案供方案加工模式使用 -->
+            <!-- 方案：可自由 CRUD；默认方案供方案加工模式使用，AI 可生成专属方案 -->
             <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
               <div class="mb-3 flex items-center justify-between gap-2">
                 <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.schemes_section') }}</span>
-                <button type="button" class="btn-soft btn-circle p-1.5"
-                        v-tip="t('smart.add_scheme')"
-                        @click="addScheme">
-                  <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                </button>
+                <div class="flex items-center gap-2">
+                  <button type="button" class="btn-soft px-2 py-0.5 text-xs"
+                          @click="addingAiScheme = !addingAiScheme">{{ t('smart.ai_generate_scheme') }}</button>
+                  <button type="button" class="btn-soft btn-circle p-1.5"
+                          v-tip="t('smart.add_scheme')"
+                          @click="addScheme">
+                    <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                  </button>
+                </div>
               </div>
+
+              <!-- AI 生成专属方案：一句话描述 → 标题/描述 + 成员组合 -->
+              <Transition name="edit-panel">
+                <div v-if="addingAiScheme" class="mb-2 rounded-xl border border-gold/40 bg-surface-field/60 p-2">
+                  <div class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.ai_generate_scheme') }}</div>
+                  <textarea v-model="aiSchemeDesc" rows="3"
+                            class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                            :placeholder="t('smart.ai_scheme_desc_ph')"></textarea>
+                  <div class="mt-1.5 flex justify-end gap-2">
+                    <button type="button" class="btn-soft px-2 py-0.5 text-xs"
+                            @click="addingAiScheme = false">{{ t('common.cancel') }}</button>
+                    <button type="button" class="btn-gold px-2 py-0.5 text-xs"
+                            :disabled="generatingScheme"
+                            @click="generateSchemeByAi">
+                      {{ generatingScheme ? t('smart.ai_generating') : t('smart.ai_generate') }}
+                    </button>
+                  </div>
+                </div>
+              </Transition>
 
               <div v-for="s in schemes" :key="s.id" class="mb-2 rounded-xl border border-line bg-surface-field/40 p-2">
                 <!-- 折叠态：标题 + 描述，点「编辑」展开 -->
@@ -1426,6 +1507,17 @@ onMounted(async () => {
               <Transition name="edit-panel">
                 <div v-if="addingExtractor" class="mb-2 rounded-xl border border-gold/40 bg-surface-field/60 p-2">
                   <div class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.add_extractor') }}</div>
+                  <!-- 一句话描述 → AI 生成配置（回填下方表单，确认后再添加） -->
+                  <div class="mb-1.5 flex items-start gap-1">
+                    <textarea v-model="aiExtractorDesc" rows="3"
+                              class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                              :placeholder="t('smart.ai_desc_ph')"></textarea>
+                    <button type="button" class="btn-soft shrink-0 px-2 py-0.5 text-xs"
+                            :disabled="generatingExtractor"
+                            @click="generateExtractorByAi">
+                      {{ generatingExtractor ? t('smart.ai_generating') : t('smart.ai_generate') }}
+                    </button>
+                  </div>
                   <input v-model="newExtractorName"
                          class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
                          :placeholder="t('smart.extractor_name_ph')" />
