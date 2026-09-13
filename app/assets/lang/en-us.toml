@@ -397,7 +397,11 @@ empty_hint = "Copied text is parsed by the active rule automatically; or select 
 pin = "Pin as standalone bubble"
 click_to_copy = "Click to copy"
 copied = "Copied"
-paste_hint = "↑↓ select · Enter paste · Esc close · 📌 pin"
+paste_hint = "↑↓ / click to select · double-click or Enter to paste · ←→ pages · Ctrl+hover to preselect"
+prev = "Previous bubble"
+next = "Next bubble"
+prev_page = "Previous page"
+next_page = "Next page"
 parsing = "Parsing…"
 
 [setting.categories]
@@ -456,6 +460,7 @@ extractors_restore_none = "All built-in extractors are present"
 extractor_removed = "Removed extractor: {name}"
 no_extractors = "No extractors yet — click the ＋ at the top-right to add one"
 collapse = "Collapse"
+ai_cache_window = "AI result cooldown (seconds, 0 = always regenerate)"
 
 [extractor.url_extract]
 name = "URL extract"

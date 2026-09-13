@@ -221,6 +221,12 @@ const defaultSchemeId = ref('');
 const openApiEnabled = ref(false);
 const openApiPort = ref(String(OPEN_API_DEFAULT_PORT));
 const openApiToken = ref('');
+/** AI 结果冷却窗口（秒）：同内容在此时间内不重复触发 AI 生成（0 = 每次重新生成） */
+const aiCacheWindow = ref('300');
+watch(aiCacheWindow, (val) => {
+  const n = Math.max(0, Math.floor(Number(val) || 0));
+  void dbService.setKeyValue('ai_result_window', String(n));
+});
 
 const SMART_MODE_OPTIONS = computed(() => [
   { value: 'off' as const, label: t('smart.mode_off') },
@@ -1155,6 +1161,7 @@ onMounted(async () => {
     openApiEnabled.value = (await dbService.getKeyValue('open_api_enabled')) === '1';
     openApiPort.value = (await dbService.getKeyValue('open_api_port')) || String(OPEN_API_DEFAULT_PORT);
     openApiToken.value = await dbService.getKeyValue('open_api_token');
+    aiCacheWindow.value = (await dbService.getKeyValue('ai_result_window')) || '300';
     refreshSmartClipConfig();
   } catch (e) {
     console.error('智能剪贴板配置恢复失败:', e);
@@ -1613,6 +1620,11 @@ onMounted(async () => {
                 </Transition>
               </div>
               </TransitionGroup>
+              <div class="mt-2 flex items-center justify-between gap-2 border-t border-line pt-2">
+                <span class="text-[10px] text-ink-faint">{{ t('smart.ai_cache_window') }}</span>
+                <input v-model="aiCacheWindow"
+                       class="w-24 rounded-lg border border-line bg-surface-field px-2 py-1 text-right text-xs tabular-nums text-ink" />
+              </div>
             </div>
 
             <!-- 开放 API -->

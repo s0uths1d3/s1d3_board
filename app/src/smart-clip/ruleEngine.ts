@@ -38,14 +38,20 @@ function extractByRegex(content: string, pattern: string): string[] {
     return out;
 }
 
-/** 按单条规则解析：trim 各段并去空；结果为空时降级为原文单段 */
-export function parseByRule(content: string, rule: SplitRule): Segment[] {
+/**
+ * 按单条规则解析：trim 各段并去空。
+ * fallbackToRaw（默认 true）：无匹配时返回原文单段（"永不丢内容"）；
+ * 多提取器合并场景应传 false——不匹配的提取器产出 0 段即可，
+ * 否则每个未命中的提取器都会吐一份原文副本，造成成排重复气泡
+ * （原文兜底由管道层在"整体零产出"时统一处理）。
+ */
+export function parseByRule(content: string, rule: SplitRule, fallbackToRaw = true): Segment[] {
     try {
         const raw = rule.type === 'regex'
             ? extractByRegex(content, rule.pattern)
             : content.split(rule.pattern);
         const cleaned = raw.map((s) => s.trim()).filter((s) => s.length > 0);
-        if (cleaned.length === 0) return single(content);
+        if (cleaned.length === 0) return fallbackToRaw ? single(content) : [];
         return cleaned.map((text, index) => ({ index, text, source: 'rule' as const }));
     } catch (e) {
         // 非法正则 / 分隔符等配置错误：不中断管道，降级为原文单段

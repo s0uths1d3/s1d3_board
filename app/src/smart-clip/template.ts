@@ -3,6 +3,8 @@ import type { ClipExtractor, ClipScheme } from '../entities';
 import type { Segment } from './types';
 import { aiComplete, loadAiConfig } from './aiClient';
 import { parseByRule } from './ruleEngine';
+import { hashText } from '~/utils/hash';
+import dbService from '../db/dbService';
 
 /**
  * 方案渲染（设计文档 §4.3，概念重构后）：
@@ -53,20 +55,39 @@ export async function runExtractor(extractor: ClipExtractor, content: string): P
         const instruction = extractor.expression.trim();
         if (!instruction) return [];
         const cfg = await loadAiConfig();
-        const out = await aiComplete(cfg, withOutputContract(instruction), content);
-        return sanitizeAiLines(out).map((text, index) => ({ index, text, source: 'ai' as const }));
+
+        // 冷却缓存：同一内容 + 同一提取器在时间窗口内不重复调 AI（防连按 Ctrl+B 重复生成）
+        const cacheKey = `${hashText(content)}:${extractor.id}`;
+        const windowSec = Number(await dbService.getKeyValue('ai_result_window') || '300') || 0;
+        const cached = await dbService.getAiCache(cacheKey, windowSec);
+        if (cached !== null) {
+            return sanitizeAiLines(cached).map((text, index) => ({ index, text, source: 'ai' as const, extractorId: extractor.id }));
+        }
+
+        // 偏好摘要：把用户近期粘贴习惯注入 prompt，逐步提升产出与用户选择的匹配度
+        const digest = await dbService.fetchHabitDigest();
+        const habitHint = digest.length > 0
+            ? '\n用户近期偏好参考（提升选择准确度 / User preference hints):' +
+              digest.map((d) => `\n- 提取器「${d.extractorId}」的产出被用户粘贴 ${d.count} 次 / its output was pasted ${d.count} times`).join('')
+            : '';
+        const out = await aiComplete(cfg, withOutputContract(instruction) + habitHint, content);
+        void dbService.setAiCache(cacheKey, out).catch(() => {});
+        return sanitizeAiLines(out).map((text, index) => ({ index, text, source: 'ai' as const, extractorId: extractor.id }));
     }
-    // 正则 / 分隔符：复用规则引擎（永不抛错，空结果返回原文单段）
+    // 正则 / 分隔符：复用规则引擎；无匹配返回 0 段（原文兜底由管道层统一处理）
     return parseByRule(content, {
         type: extractor.method,
         pattern: extractor.expression,
-    }).map((s, index) => ({ ...s, index }));
+    }, false).map((s, index) => ({ ...s, index, extractorId: extractor.id }));
 }
 
 /**
  * 执行方案：按 members 顺序跑成员提取器并合并片段；
  * **成员为空 = 自动接入全部提取器**（声明式默认，新增提取器即参与），
  * 非空 = 指定子集（缺失/已删的成员跳过）。
+ *
+ * 合并时按文本去重：多个提取器（如网址提取与智能分词）常从同一段原文
+ * 提取出相同内容，不去重会出现成排重复气泡。
  */
 export async function runScheme(
     scheme: ClipScheme,
@@ -78,8 +99,15 @@ export async function runScheme(
         ? scheme.members.map((id) => byId.get(id)).filter((x): x is ClipExtractor => !!x)
         : extractors;
     const out: Segment[] = [];
+    // 判等键做空白归一化：\r、行尾空格等不可见差异不算新片段
+    const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
+    const seen = new Set<string>();
     for (const ex of members) {
-        out.push(...await runExtractor(ex, content));
+        for (const seg of await runExtractor(ex, content)) {
+            if (!seg.text.trim() || seen.has(norm(seg.text))) continue;
+            seen.add(norm(seg.text));
+            out.push(seg);
+        }
     }
     return out.map((s, index) => ({ ...s, index }));
 }

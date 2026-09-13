@@ -12,6 +12,8 @@ export interface Segment {
     index: number;
     text: string;
     source: 'rule' | 'ai' | 'template';
+    /** 产出该片段的提取器 id（方案合并去重、用户习惯统计用） */
+    extractorId?: string;
 }
 
 /** 处理模式（settings: smart_clip_mode）：off 关闭直通原文 / scheme 按默认方案加工 */

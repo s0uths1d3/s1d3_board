@@ -161,8 +161,28 @@ class DatabaseService {
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             `);
+            // 用户习惯记录（环形气泡选择/粘贴行为）与 AI 结果冷却缓存
+            await this.db!.execute(`
+                CREATE TABLE IF NOT EXISTS clip_habits
+                (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_hash  TEXT NOT NULL,
+                    extractor_id  TEXT NOT NULL DEFAULT '',
+                    action        TEXT NOT NULL,
+                    segment_text  TEXT NOT NULL DEFAULT '',
+                    created_at    INTEGER NOT NULL
+                )
+            `);
+            await this.db!.execute(`
+                CREATE TABLE IF NOT EXISTS clip_ai_cache
+                (
+                    key        TEXT PRIMARY KEY,
+                    output     TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            `);
         } catch (e) {
-            console.warn('[db] 兜底建表 app_usage/app_icons/clip_templates 失败:', e);
+            console.warn('[db] 兜底建表 app_usage/app_icons/clip_templates/clip_habits/clip_ai_cache 失败:', e);
         }
         const wanted = [
             { table: 'todo', column: 'remind_mode', ddl: 'ALTER TABLE todo ADD COLUMN remind_mode TEXT' },
@@ -646,6 +666,62 @@ class DatabaseService {
     public async deleteClipScheme(id: string): Promise<void> {
         await this.ensureDbInitialized();
         await this.db!.execute('DELETE FROM clip_templates WHERE id = $1', [id]);
+    }
+
+    // ===================== 智能剪贴板：用户习惯记录 + AI 结果冷却缓存 =====================
+
+    /**
+     * 记录一次强信号用户动作（paste / pin）。
+     * 只记强信号：箭头切换等中间态是噪声，落库反而稀释偏好统计。
+     * 每次插入顺带裁剪，只保留最近 500 条。
+     */
+    public async insertClipHabit(h: {
+        contentHash: string;
+        extractorId: string;
+        action: 'paste' | 'pin';
+        segmentText: string;
+    }): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute(
+            'INSERT INTO clip_habits (content_hash, extractor_id, action, segment_text, created_at) VALUES ($1, $2, $3, $4, $5)',
+            [h.contentHash, h.extractorId, h.action, h.segmentText, Date.now()],
+        );
+        await this.db!.execute(
+            'DELETE FROM clip_habits WHERE id NOT IN (SELECT id FROM clip_habits ORDER BY id DESC LIMIT 500)',
+        );
+    }
+
+    /** 偏好摘要：最近 100 次 paste 中，各提取器产出被粘贴的次数（降序 Top5） */
+    public async fetchHabitDigest(): Promise<Array<{ extractorId: string; count: number }>> {
+        await this.ensureDbInitialized();
+        const rows = await this.db!.select(
+            "SELECT extractor_id, COUNT(*) AS count FROM clip_habits WHERE action = 'paste' " +
+            'GROUP BY extractor_id ORDER BY count DESC LIMIT 5',
+        ) as Array<{ extractor_id: string; count: number }>;
+        return rows.map((r) => ({ extractorId: r.extractor_id, count: Number(r.count) }));
+    }
+
+    /** 读取 AI 结果缓存：窗口期内命中返回输出，过期/不存在返回 null（windowSec = 0 表示每次重新生成） */
+    public async getAiCache(key: string, windowSec: number): Promise<string | null> {
+        await this.ensureDbInitialized();
+        if (windowSec <= 0) return null;
+        const rows = await this.db!.select(
+            'SELECT output, created_at FROM clip_ai_cache WHERE key = $1',
+            [key],
+        ) as Array<{ output: string; created_at: number }>;
+        if (rows.length === 0) return null;
+        if (Date.now() - Number(rows[0]!.created_at) > windowSec * 1000) return null;
+        return rows[0]!.output;
+    }
+
+    /** 写入/刷新 AI 结果缓存 */
+    public async setAiCache(key: string, output: string): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute(
+            'INSERT INTO clip_ai_cache (key, output, created_at) VALUES ($1, $2, $3) ' +
+            'ON CONFLICT(key) DO UPDATE SET output = $2, created_at = $3',
+            [key, output, Date.now()],
+        );
     }
 
     public async insertNote(note: Note): Promise<void> {
