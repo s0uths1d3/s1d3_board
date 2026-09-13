@@ -15,6 +15,8 @@ import type { SmartClipEntry } from '~/src/smart-clip/types';
  * 两种模式（route.query.mode 区分）：
  * - 列表模式（默认）：主气泡。ready 握手（bubble:ready）→ 接收 bubble:show 数据 →
  *   show + setFocus；↑↓ 选择 / Enter 粘贴 / Esc 关闭；片段可"钉住"为独立小气泡。
+ *   数据为「当前选中剪贴项」的解析结果；AI 加工中先收到原文占位（loading: true），
+ *   解析完成后再次收到 bubble:show 覆盖为最终片段。
  * - 钉住模式（?mode=pin）：单片段常驻卡片（灵动岛形态）。
  *   创建者定向 emitTo('bubble:pin:data') 投递文本；点击片段 = 复制到剪贴板（不模拟粘贴，
  *   常驻卡片不应自我隐藏）。
@@ -34,6 +36,8 @@ const items = ref<FlatItem[]>([]);
 const selected = ref(0);
 const pinnedText = ref('');
 const pinCopied = ref(false);
+/** 解析进行中（AI 加工未返回）：占位原文已可粘贴，仅底部提示"解析中…" */
+const loading = ref(false);
 let pinCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 
 const empty = computed(() => !isPinMode && items.value.length === 0);
@@ -148,7 +152,8 @@ onMounted(async () => {
         return;
     }
     // 列表模式：先注册数据监听，再发 ready（与创建者的握手顺序配合，避免竞态）
-    unlisteners.push(await listen<{ entries: SmartClipEntry[] }>('bubble:show', (ev) => {
+    unlisteners.push(await listen<{ entries: SmartClipEntry[]; loading?: boolean }>('bubble:show', (ev) => {
+        loading.value = ev.payload?.loading === true;
         ingestEntries(ev.payload.entries ?? []);
     }));
     await emit('bubble:ready', getCurrentWindow().label);
@@ -217,7 +222,7 @@ onBeforeUnmount(() => {
     </ul>
 
     <div v-if="!empty" class="border-t border-accent px-3 py-1.5 text-[10px] text-ink-faint">
-      {{ t('bubble.paste_hint') }}
+      {{ loading ? t('bubble.parsing') : t('bubble.paste_hint') }}
     </div>
   </div>
 </template>
