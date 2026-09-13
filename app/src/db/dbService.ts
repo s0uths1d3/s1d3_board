@@ -118,7 +118,8 @@ class DatabaseService {
      * 与 Rust 侧 migration（同 DDL）互不冲突。
      */
     private async ensureFeatureColumns() {
-        // 兜底建表：app_usage / app_icons（桌面应用使用时长）——防止旧二进制（无 v15/v16 迁移）下前端查询/写入报 no such table
+        // 兜底建表：app_usage / app_icons / clip_rules / clip_templates
+        // ——防止旧二进制（无对应迁移）下前端查询/写入报 no such table
         try {
             await this.db!.execute(`
                 CREATE TABLE IF NOT EXISTS app_usage
@@ -137,8 +138,33 @@ class DatabaseService {
                     icon     TEXT NOT NULL
                 )
             `);
+            // 智能剪贴板：规则（v17）与加工模板（v17），与 Rust 侧 migration 同 DDL
+            await this.db!.execute(`
+                CREATE TABLE IF NOT EXISTS clip_rules
+                (
+                    id         TEXT PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    type       TEXT NOT NULL CHECK (type IN ('separator', 'regex')),
+                    pattern    TEXT NOT NULL,
+                    priority   INTEGER NOT NULL DEFAULT 0,
+                    enabled    INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
+            await this.db!.execute(`
+                CREATE TABLE IF NOT EXISTS clip_templates
+                (
+                    id         TEXT PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    body       TEXT NOT NULL,
+                    enabled    INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
         } catch (e) {
-            console.warn('[db] 兜底建表 app_usage/app_icons 失败:', e);
+            console.warn('[db] 兜底建表 app_usage/app_icons/clip_rules/clip_templates 失败:', e);
         }
         const wanted = [
             { table: 'todo', column: 'remind_mode', ddl: 'ALTER TABLE todo ADD COLUMN remind_mode TEXT' },
