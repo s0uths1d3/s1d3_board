@@ -1,6 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from 'tauri-plugin-clipboard-api';
-import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip,ClipRule,ClipTemplate } from "../entities";
+import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip,ClipRule,ClipScheme } from "../entities";
 import statsService from "~/src/statistics/statsService";
 
 /** 优先级数值收敛：整数 0-255（越界/非法回退 127 中档） */
@@ -59,6 +59,17 @@ function mapTodoRemindRules(row: Todo): Todo {
 /** LIKE 通配符转义：搜索词中的 % _ \ 按字面匹配（配合 ESCAPE '\'） */
 function escapeLike(input: string): string {
     return input.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+/** 方案成员（提取器 id 列表）JSON 列 → 字符串数组；脏数据返回空数组 */
+function parseMembers(raw?: string | null): string[] {
+    if (!raw) return [];
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+        return [];
+    }
 }
 
 /**
@@ -175,6 +186,10 @@ class DatabaseService {
             { table: 'daily_stat', column: 'todo_chars', ddl: 'ALTER TABLE daily_stat ADD COLUMN todo_chars INTEGER NOT NULL DEFAULT 0' },
             { table: 'daily_stat', column: 'tab_app_usage', ddl: 'ALTER TABLE daily_stat ADD COLUMN tab_app_usage INTEGER NOT NULL DEFAULT 0' },
             { table: 'app_usage', column: 'active_seconds', ddl: 'ALTER TABLE app_usage ADD COLUMN active_seconds INTEGER NOT NULL DEFAULT 0' },
+            // 智能剪贴板「方案」（原模板）：独立标题/描述 + 成员提取器 id 列表（JSON）
+            { table: 'clip_templates', column: 'title', ddl: 'ALTER TABLE clip_templates ADD COLUMN title TEXT' },
+            { table: 'clip_templates', column: 'description', ddl: 'ALTER TABLE clip_templates ADD COLUMN description TEXT' },
+            { table: 'clip_templates', column: 'members', ddl: 'ALTER TABLE clip_templates ADD COLUMN members TEXT' },
         ];
         let addedPriorityLevel = false;
         for (const { table, column, ddl } of wanted) {
@@ -621,30 +636,55 @@ class DatabaseService {
         await this.db!.execute('DELETE FROM clip_rules WHERE id = $1', [id]);
     }
 
-    /** 全量模板：按更新时间倒序 */
-    public async fetchClipTemplates(): Promise<ClipTemplate[]> {
+    /**
+     * 全量方案：按更新时间倒序。
+     * 表沿用 clip_templates（表重命名需迁移），title/description/members 由 ensureFeatureColumns 补齐；
+     * 旧数据（只有 name）以 name 兜底 title，members 空串视为无成员。
+     */
+    public async fetchClipSchemes(): Promise<ClipScheme[]> {
         await this.ensureDbInitialized();
-        return await this.db!.select(
+        const rows = await this.db!.select(
             'SELECT * FROM clip_templates ORDER BY updated_at DESC',
-        ) as ClipTemplate[];
+        ) as (ClipScheme & { name?: string; members?: string | null })[];
+        return rows.map((r) => ({
+            id: r.id,
+            title: r.title || r.name || '',
+            description: r.description ?? '',
+            members: parseMembers(r.members),
+            body: r.body ?? '',
+            enabled: r.enabled,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        }));
     }
 
-    /** UPSERT 单条模板 */
-    public async saveClipTemplate(template: ClipTemplate): Promise<void> {
+    /** UPSERT 单条方案（name 列同步写 title，兼容旧二进制/旧查询） */
+    public async saveClipScheme(scheme: ClipScheme): Promise<void> {
         await this.ensureDbInitialized();
         await this.db!.execute(
-            `INSERT INTO clip_templates (id, name, body, enabled, updated_at)
-             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+            `INSERT INTO clip_templates (id, name, title, description, members, body, enabled, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
+               title = excluded.title,
+               description = excluded.description,
+               members = excluded.members,
                body = excluded.body,
                enabled = excluded.enabled,
                updated_at = CURRENT_TIMESTAMP`,
-            [template.id, template.name, template.body, template.enabled],
+            [
+                scheme.id,
+                scheme.title,
+                scheme.title,
+                scheme.description ?? '',
+                JSON.stringify(scheme.members ?? []),
+                scheme.body ?? '',
+                scheme.enabled,
+            ],
         );
     }
 
-    public async deleteClipTemplate(id: string): Promise<void> {
+    public async deleteClipScheme(id: string): Promise<void> {
         await this.ensureDbInitialized();
         await this.db!.execute('DELETE FROM clip_templates WHERE id = $1', [id]);
     }

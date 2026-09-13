@@ -77,12 +77,39 @@ export interface ClipRule {
     updated_at?: string;
 }
 
-/** 智能剪贴板：片段重组/加工模板（body 支持占位符，见 smart-clip/template.ts） */
-export interface ClipTemplate {
+/**
+ * 智能剪贴板：**方案**（原「模板」）——多个提取器的集成体。
+ *
+ * - title / description：方案自身的标题与描述（区别于成员提取器的名称与描述）；
+ * - members：成员提取器 id 的有序列表，执行时按序跑每个提取器并合并其产出片段；
+ * - body：可选输出排版（{content} {segN} {date} {time}），留空则直接输出合并片段。
+ * - 存储表仍沿用 clip_templates（表重命名需迁移，列名已按新语义补齐）。
+ */
+export interface ClipScheme {
     id: string;
-    name: string;
+    title: string;
+    description: string;
+    members: string[];
     body: string;
     enabled: 0 | 1;
     created_at?: string;
     updated_at?: string;
+}
+
+/**
+ * 智能剪贴板：**提取器**——单个内容的提取单元（原「预设」）。
+ *
+ * - method：提取方式 regex 正则 / separator 分隔符 / ai AI 指令；
+ * - expression：对应方式的表达式（正则、分隔符，或 AI 指令文本）；
+ * - sample：示例文本（仅说明用，不参与解析）。
+ */
+export interface ClipExtractor {
+    id: string;
+    name: string;
+    desc: string;
+    method: 'regex' | 'separator' | 'ai';
+    expression: string;
+    sample: string;
+    /** 是否内置：仅用于角标与「恢复内置」补齐，不限制编辑/删除 */
+    builtin: 0 | 1;
 }

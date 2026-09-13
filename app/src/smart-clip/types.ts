@@ -1,4 +1,4 @@
-import type { ClipRule, ClipTemplate } from '../entities';
+import type { ClipExtractor, ClipRule, ClipScheme } from '../entities';
 
 /**
  * 智能剪贴板类型定义（设计文档 §2/§4）
@@ -21,7 +21,10 @@ export type SmartClipMode = 'off' | 'rule' | 'ai';
 export interface ProcessContext {
     mode: SmartClipMode;
     rule: ClipRule | null;
-    template: ClipTemplate | null;
+    /** 默认方案（多个提取器的集成体）；ai 模式生效 */
+    scheme: ClipScheme | null;
+    /** 方案引用的提取器全集（按 id 解析成员） */
+    extractors: ClipExtractor[];
 }
 
 /** 最近解析结果内存条目（气泡窗口消费） */
@@ -31,6 +34,9 @@ export interface SmartClipEntry {
     content: string;
     segments: Segment[];
     ts: number;
+    /** 解析时使用的配置版本（mode/rule/template 快照版本号）：
+     *  规则或模板变更后版本号递增，据此判定缓存结果已过期需重解析 */
+    configVersion?: number;
 }
 
 /** dbService 广播的复制事件 detail（仅文本，事件名 smart-clip:copy） */
@@ -40,4 +46,4 @@ export interface CopyEventDetail {
     ts: number;
 }
 
-export type { ClipRule, ClipTemplate };
+export type { ClipRule, ClipScheme, ClipExtractor };
