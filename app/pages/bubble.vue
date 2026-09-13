@@ -1,170 +1,182 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute } from 'vue-router';
 import { listen, emit, emitTo } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { isTauri } from '~/utils/env';
 import { useI18n } from '~/composables/useI18n';
-import { pasteContentToActiveApp } from '~/src/commands/local/pasteUtil';
-import type { SmartClipEntry } from '~/src/smart-clip/types';
 
 /**
- * 智能剪贴板气泡窗口（设计文档 §4.4）。
+ * 智能剪贴板气泡窗口：三种模式（route.query.mode 区分）。
  *
- * 两种模式（route.query.mode 区分）：
- * - 列表模式（默认）：主气泡。ready 握手（bubble:ready）→ 接收 bubble:show 数据 →
- *   show + setFocus；↑↓ 选择 / Enter 粘贴 / Esc 关闭；片段可"钉住"为独立小气泡。
- *   数据为「当前选中剪贴项」的解析结果；AI 加工中先收到原文占位（loading: true），
- *   解析完成后再次收到 bubble:show 覆盖为最终片段。
- * - 钉住模式（?mode=pin）：单片段常驻卡片（灵动岛形态）。
- *   创建者定向 emitTo('bubble:pin:data') 投递文本；点击片段 = 复制到剪贴板（不模拟粘贴，
- *   常驻卡片不应自我隐藏）。
+ * - pin（?mode=pin）：单片段常驻钉住卡片，点击复制，不模拟粘贴、不自我隐藏。
+ * - ring（?mode=ring&index=N）：环形布局中的一只独立气泡窗口。文本由管理器
+ *   ready 握手后 emitTo('bubble:ring:data') 投递；选中高亮来自 ring:state 广播；
+ *   Ctrl+悬停 / 左键点击 → ring:select-req；双击 → ring:paste-req（由管理器统一
+ *   隐藏全部环形窗口并模拟粘贴）；Esc → ring:close。
+ * - ring-hub（?mode=ring-hub）：环心控制盘。‹ › 切换选中、« » 翻页、✕ 整体关闭，
+ *   仅发指令（ring:nav / ring:page-nav / ring:close），状态由 ring:state 广播回显。
+ *
+ * 窗口的创建/定位/分页显隐/层级（选中置顶）全部由 BubbleToggleCommand 管理。
  */
 
 const route = useRoute();
 const { t } = useI18n();
-const isPinMode = route.query.mode === 'pin';
+const mode = String(route.query.mode ?? 'list');
+const isPinMode = mode === 'pin';
+const isRingBubble = mode === 'ring';
+const isRingHub = mode === 'ring-hub';
+const ringIndex = Number(route.query.index ?? -1);
 
-interface FlatItem {
-    entryId: number;
-    segIndex: number;
-    text: string;
-}
-
-const items = ref<FlatItem[]>([]);
-const selected = ref(0);
+// ===== 钉住模式 =====
 const pinnedText = ref('');
 const pinCopied = ref(false);
-/** 解析进行中（AI 加工未返回）：占位原文已可粘贴，仅底部提示"解析中…" */
-const loading = ref(false);
 let pinCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 
-const empty = computed(() => !isPinMode && items.value.length === 0);
+// ===== 环形气泡 =====
+const ringText = ref('');
+const ringSelected = ref(false);
 
-/** 扁平化 entries（每 entry 的每 segment 一行），显示并聚焦 */
-function ingestEntries(list: SmartClipEntry[]): void {
-    const flat: FlatItem[] = [];
-    for (const e of list) {
-        for (const s of e.segments) {
-            flat.push({ entryId: e.id, segIndex: s.index, text: s.text });
-        }
-    }
-    items.value = flat;
-    selected.value = 0;
-    void getCurrentWindow().show();
-    void getCurrentWindow().setFocus().catch(() => {});
-}
-
-async function pasteSelected(): Promise<void> {
-    const item = items.value[selected.value];
-    if (!item) return;
-    // pasteContentToActiveApp 内部：写剪贴板 → hide 本气泡（焦点回目标应用）→ 模拟粘贴。
-    // 不主动 close：hide 保留实例，下一次 Ctrl+B 会 close 后重建（数据保证最新）。
-    await pasteContentToActiveApp(item.text, 'text');
-}
-
-function move(delta: number): void {
-    if (items.value.length === 0) return;
-    selected.value = (selected.value + delta + items.value.length) % items.value.length;
-}
-
-function onKeydown(e: KeyboardEvent): void {
-    if (e.key === 'Escape') {
-        e.preventDefault();
-        void getCurrentWindow().close();
-    } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        move(-1);
-    } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        move(1);
-    } else if (e.key === 'Enter') {
-        e.preventDefault();
-        void pasteSelected();
-    }
-}
-
-/** 钉住：为该片段创建独立常驻小气泡窗（clipboard-bubble-pin-*），定向投递文本 */
-async function pinItem(item: FlatItem): Promise<void> {
-    if (!isTauri()) return;
-    const label = `clipboard-bubble-pin-${Date.now()}`;
-    (window as any).__childOpeningUntil = Date.now() + 600;
-    const unReady = await listen('bubble:pin:ready', (ev) => {
-        if ((ev.payload as string | undefined) !== label) return;
-        void emitTo(label, 'bubble:pin:data', { text: item.text });
-        unReady();
-    });
-    setTimeout(() => unReady(), 5000);
-    const win = new WebviewWindow(label, {
-        url: '/bubble?mode=pin',
-        title: 'Pinned',
-        width: 300,
-        height: 96,
-        resizable: false,
-        decorations: false,
-        transparent: false,
-        skipTaskbar: true,
-        alwaysOnTop: true,
-        focus: false,        // 钉住卡片不抢目标应用焦点
-        visible: false,
-    });
-    win.once('tauri://created', () => {
-        (window as any).__childOpeningUntil = Date.now() + 300;
-    });
-    win.once('tauri://error', () => {
-        unReady();
-    });
-}
-
-/** 钉住卡片：点击片段 = 复制到剪贴板（带已复制反馈，不模拟粘贴、不自我隐藏） */
-async function copyPinned(): Promise<void> {
-    if (!pinnedText.value) return;
-    try {
-        if (isTauri()) await writeTextSafe(pinnedText.value);
-        else await navigator.clipboard.writeText(pinnedText.value);
-    } catch { /* 忽略写失败 */ }
-    pinCopied.value = true;
-    if (pinCopiedTimer) clearTimeout(pinCopiedTimer);
-    pinCopiedTimer = setTimeout(() => { pinCopied.value = false; }, 1500);
-}
-
-async function writeTextSafe(text: string): Promise<void> {
-    const mod = await import('tauri-plugin-clipboard-api');
-    await mod.writeText(text);
-}
-
-function closePin(): void {
-    void getCurrentWindow().close();
-}
+// ===== 环心控制盘 =====
+const hubSelected = ref(0);
+const hubPage = ref(0);
+const hubTotal = ref(0);
 
 let unlisteners: (() => void)[] = [];
 
+/** 钉住：把当前片段复制为独立常驻小气泡窗（ring 模式与 pin 模式均可触发） */
+async function pinCurrent(): Promise<void> {
+  const text = isRingBubble ? ringText.value : pinnedText.value;
+  if (!isTauri() || !text) return;
+  // 习惯记录：钉住也是一次强偏好信号（ring 模式下上报给管理器落库）
+  if (isRingBubble) void emit('ring:habit', { index: ringIndex, action: 'pin' });
+  const label = `clipboard-bubble-pin-${Date.now()}`;
+  (window as any).__childOpeningUntil = Date.now() + 600;
+  const unReady = await listen('bubble:pin:ready', (ev) => {
+    if ((ev.payload as string | undefined) !== label) return;
+    void emitTo(label, 'bubble:pin:data', { text });
+    unReady();
+  });
+  setTimeout(() => unReady(), 5000);
+  const win = new WebviewWindow(label, {
+    url: '/bubble?mode=pin',
+    title: 'Pinned',
+    width: 300,
+    height: 96,
+    resizable: false,
+    decorations: false,
+    transparent: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    focus: false,        // 钉住卡片不抢目标应用焦点
+    visible: false,
+  });
+  win.once('tauri://created', () => {
+    (window as any).__childOpeningUntil = Date.now() + 300;
+  });
+  win.once('tauri://error', () => {
+    unReady();
+  });
+}
+
+/** 钉住卡片：点击 = 复制到剪贴板（带已复制反馈，不模拟粘贴、不自我隐藏） */
+async function copyPinned(): Promise<void> {
+  if (!pinnedText.value) return;
+  try {
+    if (isTauri()) await writeTextSafe(pinnedText.value);
+    else await navigator.clipboard.writeText(pinnedText.value);
+  } catch { /* 忽略写失败 */ }
+  pinCopied.value = true;
+  if (pinCopiedTimer) clearTimeout(pinCopiedTimer);
+  pinCopiedTimer = setTimeout(() => { pinCopied.value = false; }, 1500);
+}
+
+async function writeTextSafe(text: string): Promise<void> {
+  const mod = await import('tauri-plugin-clipboard-api');
+  await mod.writeText(text);
+}
+
+function closePin(): void {
+  void getCurrentWindow().close();
+}
+
+// ===== 环形气泡交互 =====
+/** Ctrl+悬停 / 左键点击：请求选中（已选中则不重复发） */
+function ringSelect(): void {
+  if (!ringSelected.value) void emit('ring:select-req', { index: ringIndex });
+}
+function ringPointerMove(e: PointerEvent): void {
+  if (e.ctrlKey) ringSelect();
+}
+/** 双击：请求粘贴（管理器统一隐藏全部窗口并模拟粘贴） */
+function ringPaste(): void {
+  void emit('ring:paste-req', { index: ringIndex });
+}
+function ringClose(): void {
+  void emit('ring:close');
+}
+
+// ===== 控制盘指令 =====
+function hubNav(delta: number): void {
+  void emit('ring:nav', { delta });
+}
+function hubPageNav(delta: number): void {
+  void emit('ring:page-nav', { delta });
+}
+function hubClose(): void {
+  void emit('ring:close');
+}
+
 onMounted(async () => {
-    if (!isTauri()) return;
-    if (isPinMode) {
-        unlisteners.push(await listen<{ text: string }>('bubble:pin:data', (ev) => {
-            pinnedText.value = ev.payload.text;
-            void getCurrentWindow().show();
-        }));
-        // ready 握手：通知创建者本窗口 label（创建者随后 emitTo 定向投递文本）
-        await emit('bubble:pin:ready', getCurrentWindow().label);
-        return;
-    }
-    // 列表模式：先注册数据监听，再发 ready（与创建者的握手顺序配合，避免竞态）
-    unlisteners.push(await listen<{ entries: SmartClipEntry[]; loading?: boolean }>('bubble:show', (ev) => {
-        loading.value = ev.payload?.loading === true;
-        ingestEntries(ev.payload.entries ?? []);
+  if (!isTauri()) return;
+  if (isPinMode) {
+    unlisteners.push(await listen<{ text: string }>('bubble:pin:data', (ev) => {
+      pinnedText.value = ev.payload.text;
+      void getCurrentWindow().show();
     }));
-    await emit('bubble:ready', getCurrentWindow().label);
-    window.addEventListener('keydown', onKeydown);
+    // ready 握手：通知创建者本窗口 label（创建者随后 emitTo 定向投递文本）
+    await emit('bubble:pin:ready', getCurrentWindow().label);
+    return;
+  }
+  if (isRingBubble) {
+    unlisteners.push(await listen<{ text: string }>('bubble:ring:data', (ev) => {
+      ringText.value = ev.payload.text;
+    }));
+    unlisteners.push(await listen<{ selected: number }>('ring:state', (ev) => {
+      ringSelected.value = ev.payload.selected === ringIndex;
+    }));
+    // ready 握手：通知管理器投递本文本
+    await emit('bubble:ring:ready', getCurrentWindow().label);
+    return;
+  }
+  if (isRingHub) {
+    unlisteners.push(await listen<{ selected: number; page: number; total: number }>('ring:state', (ev) => {
+      hubSelected.value = ev.payload.selected;
+      hubPage.value = ev.payload.page;
+      hubTotal.value = ev.payload.total;
+    }));
+    // ready 握手：通知管理器推送初始状态
+    await emit('bubble:ring:hub-ready', getCurrentWindow().label);
+    // Esc 关闭整个环（控制盘获得焦点时可用）
+    window.addEventListener('keydown', onHubKeydown);
+    return;
+  }
 });
 
+/** 控制盘 Esc：关闭整个环（气泡 + 控制盘） */
+function onHubKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    hubClose();
+  }
+}
+
 onBeforeUnmount(() => {
-    window.removeEventListener('keydown', onKeydown);
-    for (const u of unlisteners) u();
-    unlisteners = [];
-    if (pinCopiedTimer) clearTimeout(pinCopiedTimer);
+  window.removeEventListener('keydown', onHubKeydown);
+  for (const u of unlisteners) u();
+  unlisteners = [];
+  if (pinCopiedTimer) clearTimeout(pinCopiedTimer);
 });
 </script>
 
@@ -189,40 +201,60 @@ onBeforeUnmount(() => {
     </button>
   </div>
 
-  <!-- 列表模式：主气泡（解析片段选择 + 快捷粘贴） -->
-  <div v-else class="flex h-screen flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-soft">
-    <div class="flex items-center justify-between border-b border-accent px-3 py-2">
-      <span class="text-xs font-semibold text-ink">{{ t('bubble.title') }}</span>
-      <button type="button" class="text-ink-faint transition-colors hover:text-danger" @click="getCurrentWindow().close()">
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+  <!-- 环形气泡：独立窗口，选中高亮，Ctrl+悬停/点击选中，双击粘贴 -->
+  <div v-else-if="isRingBubble"
+       class="group relative h-screen cursor-pointer overflow-hidden rounded-2xl border p-3 pr-6 shadow-soft transition-all duration-200 ease-soft"
+       :class="ringSelected ? 'border-gold bg-surface-field ring-1 ring-gold/60' : 'border-line bg-surface-field/90 hover:border-accent'"
+       @pointermove="ringPointerMove"
+       @click="ringSelect"
+       @dblclick="ringPaste">
+    <p class="line-clamp-3 text-[11px] leading-relaxed text-ink">{{ ringText }}</p>
+    <button type="button"
+            class="absolute right-1 top-1 hidden rounded-md bg-surface px-1 text-[10px] text-ink-faint shadow-sm transition-colors hover:text-gold group-hover:block"
+            :title="t('bubble.pin')"
+            @click.stop="pinCurrent">📌</button>
+    <span v-if="ringSelected"
+          class="absolute bottom-1 right-2 text-[9px] tabular-nums text-gold">{{ ringIndex + 1 }}</span>
+  </div>
+
+  <!-- 环心控制盘：箭头导航 + 翻页 + 关闭 -->
+  <div v-else-if="isRingHub" class="flex h-screen flex-col justify-center gap-2 rounded-2xl border border-accent bg-surface/95 px-4 py-3 shadow-soft backdrop-blur">
+    <div class="flex items-center justify-between gap-2">
+      <span class="text-[10px] uppercase tracking-wide text-ink-faint">{{ t('bubble.title') }}</span>
+      <button type="button" class="text-ink-faint transition-colors hover:text-danger" :title="t('common.close')"
+              @click="hubClose">
+        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M18 6 6 18M6 6l12 12" />
         </svg>
       </button>
     </div>
 
-    <div v-if="empty" class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-      <div class="text-sm text-ink">{{ t('bubble.empty_title') }}</div>
-      <div class="text-xs text-ink-faint">{{ t('bubble.empty_hint') }}</div>
+    <div class="flex items-center justify-between gap-2">
+      <button type="button" class="btn-soft btn-circle p-1 disabled:opacity-30" :title="t('bubble.prev')"
+              @click="hubNav(-1)">
+        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+      </button>
+      <span class="min-w-[4rem] text-center text-xs tabular-nums text-ink">
+        {{ hubTotal ? Math.min(hubSelected + 1, hubTotal) : 0 }} / {{ hubTotal }}
+      </span>
+      <button type="button" class="btn-soft btn-circle p-1 disabled:opacity-30" :title="t('bubble.next')"
+              @click="hubNav(1)">
+        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
+      </button>
     </div>
 
-    <ul v-else class="flex-1 overflow-y-auto p-2">
-      <li v-for="(item, i) in items" :key="`${item.entryId}-${item.segIndex}`">
-        <div class="group relative mb-1 rounded-xl border p-2 transition-colors"
-             :class="i === selected ? 'border-gold bg-gold/10 ring-1 ring-gold/50' : 'border-line bg-surface-field/40 hover:border-accent'"
-             @mouseenter="selected = i">
-          <p class="line-clamp-3 text-xs leading-relaxed text-ink">{{ item.text }}</p>
-          <button type="button"
-                  class="absolute right-1.5 top-1.5 hidden rounded-md bg-surface px-1.5 py-0.5 text-[10px] text-ink-faint shadow-sm transition-colors hover:text-gold group-hover:block"
-                  :title="t('bubble.pin')"
-                  @click.stop="pinItem(item)">
-            📌
-          </button>
-        </div>
-      </li>
-    </ul>
-
-    <div v-if="!empty" class="border-t border-accent px-3 py-1.5 text-[10px] text-ink-faint">
-      {{ loading ? t('bubble.parsing') : t('bubble.paste_hint') }}
+    <div class="flex items-center justify-between gap-2 text-[10px] text-ink-faint">
+      <button type="button" class="transition-colors hover:text-gold disabled:opacity-30" :title="t('bubble.prev_page')"
+              :disabled="hubTotal === 0" @click="hubPageNav(-1)">
+        <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5" /><path d="m18 17-5-5 5-5" /></svg>
+      </button>
+      <span class="tabular-nums">
+        {{ hubPage + 1 }} / {{ Math.max(1, Math.ceil(hubTotal / 8)) }}
+      </span>
+      <button type="button" class="transition-colors hover:text-gold disabled:opacity-30" :title="t('bubble.next_page')"
+              :disabled="hubTotal === 0" @click="hubPageNav(1)">
+        <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 17 5-5-5-5" /><path d="m14 17 5-5-5-5" /></svg>
+      </button>
     </div>
   </div>
 </template>
