@@ -1,7 +1,6 @@
 import type { ClipExtractor, ClipScheme } from '../entities';
 import type { CopyEventDetail, ProcessContext, Segment, SmartClipEntry, SmartClipMode } from './types';
 import { runScheme, renderSchemeBody } from './template';
-import { broadcastCopy } from './openApi';
 import { readStoredExtractors } from './extractors';
 import dbService from '../db/dbService';
 
@@ -9,7 +8,7 @@ import dbService from '../db/dbService';
  * 智能剪贴板处理层（设计文档 §2 / §4.1）
  *
  * 数据流：dbService 新文本入库广播 'smart-clip:copy' → processByMode 解析 → 内存 store
- * （气泡窗口 / 开放 API 只读 store，不感知解析细节）。
+ * （气泡窗口只读 store，不感知解析细节）。
  *
  * 配置快照：设置页变更时调用 updateSmartClipConfig 推送（避免每次解析查库）；
  * 启动竞态（快照未就绪）时 resolveContext 按需从 settings 兜底拉取一次。
@@ -96,7 +95,7 @@ function pushEntry(entry: SmartClipEntry): void {
     if (entries.length > MAX_ENTRIES) entries.length = MAX_ENTRIES;
 }
 
-/** 气泡窗口 / 开放 API 消费：最近解析结果（副本，防外部误改内部状态） */
+/** 气泡窗口消费：最近解析结果（副本，防外部误改内部状态） */
 export function getSmartClipEntries(): SmartClipEntry[] {
     return [...entries];
 }
@@ -109,16 +108,13 @@ async function handleCopyEvent(detail: CopyEventDetail): Promise<void> {
     const ctx = await resolveContext();
     const segments = await processContent(detail.content, ctx);
     pushEntry({ id: detail.id, content: detail.content, segments, ts: detail.ts, configVersion });
-    // 开放 API：复制成功事件推送给外部订阅者（SSE；服务未启用时 Rust 侧 no-op）
-    void broadcastCopy(detail.content, segments);
 }
 
 /**
  * 按需解析指定剪贴板条目（Ctrl+B 气泡窗口对「当前选中项」调用）。
  *
  * - 命中缓存（同 id、同内容、且规则/模板配置未变）直接复用，避免重复调用 AI；
- * - 否则走与复制事件一致的处理管道（off 直通 / rule 规则 / ai 模板+AI），结果写入内存 store；
- * - 不广播开放 API 复制事件：这不是一次新的复制，避免订阅方收到重复推送。
+ * - 否则走与复制事件一致的处理管道（off 直通 / rule 规则 / ai 模板+AI），结果写入内存 store。
  */
 export async function parseClipItem(id: number, content: string, ts: number): Promise<SmartClipEntry> {
     const cached = entries.find((e) => e.id === id && e.content === content && e.configVersion === configVersion);

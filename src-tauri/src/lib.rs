@@ -1,8 +1,8 @@
 mod ai;
 mod app_usage;
 mod commands;
+mod island_api;
 mod migrations;
-mod open_api;
 
 use tauri::Manager;
 
@@ -49,8 +49,7 @@ pub fn run() {
             app_usage::pull_app_usage,
             ai::ai_test_connection,
             ai::ai_complete,
-            open_api::open_api_apply,
-            open_api::open_api_broadcast_copy,
+            island_api::island_api_apply,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

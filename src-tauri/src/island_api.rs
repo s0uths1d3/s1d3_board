@@ -1,11 +1,12 @@
-//! 开放 API（设计文档 §4.5）：仅监听 127.0.0.1 的最小 HTTP/SSE 服务（std 实现，零新增依赖）。
+//! 灵动岛 API（文档：`.docs/island-api.md`）：仅监听 127.0.0.1 的最小 HTTP/SSE 服务（std 实现，零新增依赖）。
 //!
-//! 端点：
-//! - GET  /api/health        → {ok, version, port}
-//! - GET  /api/events        → SSE 流（event: copy，data: JSON），复制成功事件推送
-//! - POST /api/notify/copy   → 外部注入复制事件（body JSON，可选 token）
+//! 端点（API v1.0.0）：
+//! - GET  /api/health       → {ok, data:{version, port}}
+//! - POST /api/island/show  → 第三方应用推送灵动岛显示请求（body JSON，可选 Bearer token）
+//! - GET  /api/events       → SSE 流（event: island.show），第三方显示事件广播
 //!
-//! 安全边界：仅回环地址绑定 + 可选 Bearer token；设置页可开关/改端口（占用时由前端提示）。
+//! 安全边界：仅回环地址绑定 + 可选 Bearer token；设置页可开关/改端口。
+//! 数据流：POST 校验通过后 → emit("island-api:show") 交前端灵动岛管理器弹岛 + SSE 广播给订阅者。
 //! 停机：TcpListener nonblocking + stop 标志轮询，accept 循环可干净退出。
 //! 事件广播：SSE 连接注册 Sender 到订阅者表，broadcast 时逐个投递（写失败即移除）。
 
@@ -18,9 +19,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
 
+/// API 版本（语义化版本；随 `.docs/island-api.md` 更新日志同步）
+pub const API_VERSION: &str = "1.0.0";
+
 const HEARTBEAT: Duration = Duration::from_secs(15);
 const ACCEPT_POLL: Duration = Duration::from_millis(150);
 const MAX_HEADER: usize = 8 * 1024;
+/// 文本内容长度上限（超出返回 422 text_too_long）
+const MAX_TEXT: usize = 2000;
+/// 自定义标题长度上限（胶囊空间有限，服务端截断到 24 字符）
+const MAX_TITLE_CHARS: usize = 24;
+/// 合法的 kind 取值（与前端 IslandKind 子集一致，默认 info）
+const KINDS: [&str; 5] = ["info", "success", "error", "copy", "paste"];
 
 /// SSE 订阅者表：每连接一个 channel sender（事件文本直接投递）
 static SUBSCRIBERS: std::sync::LazyLock<Mutex<Vec<Sender<String>>>> =
@@ -35,18 +45,30 @@ struct RunningServer {
 static RUNNING: std::sync::LazyLock<Mutex<Option<RunningServer>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct OpenApiCopyEvent {
-    pub content: String,
-    pub segments: Vec<SmartClipSegmentDto>,
-    pub ts: u64,
+/// POST /api/island/show 请求体（priority 为 v1 预留字段：接收但不处理，向前兼容）
+#[derive(Deserialize)]
+struct IslandShowRequest {
+    text: String,
+    kind: Option<String>,
+    title: Option<String>,
+    duration: Option<u64>,
+    #[allow(dead_code)]
+    priority: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct SmartClipSegmentDto {
-    pub index: u32,
-    pub text: String,
-    pub source: String,
+/// 广播给前端与 SSE 订阅者的显示事件（duration=0 表示使用应用内默认停留时长）
+#[derive(Serialize, Clone)]
+struct IslandShowEvent {
+    text: String,
+    kind: String,
+    title: Option<String>,
+    duration: u64,
+    ts: u64,
+}
+
+/// 统一错误响应体：{"ok":false,"error":{"code","message"}}
+fn error_body(code: &str, message: &str) -> String {
+    serde_json::json!({ "ok": false, "error": { "code": code, "message": message } }).to_string()
 }
 
 /// 广播文本到全部 SSE 订阅者（写失败者移除）
@@ -133,21 +155,85 @@ fn respond(stream: &mut TcpStream, status: &str, content_type: &str, body: &str)
     let _ = stream.flush();
 }
 
+/// POST /api/island/show：校验 → emit 前端 + SSE 广播
+fn handle_island_show(stream: &mut TcpStream, app: &tauri::AppHandle) {
+    let mut body = String::new();
+    let _ = stream.read_to_string(&mut body);
+    let req: IslandShowRequest = match serde_json::from_str(body.trim()) {
+        Ok(r) => r,
+        Err(e) => {
+            respond(stream, "400 Bad Request", "application/json",
+                    &error_body("invalid_json", &format!("request body is not valid JSON: {e}")));
+            return;
+        }
+    };
+    if req.text.is_empty() {
+        respond(stream, "400 Bad Request", "application/json",
+                &error_body("empty_text", "field 'text' is required and must not be empty"));
+        return;
+    }
+    if req.text.chars().count() > MAX_TEXT {
+        respond(stream, "422 Unprocessable Entity", "application/json",
+                &error_body("text_too_long", &format!("field 'text' exceeds {MAX_TEXT} characters")));
+        return;
+    }
+    let kind = match req.kind.as_deref() {
+        None | Some("") => "info".to_string(),
+        Some(k) if KINDS.contains(&k) => k.to_string(),
+        Some(_) => {
+            respond(stream, "422 Unprocessable Entity", "application/json",
+                    &error_body("invalid_kind", &format!("field 'kind' must be one of: {}", KINDS.join(", "))));
+            return;
+        }
+    };
+    // title：trim 后非空才生效，超长截断到 24 字符（宽容策略，见文档「参数说明」）
+    let title = req
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| t.chars().take(MAX_TITLE_CHARS).collect::<String>());
+
+    let event = IslandShowEvent {
+        text: req.text,
+        kind,
+        title,
+        duration: req.duration.unwrap_or(0),
+        ts: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    };
+    let json = match serde_json::to_string(&event) {
+        Ok(j) => j,
+        Err(e) => {
+            respond(stream, "500 Internal Server Error", "application/json",
+                    &error_body("internal_error", &format!("failed to serialize event: {e}")));
+            return;
+        }
+    };
+    // ① 前端灵动岛管理器弹岛（结构化 payload）② SSE 订阅者广播（第三方可监听显示事件）
+    let _ = app.emit("island-api:show", &event);
+    broadcast(&sse_frame("island.show", &json));
+    respond(stream, "204 No Content", "application/json", "");
+}
+
 /// 单连接处理：路由 + SSE 长连接（注册订阅者到全局表）
-fn handle_connection(mut stream: TcpStream, token: String) {
+fn handle_connection(mut stream: TcpStream, token: String, app: tauri::AppHandle) {
     let Some((method, path, req_token)) = read_request(&mut stream) else {
         return;
     };
 
     // 可选 token 校验（配置了 token 才强制）
     if !token.is_empty() && token != req_token {
-        respond(&mut stream, "401 Unauthorized", "application/json", "{\"error\":\"unauthorized\"}");
+        respond(&mut stream, "401 Unauthorized", "application/json",
+                &error_body("unauthorized", "missing or invalid bearer token"));
         return;
     }
 
     match (method.as_str(), path.as_str()) {
         ("GET", "/api/health") => {
-            let body = serde_json::json!({ "ok": true });
+            let body = serde_json::json!({ "ok": true, "data": { "version": API_VERSION, "port": CURRENT_PORT.load(Ordering::Relaxed) } });
             respond(&mut stream, "200 OK", "application/json", &body.to_string());
         }
         ("GET", "/api/events") => {
@@ -183,35 +269,34 @@ fn handle_connection(mut stream: TcpStream, token: String) {
                 }
             }
         }
-        ("POST", "/api/notify/copy") => {
-            let mut body = String::new();
-            let _ = stream.read_to_string(&mut body);
-            let data = body.trim().to_string();
-            if data.is_empty() {
-                respond(&mut stream, "400 Bad Request", "application/json", "{\"error\":\"empty body\"}");
-                return;
-            }
-            broadcast(&sse_frame("copy", &data));
-            respond(&mut stream, "204 No Content", "text/plain", "");
+        ("POST", "/api/island/show") => handle_island_show(&mut stream, &app),
+        ("GET", "/api/island/show") | ("POST", "/api/health") | ("POST", "/api/events") => {
+            respond(&mut stream, "405 Method Not Allowed", "application/json",
+                    &error_body("method_not_allowed", "HTTP method not allowed for this endpoint"));
         }
         _ => {
-            respond(&mut stream, "404 Not Found", "application/json", "{\"error\":\"not found\"}");
+            respond(&mut stream, "404 Not Found", "application/json",
+                    &error_body("not_found", "unknown endpoint, see .docs/island-api.md"));
         }
     }
 }
+
+/// 当前监听端口（serve 启动时写入，停止时清零；health 回显用）
+static CURRENT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 
 /// 服务线程主体：nonblocking accept 轮询 + stop 标志
 fn serve(port: u16, token: String, stop: Arc<AtomicBool>, app: tauri::AppHandle) {
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
         Err(e) => {
-            log::error!("[open-api] 端口 {port} 绑定失败: {e}");
-            let _ = app.emit("open-api:failed", format!("port {port}: {e}"));
+            log::error!("[island-api] 端口 {port} 绑定失败: {e}");
+            let _ = app.emit("island-api:failed", format!("port {port}: {e}"));
             return;
         }
     };
     let _ = listener.set_nonblocking(true);
-    log::info!("[open-api] listening on 127.0.0.1:{port}");
+    CURRENT_PORT.store(port, Ordering::Relaxed);
+    log::info!("[island-api] listening on 127.0.0.1:{port}");
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -221,7 +306,8 @@ fn serve(port: u16, token: String, stop: Arc<AtomicBool>, app: tauri::AppHandle)
             Ok((stream, _)) => {
                 let _ = stream.set_nonblocking(false);
                 let token = token.clone();
-                std::thread::spawn(move || handle_connection(stream, token));
+                let app = app.clone();
+                std::thread::spawn(move || handle_connection(stream, token, app));
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(ACCEPT_POLL);
@@ -229,20 +315,21 @@ fn serve(port: u16, token: String, stop: Arc<AtomicBool>, app: tauri::AppHandle)
             Err(_) => break,
         }
     }
-    log::info!("[open-api] server stopped");
+    CURRENT_PORT.store(0, Ordering::Relaxed);
+    log::info!("[island-api] server stopped");
 }
 
 // ===================== Tauri commands =====================
 
-/// 应用/重启/停止开放 API（设置页开关与端口变更时调用），返回实际端口（运行中）或 0（停止）
+/// 应用/重启/停止灵动岛 API（设置页开关与端口变更时调用），返回实际端口（运行中）或 0（停止）
 #[tauri::command]
-pub fn open_api_apply(
+pub fn island_api_apply(
     app: tauri::AppHandle,
     enabled: bool,
     port: u16,
     token: String,
 ) -> Result<u16, String> {
-    let mut running = RUNNING.lock().map_err(|_| "open-api 状态锁中毒")?;
+    let mut running = RUNNING.lock().map_err(|_| "island-api 状态锁中毒")?;
 
     // 配置变化一律先停旧实例（stop 标志 + join）
     if let Some(old) = running.take() {
@@ -267,20 +354,4 @@ pub fn open_api_apply(
     let handle = std::thread::spawn(move || serve(port, token, stop2, app2));
     *running = Some(RunningServer { stop, thread: Some(handle) });
     Ok(port)
-}
-
-/// 复制事件广播（smartClip 处理层在复制入库后调用）：推送给全部 SSE 订阅者
-#[tauri::command]
-pub fn open_api_broadcast_copy(content: String, segments: Vec<SmartClipSegmentDto>) -> Result<(), String> {
-    let event = OpenApiCopyEvent {
-        content,
-        segments,
-        ts: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0),
-    };
-    let json = serde_json::to_string(&event).map_err(|e| e.to_string())?;
-    broadcast(&sse_frame("copy", &json));
-    Ok(())
 }
