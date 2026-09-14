@@ -13,12 +13,12 @@
 | 3 AI 通道 | ai.rs（AIProvider：openai-compat + anthropic 原生；enum 静态分派）；ai_test_connection / ai_complete；设置页 provider/base_url/model/测试连接 | src-tauri/src/ai.rs、Cargo.toml（reqwest rustls + serde_json）、SettingMain.vue |
 | 4 模板渲染 | {content}/{segN}/{date}/{time} + {ai:指令} 异步占位符；渲染降级回退 | app/src/smart-clip/{template,aiClient}.ts |
 | 5 气泡窗口 | bubble.vue（列表/钉住双模式）；BubbleToggleCommand（Ctrl+B 全局，ready 握手）；capabilities clipboard-bubble-*；pasteContentToActiveApp 复用 | app/pages/bubble.vue、BubbleToggleCommand.ts、InitShortcuts.ts、capabilities |
-| 6 开放 API | open_api.rs（std TCP 手写 HTTP + SSE，仅 127.0.0.1，token 可选，心跳线程）；openApi.ts 前端客户端；smartClip 广播接入 | src-tauri/src/open_api.rs、app/src/smart-clip/openApi.ts |
+| 6 开放 API | **已移除**（原 open_api.rs / openApi.ts，随 v0.3.x 被「灵动岛 API」替代，见 `.docs/island-api.md`） | — |
 | 7 收尾 | 设计文档状态 / CHANGELOG / README | 本文件、CHANGELOG.md、README* |
 
 ## 1. 背景与目标
 
-在现有剪贴板工具（采集 / 搜索 / 粘贴）之上叠加"智能处理"能力：复制的内容不再只是原样存取，而是经过**可配置的解析管道**（规则拆分 / AI 加工 / 模板重组）变成结构化片段，供气泡窗口快捷粘贴，并通过本地开放 API 把事件暴露给外部窗口（弹窗、灵动岛）。
+在现有剪贴板工具（采集 / 搜索 / 粘贴）之上叠加"智能处理"能力：复制的内容不再只是原样存取，而是经过**可配置的解析管道**（规则拆分 / AI 加工 / 模板重组）变成结构化片段，供气泡窗口快捷粘贴。
 
 **核心需求映射**：
 
@@ -28,7 +28,7 @@
 | ② 非 AI 驱动模式（自定义 clip 分词与复制规则） | 规则引擎（§4.1） |
 | ③ 内容解析与快捷粘贴（快捷键唤出多个独立气泡窗口） | 处理管道 + 气泡窗口（§4.4） |
 | ④ 自定义模板与规则 | 模板渲染（§4.3）+ 规则/模板管理（§5） |
-| ⑤ 开放 API（外部弹窗/灵动岛，仅复制成功提示场景） | 开放 API（§4.5） |
+| ⑤ 开放 API（外部弹窗/灵动岛，仅复制成功提示场景） | ~~开放 API（§4.5）~~ → 已移除，由灵动岛 API 替代 |
 
 **设计原则**：处理管道各环节（解析器、AI 提供商、渲染器、事件）全部接口化，新增一种规则类型 / AI 协议 / 事件类型不改既有代码。
 
@@ -40,12 +40,12 @@
                     └──────────────────────────────────────────────────────┘
                                    │                          │
                         ┌──────────▼──────────┐    ┌──────────▼─────────────┐
-                        │ 气泡窗口 BubbleWindow │    │ 开放 API (Rust HTTP/SSE)│──► 外部弹窗/灵动岛
-                        │ 快捷键唤出·选择粘贴   │    │ 仅复制成功事件推送       │
+                        │ 气泡窗口 BubbleWindow │    │ ~~开放 API~~ → 灵动岛 API │──► 第三方弹岛/SSE
+                        │ 快捷键唤出·选择粘贴   │    │ （见 .docs/island-api.md） │
                         └─────────────────────┘    └────────────────────────┘
 ```
 
-- **Segment 统一数据结构**：`{ index, text, source: 'rule' | 'ai' | 'template', meta? }`——所有消费者（气泡、开放 API、未来功能）只依赖它
+- **Segment 统一数据结构**：`{ index, text, source: 'rule' | 'ai' | 'template', meta? }`——所有消费者（气泡、灵动岛 API、未来功能）只依赖它
 - **处理模式三档**（`smart_clip_mode`）：`off`（关闭）/ `rule`（纯规则）/ `ai`（规则 + AI 加工），设置页一键切换
 
 ## 3. 数据模型（migrations.rs 追加迁移）
@@ -80,9 +80,8 @@ settings KV 新增键：
 | `smart_default_rule_id` | 默认规则 | 空 |
 | `smart_default_template_id` | 默认模板 | 空 |
 | `smart_bubble_hotkey` | 气泡唤出快捷键 | `Ctrl+B` |
-| `open_api_enabled` | 开放 API 开关 | `0` |
-| `open_api_port` | 监听端口 | `12935` |
-| `open_api_token` | 可选鉴权 token | 空 |
+| `open_api_enabled` / `open_api_port` / `open_api_token` | **已废弃**（随开放 API 移除，不再读写） | — |
+| `island_api_enabled` / `island_api_port` / `island_api_token` | 灵动岛 API：开关 / 端口 / 可选鉴权 token（见 `.docs/island-api.md`） | `0` / `12935` / 空 |
 | `ai_provider` | AI 提供商：`openai-compat` / `anthropic` | `openai-compat` |
 | `ai_base_url` | AI API 地址 | `https://api.openai.com/v1` |
 | `ai_model` | 模型名 | `gpt-4o-mini` |
@@ -152,19 +151,9 @@ processContent(content: string): Promise<Segment[]>   // 按 smart_clip_mode 分
 - 新复制到达时：已开启的气泡实时刷新内容（事件监听）
 - 窗口定位：主气泡出现在鼠标附近（复用 usePopupPosition 思路）
 
-### 4.5 开放 API（Rust 侧 `src-tauri/src/open_api.rs`，tiny_http 轻量实现）
+### 4.5 开放 API —— **已移除**（v0.3.x，由「灵动岛 API」替代）
 
-| 端点 | 方法 | 说明 |
-|---|---|---|
-| `/api/health` | GET | `{ok, version, port}` |
-| `/api/events` | GET | **SSE** 流式推送（`event: copy`，data: JSON） |
-| `/api/notify/copy` | POST | 外部主动注入复制事件（可选 token） |
-
-- **仅绑定 127.0.0.1**；端口默认 12935，占用自动 +1，实际端口写回 KV 供外部发现
-- 可选 `open_api_token`：SSE 连接与 POST 均校验 `Authorization: Bearer <token>`
-- 事件接入点：dbService 复制入库成功后广播 `copy` 事件（payload：content + 解析后 segments + ts）
-- **仅复制成功提示场景调用**（需求边界）；事件总线抽象，未来可加 paste / rule-matched 等事件
-- 生命周期：随 app 启动（enabled=true 时）；设置切换实时启停
+原 `src-tauri/src/open_api.rs` / `app/src/smart-clip/openApi.ts`（tiny_http + `/api/notify/copy` 复制事件推送）已整体删除。替代实现见 **灵动岛 API**：`src-tauri/src/island_api.rs` + `app/src/island/islandApi.ts`，端点 `/api/health`、`POST /api/island/show`（第三方弹岛）、`GET /api/events`（SSE `island.show`），完整契约见 [`.docs/island-api.md`](./island-api.md)。
 
 ## 5. UI 变更（设置页 SettingMain.vue）
 
@@ -178,7 +167,7 @@ processContent(content: string): Promise<Segment[]>   // 按 smart_clip_mode 分
   - 规则列表 CRUD（拖拽排序 = 优先级）
   - 模板列表 CRUD
   - 气泡快捷键录制（复用 ShortcutRow 组件）
-  - 开放 API：开关 / 端口 / token
+  - ~~开放 API：开关 / 端口 / token~~（已移除；灵动岛 API 配置位于「通用设置 → 灵动岛 API」）
 
 ## 6. 快捷键汇总
 
