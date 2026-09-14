@@ -17,7 +17,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { ClipExtractor, ClipScheme } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
 import { updateSmartClipConfig } from '~/src/smart-clip/smartClip';
-import { OPEN_API_DEFAULT_PORT, applyOpenApi } from '~/src/smart-clip/openApi';
+import { ISLAND_API_DEFAULT_PORT, applyIslandApi } from '~/src/island/islandApi';
 import {
   loadExtractors, persistExtractors, missingBuiltinExtractors,
   type Translator,
@@ -26,6 +26,7 @@ import { generateExtractorDraft, generateSchemeDraft } from '~/src/smart-clip/ai
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
+import { useIslandEnabled, setIslandEnabled, useIslandTiming, ensureIslandTimingLoaded, setIslandDelayMs, setIslandDurationMs, ISLAND_DELAY_DEFAULT, ISLAND_DURATION_DEFAULT } from '~/composables/useCopyIsland';
 import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
 import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
 import { useI18n, setLocaleMode, LOCALES, type LocaleMode } from '~/composables/useI18n';
@@ -97,6 +98,43 @@ const { tooltipEnabled } = useTooltipEnabled();
 watch(tooltipEnabled, async (val) => {
   await dbService.setKeyValue('tooltip_enabled', val ? '1' : '0');
 });
+
+/** 灵动岛提示：复制/粘贴时屏幕顶部胶囊反馈（useCopyIsland 模块级 watch 负责关闭窗口收尾） */
+const { islandEnabled } = useIslandEnabled();
+async function onIslandToggle(val: boolean) {
+  await setIslandEnabled(val);
+  showHint(val ? t('setting.general.island_on') : t('setting.general.island_off'));
+}
+
+// ===== 灵动岛出现延迟 / 停留时长（自由输入毫秒值；未设置/非法输入回落默认，范围自动钳制） =====
+const { islandDelayMs, islandDurationMs } = useIslandTiming();
+const islandDelayInput = ref('');
+const islandDurationInput = ref('');
+// 异步加载落定后回填输入框（未设置过则显示默认值）
+void ensureIslandTimingLoaded().then(() => {
+  islandDelayInput.value = String(islandDelayMs.value);
+  islandDurationInput.value = String(islandDurationMs.value);
+});
+// 实时保存：逐字符输入加 400ms 防抖，停顿后落库并钳制
+watch(islandDelayInput, (val) => {
+  debouncePersist('island_delay_ms', () => setIslandDelayMs(val.trim() === '' ? ISLAND_DELAY_DEFAULT : Number(val)));
+});
+watch(islandDurationInput, (val) => {
+  debouncePersist('island_duration_ms', () => setIslandDurationMs(val.trim() === '' ? ISLAND_DURATION_DEFAULT : Number(val)));
+});
+/** 失焦保存：立即写入（不等防抖）并把输入框收敛为实际生效值（钳制/默认回填） */
+async function saveIslandDelay() {
+  const val = islandDelayInput.value.trim();
+  await setIslandDelayMs(val === '' ? ISLAND_DELAY_DEFAULT : Number(val));
+  islandDelayInput.value = String(islandDelayMs.value);
+  showHint(t('setting.general.island_delay_saved'));
+}
+async function saveIslandDuration() {
+  const val = islandDurationInput.value.trim();
+  await setIslandDurationMs(val === '' ? ISLAND_DURATION_DEFAULT : Number(val));
+  islandDurationInput.value = String(islandDurationMs.value);
+  showHint(t('setting.general.island_duration_saved'));
+}
 
 // ===== 窗口弹出位置（快捷键唤出主窗口时的落点） =====
 const { popupPositionMode } = usePopupPosition();/** 三个候选模式：光标处 / 上次打开位置 / 光标所在屏幕居中 */
@@ -218,9 +256,6 @@ const smartMode = ref<SmartClipMode>('off');
 const schemes = ref<ClipScheme[]>([]);
 const extractors = ref<ClipExtractor[]>([]);
 const defaultSchemeId = ref('');
-const openApiEnabled = ref(false);
-const openApiPort = ref(String(OPEN_API_DEFAULT_PORT));
-const openApiToken = ref('');
 /** AI 结果冷却窗口（秒）：同内容在此时间内不重复触发 AI 生成（0 = 每次重新生成） */
 const aiCacheWindow = ref('300');
 watch(aiCacheWindow, (val) => {
@@ -546,15 +581,22 @@ async function restoreExtractors(): Promise<void> {
   showHint(t('smart.extractors_restored', { count: String(missing.length) }));
 }
 
-// 开放 API：开关/端口/令牌任一变化即应用（非法端口不应用，避免打字过程误触发）
-watch([openApiEnabled, openApiPort, openApiToken], async ([en, p, tk]) => {
+// ===== 灵动岛 API（第三方应用集成）：开关/端口/令牌任一变化即应用（非法端口不应用，避免打字过程误触发） =====
+const islandApiEnabled = ref(false);
+const islandApiPort = ref(String(ISLAND_API_DEFAULT_PORT));
+const islandApiToken = ref('');
+watch([islandApiEnabled, islandApiPort, islandApiToken], async ([en, p, tk]) => {
   const portNum = Number(p);
   if (!en) {
-    await applyOpenApi(false, portNum || OPEN_API_DEFAULT_PORT, tk);
+    await applyIslandApi(false, portNum || ISLAND_API_DEFAULT_PORT, tk);
     return;
   }
   if (!portNum || portNum < 1 || portNum > 65535) return;
-  await applyOpenApi(true, portNum, tk);
+  await applyIslandApi(true, portNum, tk);
+});
+// 开关切换提示（端口/令牌输入过程不弹提示，避免干扰）
+watch(islandApiEnabled, (en) => {
+  showHint(t(en ? 'island_api.on' : 'island_api.off'));
 });
 
 // 处理模式/默认方案变化：持久化 + 推送配置快照给处理层
@@ -764,6 +806,21 @@ const settings: SettingGroup[] = [
         label: 'setting.general.tooltip_window',
         value: '',
         type: 'checkbox'
+      },
+      {
+        label: 'setting.general.island_hint',
+        value: '',
+        type: 'checkbox'
+      },
+      {
+        label: 'setting.general.island_delay',
+        value: '',
+        type: 'input'
+      },
+      {
+        label: 'setting.general.island_duration',
+        value: '',
+        type: 'input'
       },
       {
         label: 'setting.general.smart_reminder',
@@ -1158,9 +1215,9 @@ onMounted(async () => {
     extractors.value = await loadExtractors(t as Translator);
     // 方案对账：清理旧内置方案行、保证至少一条方案存在、修正默认方案指向
     await ensureSchemes();
-    openApiEnabled.value = (await dbService.getKeyValue('open_api_enabled')) === '1';
-    openApiPort.value = (await dbService.getKeyValue('open_api_port')) || String(OPEN_API_DEFAULT_PORT);
-    openApiToken.value = await dbService.getKeyValue('open_api_token');
+    islandApiEnabled.value = (await dbService.getKeyValue('island_api_enabled')) === '1';
+    islandApiPort.value = (await dbService.getKeyValue('island_api_port')) || String(ISLAND_API_DEFAULT_PORT);
+    islandApiToken.value = await dbService.getKeyValue('island_api_token');
     aiCacheWindow.value = (await dbService.getKeyValue('ai_result_window')) || '300';
     refreshSmartClipConfig();
   } catch (e) {
@@ -1626,23 +1683,6 @@ onMounted(async () => {
                        class="w-24 rounded-lg border border-line bg-surface-field px-2 py-1 text-right text-xs tabular-nums text-ink" />
               </div>
             </div>
-
-            <!-- 开放 API -->
-            <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
-              <div class="mb-3 flex items-center justify-between">
-                <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('openapi.section') }}</span>
-                <UiToggleSwitch v-model="openApiEnabled" :label="''" />
-              </div>
-              <div class="flex items-center gap-2">
-                <input v-model="openApiPort" class="w-28 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                       :placeholder="t('openapi.port')" @change="openApiPort = String(Number(openApiPort) || OPEN_API_DEFAULT_PORT)" />
-                <input v-model="openApiToken" class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                       :placeholder="t('openapi.token')" />
-              </div>
-              <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
-                {{ t('openapi.hint', { port: openApiPort }) }}
-              </p>
-            </div>
           </div>
 
           <!-- 其他设置组（排除导航栏设置，导航栏有独立分支） -->
@@ -1708,6 +1748,7 @@ onMounted(async () => {
                   <SettingInput
                       v-else-if="item.type === 'input' && item.label === 'setting.general.api_key'"
                       v-model="apiKey"
+                      secret
                       :placeholder="t('setting.general.api_key_placeholder')"
                       @save="showHint(t('setting.general.api_key_saved'))"
                   />
@@ -1748,6 +1789,14 @@ onMounted(async () => {
                       :tip-on="t('setting.shortcuts.click_disable')" :tip-off="t('setting.shortcuts.click_enable')"
                       :label="t('setting.general.tooltip_window')"
                       @change="showHint(tooltipEnabled ? t('setting.general.tooltip_on') : t('setting.general.tooltip_off'))"
+                  />
+                  <!-- 灵动岛提示：复制/粘贴时屏幕顶部胶囊反馈 -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.island_hint'"
+                      :model-value="islandEnabled"
+                      :tip-on="t('setting.shortcuts.click_disable')" :tip-off="t('setting.shortcuts.click_enable')"
+                      :label="t('setting.general.island_hint')"
+                      @change="onIslandToggle"
                   />
                   <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === 'setting.general.search_highlight'"
@@ -1813,6 +1862,19 @@ onMounted(async () => {
                       :label="t('setting.general.popup_position')"
                       @update:model-value="selectPopupPosition"
                   />
+                  <!-- 灵动岛出现延迟 / 停留时长：自由输入毫秒值（默认值见占位提示，失焦钳制生效） -->
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.island_delay'"
+                      v-model="islandDelayInput"
+                      :placeholder="t('setting.general.island_delay_placeholder')"
+                      @save="saveIslandDelay"
+                  />
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.island_duration'"
+                      v-model="islandDurationInput"
+                      :placeholder="t('setting.general.island_duration_placeholder')"
+                      @save="saveIslandDuration"
+                  />
                   <!-- 配色：琥珀/跟随系统/浅色/深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 -->
                   <UiDropdown
                       v-else-if="item.type === 'select'"
@@ -1849,6 +1911,23 @@ onMounted(async () => {
                 </div>
               </li>
             </ul>
+
+            <!-- 灵动岛 API：第三方应用集成入口（本地 HTTP/SSE，接入文档 .docs/island-api.md） -->
+            <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
+              <div class="mb-3 flex items-center justify-between">
+                <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('island_api.section') }}</span>
+                <UiToggleSwitch v-model="islandApiEnabled" :label="''" />
+              </div>
+              <div class="flex items-center gap-2">
+                <input v-model="islandApiPort" class="w-28 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                       :placeholder="t('island_api.port')" @change="islandApiPort = String(Number(islandApiPort) || ISLAND_API_DEFAULT_PORT)" />
+                <input v-model="islandApiToken" class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                       :placeholder="t('island_api.token')" />
+              </div>
+              <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
+                {{ t('island_api.hint', { port: islandApiPort }) }}
+              </p>
+            </div>
           </div>
 
           <!-- 导航栏设置：tab 顺序与显示开关（剪贴板/设置强制保留；统计受解锁门槛控制） -->
