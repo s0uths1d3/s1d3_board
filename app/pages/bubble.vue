@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useRoute } from 'vue-router';
 import { listen, emit, emitTo } from '@tauri-apps/api/event';
 import { getCurrentWindow, cursorPosition, LogicalSize } from '@tauri-apps/api/window';
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { isTauri } from '~/utils/env';
 import { useI18n } from '~/composables/useI18n';
 import type { IslandKind } from '~/composables/useCopyIsland';
@@ -16,11 +16,12 @@ import type { IslandKind } from '~/composables/useCopyIsland';
  *   useCopyIsland 管理；窗口显隐、进出场动画与超时自动隐藏由本页控制，
  *   事件流：island:ready 握手 → island:show 推送 → 显示动画 → SHOW_MS 后收起并隐藏窗口。
  * - ring（?mode=ring&index=N）：环形布局中的一只独立气泡窗口。文本由管理器
- *   ready 握手后 emitTo('bubble:ring:data') 投递；选中高亮来自 ring:state 广播；
- *   Ctrl+悬停 / 左键点击 → ring:select-req；双击 → ring:paste-req（由管理器统一
- *   隐藏全部环形窗口并模拟粘贴）；Esc → ring:close。
- * - ring-hub（?mode=ring-hub）：环心控制盘。‹ › 切换选中、« » 翻页、✕ 整体关闭，
- *   仅发指令（ring:nav / ring:page-nav / ring:close），状态由 ring:state 广播回显。
+ *   ready 握手后 emitTo('bubble:ring:data') 投递（窗口级 listen 定向接收，防串台）；
+ *   选中高亮来自 ring:state 广播；Ctrl+悬停 / 左键点击 → ring:select-req；
+ *   双击 → ring:paste-req（由管理器统一隐藏全部环形窗口并模拟粘贴）。
+ * - ring-hub（?mode=ring-hub）：环心控制盘，**持有系统焦点的唯一键盘入口**：
+ *   ←↑/→↓ 切换选中（ring:nav）、PgUp/PgDn 翻页（ring:page-nav）、Enter 粘贴选中项
+ *   （ring:paste-req）、Esc 整体关闭（ring:close），状态由 ring:state 广播回显。
  *
  * 窗口的创建/定位/分页显隐/层级（选中置顶）全部由 BubbleToggleCommand 管理。
  */
@@ -388,7 +389,10 @@ onMounted(async () => {
     return;
   }
   if (isPinMode) {
-    unlisteners.push(await listen<{ text: string }>('bubble:pin:data', (ev) => {
+    // 窗口级 listen（target 绑定本窗口 label）：管理器 emitTo 定向投递只会命中目标窗口。
+    // 全局 listen（target=Any）会收到发往**所有** pin 窗口的投递（tauri v2 对 Any 监听器无条件放行），
+    // 多个钉住卡片并存时文本互相覆盖——此前环盘气泡内容全部相同的根因。
+    unlisteners.push(await getCurrentWebviewWindow().listen<{ text: string }>('bubble:pin:data', (ev) => {
       pinnedText.value = ev.payload.text;
       void getCurrentWindow().show();
     }));
@@ -397,7 +401,11 @@ onMounted(async () => {
     return;
   }
   if (isRingBubble) {
-    unlisteners.push(await listen<{ text: string }>('bubble:ring:data', (ev) => {
+    // 透明窗口：body 渐变背景与光晕必须去除，否则透出灰底、圆角卡片四角露方块
+    // （复用 .island-body 规则——该规则即"body 透明 + 去全局光晕"，与岛模式共用）
+    document.body.classList.add('island-body');
+    // 窗口级 listen（同 pin 模式注释）：emitTo 定向投递只命中本窗口，杜绝多气泡文本串台
+    unlisteners.push(await getCurrentWebviewWindow().listen<{ text: string }>('bubble:ring:data', (ev) => {
       ringText.value = ev.payload.text;
     }));
     unlisteners.push(await listen<{ selected: number }>('ring:state', (ev) => {
@@ -408,6 +416,8 @@ onMounted(async () => {
     return;
   }
   if (isRingHub) {
+    // 透明窗口：同 ring 气泡，去除 body 背景让圆润卡片直接悬浮于桌面
+    document.body.classList.add('island-body');
     unlisteners.push(await listen<{ selected: number; page: number; total: number }>('ring:state', (ev) => {
       hubSelected.value = ev.payload.selected;
       hubPage.value = ev.payload.page;
@@ -421,11 +431,38 @@ onMounted(async () => {
   }
 });
 
-/** 控制盘 Esc：关闭整个环（气泡 + 控制盘） */
+/**
+ * 控制盘键盘导航（控制盘持有系统焦点，是环形系统的唯一键盘入口）：
+ * ←↑/→↓ 切换选中 · Enter 粘贴选中项 · PgUp/PgDn 翻页 · Esc 关闭整环
+ */
 function onHubKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    hubClose();
+  switch (e.key) {
+    case 'ArrowLeft':
+    case 'ArrowUp':
+      e.preventDefault();
+      hubNav(-1);
+      break;
+    case 'ArrowRight':
+    case 'ArrowDown':
+      e.preventDefault();
+      hubNav(1);
+      break;
+    case 'Enter':
+      e.preventDefault();
+      void emit('ring:paste-req', { index: hubSelected.value });
+      break;
+    case 'PageUp':
+      e.preventDefault();
+      hubPageNav(-1);
+      break;
+    case 'PageDown':
+      e.preventDefault();
+      hubPageNav(1);
+      break;
+    case 'Escape':
+      e.preventDefault();
+      hubClose();
+      break;
   }
 }
 
@@ -439,8 +476,9 @@ onBeforeUnmount(() => {
     cancelIslandExpand();
     if (islandCollapseTimer) { clearTimeout(islandCollapseTimer); islandCollapseTimer = null; }
     stopIslandProximity();
-    document.body.classList.remove('island-body');
   }
+  // ring / ring-hub 模式挂载时也加了 island-body（body 透明），统一在此移除
+  document.body.classList.remove('island-body');
 });
 </script>
 
@@ -525,10 +563,13 @@ onBeforeUnmount(() => {
     </button>
   </div>
 
-  <!-- 环形气泡：独立窗口，选中高亮，Ctrl+悬停/点击选中，双击粘贴 -->
+  <!-- 环形气泡：独立透明窗口 + 圆润卡片（四周 8px 留白供圆角与阴影渲染，四角透出桌面），
+       选中高亮（金边 + 外发光 + 序号徽章），Ctrl+悬停/点击选中，双击粘贴 -->
   <div v-else-if="isRingBubble"
-       class="group relative h-screen cursor-pointer overflow-hidden rounded-2xl border p-3 pr-6 shadow-soft transition-all duration-200 ease-soft"
-       :class="ringSelected ? 'border-gold bg-surface-field ring-1 ring-gold/60' : 'border-line bg-surface-field/90 hover:border-accent'"
+       class="group relative h-screen cursor-pointer rounded-2xl border p-2 shadow-soft transition-all duration-200 ease-soft"
+       :class="ringSelected
+         ? 'border-gold bg-surface-field ring-2 ring-gold shadow-[0_0_14px_rgb(var(--c-gold)/0.45)]'
+         : 'border-line bg-surface-field/95 hover:border-accent'"
        @pointermove="ringPointerMove"
        @click="ringSelect"
        @dblclick="ringPaste">
@@ -541,8 +582,9 @@ onBeforeUnmount(() => {
           class="absolute bottom-1 right-2 text-[9px] tabular-nums text-gold">{{ ringIndex + 1 }}</span>
   </div>
 
-  <!-- 环心控制盘：箭头导航 + 翻页 + 关闭 -->
-  <div v-else-if="isRingHub" class="flex h-screen flex-col justify-center gap-2 rounded-2xl border border-accent bg-surface/95 px-4 py-3 shadow-soft backdrop-blur">
+  <!-- 环心控制盘：箭头导航 + 翻页 + 关闭（透明窗口 + 圆润卡片，外层 p-1.5 为阴影留白） -->
+  <div v-else-if="isRingHub" class="h-screen p-1.5">
+    <div class="flex h-full flex-col justify-center gap-2 rounded-2xl border border-accent bg-surface/95 px-3.5 py-2.5 shadow-soft backdrop-blur">
     <div class="flex items-center justify-between gap-2">
       <span class="text-[10px] uppercase tracking-wide text-ink-faint">{{ t('bubble.title') }}</span>
       <button type="button" class="text-ink-faint transition-colors hover:text-danger" :title="t('common.close')"
@@ -580,11 +622,26 @@ onBeforeUnmount(() => {
         <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 17 5-5-5-5" /><path d="m14 17 5-5-5-5" /></svg>
       </button>
     </div>
+
+    <!-- 键盘操作提示：控制盘持有焦点，方向键/Enter/Esc 直接可用 -->
+    <div class="text-center text-[9px] leading-none text-ink-faint">{{ t('bubble.paste_hint') }}</div>
+    </div>
   </div>
 </template>
 
 <style>
-/* 灵动岛窗口专用（island 模式经 body class 作用，不影响 pin/ring 窗口的主题背景）：
+/* dev 模式下 Nuxt DevTools / Vite overlay 会注入到每个页面的 document，
+   悬浮窗（island/ring/hub/pin）必须隐藏，否则黑色胶囊浮层污染气泡视觉（生产构建无此项） */
+#nuxt-devtools-container,
+[id^="nuxt-devtools"],
+.vite-error-overlay,
+vue-devtools-anchor {
+  display: none !important;
+}
+</style>
+
+<style>
+/* 透明悬浮窗口通用（island / ring / ring-hub 模式经 body class 作用）：
    去除全局 body 渐变与光晕，保持窗口透明以悬浮于桌面 */
 body.island-body {
   background: transparent !important;

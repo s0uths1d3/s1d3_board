@@ -49,6 +49,13 @@ async function tryHideMainWindow() {
       && Date.now() < (window as any).__childOpeningUntil) {
       return;
     }
+    // 环形气泡系统（Ctrl+B）活跃期间豁免自动隐藏：环形窗口 focus:false 不持焦点，
+    // hub 创建成为前台即触发主窗口失焦；若在此连带隐藏主窗口并关闭环形窗口，
+    // ring 内存状态会残留（下次 Ctrl+B 被误判为 toggle off 而无反应）。
+    // 环形生命周期由 Ctrl+B / Esc / 粘贴 / 环心关闭按钮自管理，见 BubbleToggleCommand。
+    if (typeof window !== 'undefined' && (window as any).__ringActive) {
+      return;
+    }
     // tooltip 正在使用（显示中）期间，跳过失焦自动隐藏；
     // 用 tooltip:active 生命周期信号（而非短命 interacting 标志），覆盖点击/拖动等全部交互场景
     if (typeof window !== 'undefined' && (window as any).__tooltipActive) {

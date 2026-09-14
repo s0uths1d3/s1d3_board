@@ -28,7 +28,7 @@ const RING_LIMIT = 8;
 const BUBBLE_W = 190;
 const BUBBLE_H = 150;
 const HUB_W = 240;
-const HUB_H = 176;
+const HUB_H = 192;
 const RING_RADIUS = 260;
 /** 片段总数上限（3 环），防止极端数据创建过多 WebView */
 const MAX_SEGMENTS = 24;
@@ -112,8 +112,8 @@ function measureBubble(text: string): { w: number; h: number } {
   const CHAR = 11;      // 11px 字号下 CJK 字宽
   const ASCII = 6.2;    // ASCII 字宽
   const LINE_H = 17;    // leading-relaxed 行高
-  const PAD_X = 28;     // 左右内边距 + 钉住按钮预留
-  const PAD_Y = 26;     // 上下内边距
+  const PAD_X = 20;     // 透明窗口四周留白（p-2 = 8px × 2）+ 边框，余量供圆角阴影渲染
+  const PAD_Y = 20;
   const MAX_TEXT_W = 236;
   let lines = 0;
   let maxLineW = 0;
@@ -202,10 +202,11 @@ async function ensureBubble(index: number): Promise<void> {
     y: Math.round(pos.y),
     resizable: false,
     decorations: false,
-    transparent: false,
+    transparent: true,   // 透明窗口：rounded-2xl 卡片四角真正透出桌面，呈现圆润气泡
     skipTaskbar: true,
     alwaysOnTop: true,
     focus: false,        // 不抢目标应用焦点
+    focusable: false,    // 点击气泡不转移系统焦点：键盘导航始终留在控制盘
     shadow: false,
     visible: false,
   });
@@ -256,17 +257,29 @@ function raiseSelected(): void {
   void slot.win.setAlwaysOnTop(true).catch(() => {});
 }
 
-/** 导航：在当前页范围内环形切换选中 */
+/** 导航：全序循环切换选中（键盘 ←↑/→↓），跨页时自动翻页显隐 */
 function navSelected(delta: number): void {
-  if (!ring) return;
-  const start = ring.page * RING_LIMIT;
-  const count = Math.min(ring.segments.length - start, RING_LIMIT);
-  if (count <= 0) return;
-  const end = start + count - 1;
-  let s = ring.selected;
-  s = s < start || s > end ? start : start + ((s - start + delta + count) % count);
-  ring.selected = s;
-  void broadcastState();
+  if (!ring || ring.segments.length === 0) return;
+  const total = ring.segments.length;
+  const next = (ring.selected + delta + total) % total;
+  void gotoIndex(next);
+}
+
+/** 定位选中：跨页时确保目标页气泡已创建并切换显隐，随后广播状态 + 选中置顶 */
+async function gotoIndex(index: number): Promise<void> {
+  if (!ring || index < 0 || index >= ring.segments.length) return;
+  ring.selected = index;
+  const page = Math.floor(index / RING_LIMIT);
+  if (page !== ring.page) {
+    ring.page = page;
+    await ensurePageBubbles(page);
+    if (!ring) return; // ensurePageBubbles 期间环可能已被关闭
+    for (const s of ring.slots) {
+      if (isVisibleIndex(s.index)) void s.win.show().catch(() => {});
+      else void s.win.hide().catch(() => {});
+    }
+  }
+  await broadcastState();
   raiseSelected();
 }
 
@@ -279,6 +292,7 @@ async function switchPage(delta: number): Promise<void> {
   const count = Math.min(ring.segments.length - start, RING_LIMIT);
   if (count > 0) ring.selected = start;
   await ensurePageBubbles(ring.page);
+  if (!ring) return; // 创建窗口期间环已被关闭
   for (const s of ring.slots) {
     if (isVisibleIndex(s.index)) void s.win.show().catch(() => {});
     else void s.win.hide().catch(() => {});
@@ -298,12 +312,14 @@ function selectIndex(index: number): void {
  *  成功后落一条习惯记录（用户对哪个提取器的产出投了票） */
 async function pasteRing(index: number): Promise<void> {
   if (!ring) return;
-  if (index >= 0 && index < ring.segments.length) ring.selected = index;
-  const seg = ring.segments[ring.selected];
+  // 局部捕获：writeText await 期间环可能已被关闭（重按 Ctrl+B），后续引用不再依赖可变全局
+  const current = ring;
+  if (index >= 0 && index < current.segments.length) current.selected = index;
+  const seg = current.segments[current.selected];
   const text = seg?.text ?? '';
-  ring.hidden = true;
-  for (const s of ring.slots) void s.win.hide().catch(() => {});
-  void ring.hub.hide().catch(() => {});
+  current.hidden = true;
+  for (const s of current.slots) void s.win.hide().catch(() => {});
+  void current.hub.hide().catch(() => {});
   if (!text) return;
   try {
     await writeText(text);
@@ -313,7 +329,7 @@ async function pasteRing(index: number): Promise<void> {
   setTimeout(() => { invoke('paste').catch(() => {}); }, 200);
   // 习惯记录：用户用实际粘贴为该提取器的产出"投了票"
   void dbService.insertClipHabit({
-    contentHash: ring.contentHash,
+    contentHash: current.contentHash,
     extractorId: seg?.extractorId ?? '',
     action: 'paste',
     segmentText: text.slice(0, 200),
@@ -324,6 +340,8 @@ async function pasteRing(index: number): Promise<void> {
 async function closeRing(): Promise<void> {
   const current = ring;
   ring = null;
+  // 环形系统生命周期结束：解除主窗口失焦隐藏的豁免（app.vue 据此跳过连带隐藏）
+  (window as any).__ringActive = false;
   if (!current) return;
   current.unlisteners.forEach((u) => { try { u(); } catch { /* ignore */ } });
   for (const s of current.slots) void s.win.close().catch(() => {});
@@ -333,6 +351,9 @@ async function closeRing(): Promise<void> {
 /** 打开环形：AI/规则处理完成前不显示任何窗口，处理完成后整环（气泡+控制盘）一起显示 */
 async function openRing(): Promise<void> {
   const ts = Date.now();
+  // 标记环形系统活跃：主窗口失焦自动隐藏（app.vue tryHideMainWindow）据此豁免，
+  // 避免环形窗口被当作"可见子窗口"连带关闭而 ring 状态残留（下次 Ctrl+B 被误判为 toggle off）
+  (window as any).__ringActive = true;
   const hubLabel = `clipboard-bubble-ring-hub-${ts}`;
   (window as any).__childOpeningUntil = Date.now() + 600;
 
@@ -348,10 +369,11 @@ async function openRing(): Promise<void> {
     y: Math.round(cy - HUB_H / 2),
     resizable: false,
     decorations: false,
-    transparent: false,
+    transparent: true,   // 透明窗口：环心控制盘同为圆润卡片形态
     skipTaskbar: true,
     alwaysOnTop: true,
-    focus: false,
+    focus: true,         // 控制盘持有系统焦点：它是环形系统唯一的键盘入口（方向键/Enter/Esc）
+    focusable: true,
     shadow: false,
     visible: false,
   });
@@ -377,7 +399,9 @@ async function openRing(): Promise<void> {
   // 控制盘 / 气泡窗口的指令通道
   const on = async (name: string, handler: (payload: any) => void): Promise<void> => {
     const un = await listen(name, (ev) => handler(ev.payload));
-    ring?.unlisteners.push(un);
+    // await 期间环可能已被关闭（控制盘创建失败 / 用户重按 Ctrl+B）：立即解绑防泄漏
+    if (!ring) { try { un(); } catch { /* ignore */ } return; }
+    ring.unlisteners.push(un);
   };
   await on('ring:nav', (p) => navSelected(Number(p?.delta ?? 0)));
   await on('ring:page-nav', (p) => void switchPage(Number(p?.delta ?? 0)));
@@ -397,22 +421,39 @@ async function openRing(): Promise<void> {
   });
   await on('ring:close', () => void closeRing());
 
+  // 控制盘失焦（用户点回其它应用）→ 整环自动退场：键盘入口已失效，环失去存在意义。
+  // 粘贴/关闭流程先行置 ring.hidden 或 ring=null，此回调不会误触发。
+  if (!ring) return; // 注册监听期间环已被关闭
+  const unHubFocus = await ring.hub.onFocusChanged(({ payload: focused }) => {
+    if (!focused && ring && !ring.hidden) void closeRing();
+  });
+  if (!ring) { try { unHubFocus(); } catch { /* ignore */ } return; }
+  ring.unlisteners.push(unHubFocus);
+
   // 控制盘 ready 握手：仅确认窗口就绪（此阶段整个环不可见）
   await waitHubReady(hubLabel);
+  if (!ring) return; // 握手期间环已被关闭（控制盘创建失败 / 重按 Ctrl+B）
 
   // 片段就绪（AI/规则处理完成）后才显示环盘；无可展示片段直接关闭
-  ring.segments = (await collectSegments()).slice(0, MAX_SEGMENTS);
-  if (!ring || ring.segments.length === 0) {
+  // 解析可能耗时（AI 网络往返）：期间环可能已被关闭（tauri://error / 重按 Ctrl+B），赋值前必须守卫
+  const collected = await collectSegments();
+  if (!ring) return;
+  ring.segments = collected.slice(0, MAX_SEGMENTS);
+  if (ring.segments.length === 0) {
     await closeRing();
     return;
   }
   await ensurePageBubbles(0);
+  if (!ring) return; // 创建气泡窗口期间环已被关闭
   await broadcastState();
-  // 依次显示：当前页气泡 → 环心控制盘 → 选中项置顶
+  // 依次显示：当前页气泡 → 环心控制盘（持有键盘焦点）→ 选中项置顶。
+  // focus:true 仅在创建时生效（此处窗口仍隐藏），show 后显式 setFocus 才真正拿到键盘焦点
   for (const s of ring.slots) {
     if (isVisibleIndex(s.index)) void s.win.show().catch(() => {});
   }
-  void ring.hub.show().catch(() => {});
+  void ring.hub.show()
+    .then(() => ring?.hub.setFocus().catch(() => {}))
+    .catch(() => {});
   raiseSelected();
 }
 
@@ -421,9 +462,11 @@ function waitHubReady(hubLabel: string): Promise<void> {
   return new Promise((resolve) => {
     let un: UnlistenFn | null = null;
     let done = false;
+    let poll: ReturnType<typeof setInterval> | null = null;
     const finish = () => {
       if (done) return;
       done = true;
+      if (poll) clearInterval(poll);
       try { un?.(); } catch { /* ignore */ }
       resolve();
     };
@@ -433,6 +476,8 @@ function waitHubReady(hubLabel: string): Promise<void> {
       un = u;
       if (done) { try { u(); } catch { /* ignore */ } }
     });
+    // 控制盘创建失败（tauri://error → closeRing → ring=null）时立即放行，不让 openRing 干等满超时
+    poll = setInterval(() => { if (!ring) finish(); }, 100);
     setTimeout(finish, 5000);
   });
 }
