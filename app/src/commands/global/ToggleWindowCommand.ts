@@ -26,8 +26,13 @@ export class ToggleWindowCommand implements Command {
                 // 系统级聚焦：窗口 + webview 都必须拿到键盘焦点，local 快捷键（方向键）才会生效。
                 // 仅 window.focus()（JS）无法转移系统键盘焦点，必须调用 Tauri 的 setFocus。
                 await win.setFocus();
+                // webview 级 setFocus 是 fire-and-forget（JS catch 收不到错误，失败只在 Rust 侧
+                // 打 "failed to focus webview" ERROR 日志）：对最小化/挂起中的 webview 调用
+                // MoveFocus 会报 0x80070057，因此调用前显式排除最小化状态。
                 try {
-                    await getCurrentWebview().setFocus();
+                    if (!(await win.isMinimized())) {
+                        await getCurrentWebview().setFocus();
+                    }
                 } catch (e) {
                     console.error('webview 聚焦失败:', e);
                 }

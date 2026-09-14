@@ -694,10 +694,11 @@ function refocusList() {
     // 窗口 setFocus + webview setFocus + JS window.focus + window-shown 事件。
     const restoreFocus = async () => {
       try {
-        // 主窗口不可见（后台驻留隐藏中）时不 show，保持隐藏状态；
-        // 可见时才聚焦
+        // 主窗口不可见/最小化（后台驻留隐藏中、或正在被失焦隐藏）时不聚焦：
+        // webview 级 setFocus 是 fire-and-forget（JS catch 收不到错误），对最小化/
+        // 挂起中的 webview 调用 MoveFocus 会报 0x80070057 并留 Rust ERROR 日志。
         const visible = await getCurrentWindow().isVisible();
-        if (visible) {
+        if (visible && !(await getCurrentWindow().isMinimized().catch(() => false))) {
           await getCurrentWindow().setFocus();
           try {
             await getCurrentWebview().setFocus();
