@@ -11,16 +11,23 @@ import dbService from '~/src/db/dbService';
 export function createBooleanSetting(key: string, defaultOn: boolean) {
   const enabled = ref(defaultOn);
   let loaded = false;
+  let loadPromise: Promise<void> | null = null;
 
   function useSetting() {
     if (!loaded) {
       loaded = true;
-      dbService.getKeyValue(key).then((v) => {
+      loadPromise = dbService.getKeyValue(key).then((v) => {
         if (v === '' ) return; // 未设置过：保持默认
         enabled.value = v === '1';
       }).catch(() => { /* 读取失败保持默认 */ });
     }
     return enabled;
+  }
+
+  /** 触发首次加载（幂等）并等待其落定：resolve 后 enabled 即为真实持久化状态 */
+  function ensureLoaded(): Promise<void> {
+    useSetting();
+    return loadPromise ?? Promise.resolve();
   }
 
   /** 持久化当前状态（设置页 watch/@change 调用） */
@@ -29,5 +36,5 @@ export function createBooleanSetting(key: string, defaultOn: boolean) {
     await dbService.setKeyValue(key, value ? '1' : '0');
   }
 
-  return { useSetting, enabled, persist };
+  return { useSetting, enabled, persist, ensureLoaded };
 }

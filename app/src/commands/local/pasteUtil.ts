@@ -2,6 +2,7 @@ import { writeText, writeImageBase64 } from 'tauri-plugin-clipboard-api';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isTauri } from '~/utils/env';
+import { notifyIslandPaste, suppressIslandCopy } from '~/composables/useCopyIsland';
 
 /**
  * 将指定内容粘贴到唤起剪贴板窗口前的目标输入框。
@@ -18,6 +19,9 @@ import { isTauri } from '~/utils/env';
 export async function pasteContentToActiveApp(content: string, type: 'text' | 'image'): Promise<void> {
     if (!content) return;
 
+    // 灵动岛：粘贴也会写剪贴板，先抑制随之触发的"已复制"，写入成功后再显示"已粘贴"
+    suppressIslandCopy();
+
     // 1. 写入系统剪贴板（跨平台，按类型区分）
     try {
         if (isTauri()) {
@@ -32,6 +36,7 @@ export async function pasteContentToActiveApp(content: string, type: 'text' | 'i
     } catch (err) {
         console.error('写入剪贴板失败:', err);
     }
+    void notifyIslandPaste(content, type);
 
     // 2. 先隐藏窗口，让系统把焦点交还给目标窗口
     await getCurrentWindow().hide();

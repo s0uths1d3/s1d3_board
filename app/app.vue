@@ -20,7 +20,8 @@ import reminderService from "~/src/todo/reminderService";
 import { restoreAppUsageSetting } from "~/composables/useAppUsage";
 import { savePopupLastPosition } from "~/composables/usePopupPosition";
 import { initSmartClipListener } from "~/src/smart-clip/smartClip";
-import { restoreOpenApiSetting } from "~/src/smart-clip/openApi";
+import { restoreIslandApiSetting } from "~/src/island/islandApi";
+import { initCopyIsland } from "~/composables/useCopyIsland";
 
 /** 剪贴板监听与全局快捷键只需在主窗口注册一次；
  * 子窗口（如图片查看器）跳过，避免重复监听，以及关闭子窗口时误注销主窗口的全局快捷键。 */
@@ -143,6 +144,8 @@ onMounted(async () => {
     } catch (error) {
       console.error('❌ 初始化失败:', error);
     }
+    // 灵动岛提示：复制/粘贴顶部胶囊反馈（设置可开关；依赖剪贴板监听的 island:copy 事件）
+    initCopyIsland();
   }
 
   // 全局快捷键依赖 Tauri 全局快捷键插件，仅在主窗口注册（子窗口如 tooltip 跳过，避免重复注册冲突）
@@ -165,8 +168,8 @@ onMounted(async () => {
   // ===== 待办智能提醒 =====
   // 调度服务挂主窗口：切 Tab（TodoList 卸载）不丢定时器；内部幂等，TodoList 侧会兜底再调
   void reminderService.start();
-  // ===== 智能剪贴板开放 API（复制成功事件推送；按持久化开关恢复）=====
-  void restoreOpenApiSetting();
+  // ===== 灵动岛 API（第三方应用集成；按持久化开关恢复）=====
+  void restoreIslandApiSetting();
   // 退出前强制落库 pending（防崩溃/强制退出丢失当日未落库数据，§14.1.1）
   window.addEventListener('beforeunload', flushStatsOnExit);
   if (isTauri()) {

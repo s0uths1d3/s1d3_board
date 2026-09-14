@@ -296,6 +296,9 @@ class DatabaseService {
             [content, 'T', type, now, now]
         );
         console.log(`Clipboard ${type} saved (upsert):`, result);
+        // 灵动岛：复制行为反馈（文本/图片、重复复制同一内容同样提示；
+        // 本应用粘贴流程的写入由 island 模块抑制，不会误报"已复制"）
+        window.dispatchEvent(new CustomEvent('island:copy', { detail: { content, type } }));
         if (!isNew) return;
 
         // 统计埋点（fire-and-forget）：新插入文本/图片剪贴 +1；文本额外累加字符量（图片 base64 不计入"打字量"）
@@ -308,7 +311,7 @@ class DatabaseService {
         await this.trimClipboard();
 
         // 智能剪贴板：新文本入库 → 广播复制事件（处理层 smartClip 解析进内存 store；
-        // 设计文档 §4.1 触发点 / §4.5 开放 API 的事件源）。仅文本参与解析管道。
+        // 设计文档 §4.1 触发点）。仅文本参与解析管道。
         if (type === 'text') {
             const insertedId = Number((result as { lastInsertId?: number | bigint }).lastInsertId);
             window.dispatchEvent(new CustomEvent('smart-clip:copy', {
