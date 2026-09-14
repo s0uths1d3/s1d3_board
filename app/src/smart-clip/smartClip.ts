@@ -1,6 +1,7 @@
 import type { ClipExtractor, ClipScheme } from '../entities';
 import type { CopyEventDetail, ProcessContext, Segment, SmartClipEntry, SmartClipMode } from './types';
 import { runScheme, renderSchemeBody } from './template';
+import { autoSplit } from './autoSplit';
 import { readStoredExtractors } from './extractors';
 import dbService from '../db/dbService';
 
@@ -21,7 +22,7 @@ const COPY_EVENT = 'smart-clip:copy';
 
 const entries: SmartClipEntry[] = [];
 
-let mode: SmartClipMode = 'off';
+let mode: SmartClipMode = 'auto';
 let activeScheme: ClipScheme | null = null;
 let activeExtractors: ClipExtractor[] = [];
 let configReady = false;
@@ -42,22 +43,23 @@ export function updateSmartClipConfig(cfg: {
     configVersion += 1;
 }
 
-/** 处理管道统一入口：off 直通单段原文 / scheme 按默认方案加工 */
+/** 处理管道统一入口：off 直通单段原文 / auto 智能切分 / scheme 按默认方案加工 */
 async function processContent(content: string, ctx: ProcessContext): Promise<Segment[]> {
     if (ctx.mode === 'off') return single(content, 'rule');
+    if (ctx.mode === 'auto') return autoSplit(content);
 
     // 方案模式：执行方案（成员为空 = 全部提取器；非空 = 指定子集）+ 可选 body 排版；
-    // 未启用方案或无产出时退回原文单段。失败一律降级为原文，保证数据不丢。
+    // 未启用方案或零产出时降级为智能切分（不再是生硬的整段原文）。失败一律降级，保证数据不丢。
     try {
         if (ctx.scheme && ctx.scheme.enabled === 1) {
             const segs = await runScheme(ctx.scheme, ctx.extractors, content);
-            if (segs.length === 0) return single(content, 'rule');
+            if (segs.length === 0) return autoSplit(content);
             return renderSchemeBody(ctx.scheme, content, segs);
         }
-        return single(content, 'rule');
+        return autoSplit(content);
     } catch (e) {
-        console.error('[smart-clip] 方案加工失败，降级为原文单段:', e);
-        return single(content, 'rule');
+        console.error('[smart-clip] 方案加工失败，降级为智能切分:', e);
+        return autoSplit(content);
     }
 }
 
@@ -75,8 +77,8 @@ async function resolveContext(): Promise<ProcessContext> {
             dbService.getKeyValue('smart_default_template_id'),
             dbService.fetchClipSchemes(),
         ]);
-        // 旧版本存的 'ai' 按 'scheme' 处理；已移除的 'rule' 无对应规则，按关闭处理
-        mode = m === 'scheme' || m === 'ai' ? 'scheme' : 'off';
+        // 旧值 'ai' 按 'scheme' 处理；已移除的 'rule' 及未知值按「智能切分」（新默认）处理
+        mode = m === 'off' ? 'off' : (m === 'scheme' || m === 'ai') ? 'scheme' : 'auto';
         const schemeIdStr = (typeof schemeId === 'string' && schemeId) ? schemeId : (typeof legacySchemeId === 'string' ? legacySchemeId : '');
         activeScheme = schemes.find((t) => t.id === schemeIdStr && t.enabled === 1) ?? null;
         activeExtractors = await readStoredExtractors();

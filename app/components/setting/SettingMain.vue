@@ -252,7 +252,7 @@ async function testAiConnection(): Promise<void> {
 // ===== 方案：多条可 CRUD；一条「默认方案」供方案加工模式使用 =====
 const DEFAULT_SCHEME_ID = 'scheme_default';
 
-const smartMode = ref<SmartClipMode>('off');
+const smartMode = ref<SmartClipMode>('auto');
 const schemes = ref<ClipScheme[]>([]);
 const extractors = ref<ClipExtractor[]>([]);
 const defaultSchemeId = ref('');
@@ -265,6 +265,7 @@ watch(aiCacheWindow, (val) => {
 
 const SMART_MODE_OPTIONS = computed(() => [
   { value: 'off' as const, label: t('smart.mode_off') },
+  { value: 'auto' as const, label: t('smart.mode_auto') },
   { value: 'scheme' as const, label: t('smart.mode_scheme') },
 ]);
 function selectSmartMode(v: string) {
@@ -1203,9 +1204,9 @@ onMounted(async () => {
   aiModel.value = await dbService.getKeyValue('ai_model');
   // 智能剪贴板配置恢复（设计文档 §4.3/§4.5）+ 推送处理层快照
   try {
-    // 旧值 'rule' / 'ai' 归一到 'scheme'（规则模式已移除）
+    // 'off' 尊重用户选择；'scheme'/'ai'（旧值）归一到 'scheme'；空值/未知值按「智能切分」（新默认）
     const rawMode = await dbService.getKeyValue('smart_clip_mode');
-    smartMode.value = (rawMode === 'scheme' || rawMode === 'ai') ? 'scheme' : 'off';
+    smartMode.value = rawMode === 'off' ? 'off' : (rawMode === 'scheme' || rawMode === 'ai') ? 'scheme' : 'auto';
     // 默认方案指向：新键优先，兼容旧键 smart_default_template_id
     defaultSchemeId.value =
       (await dbService.getKeyValue('smart_default_scheme_id')) ||
