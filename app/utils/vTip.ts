@@ -7,7 +7,9 @@
  * - 兄弟窗口避让：tooltip 属于本窗口 surface，无法越过同应用的其他原生窗口
  *   （如快速录入小窗），显示前通过 Tauri API 取兄弟窗口矩形，四个方位中选
  *   与其重叠最小者；几乎完全被盖住（≥90%）时直接不显示；
- * - 内容为空时不显示；滚动 / resize / 失焦 / 点击时自动隐藏。
+ * - 内容为空时不显示；滚动 / resize / 失焦 / 按下时自动隐藏；
+ *   焦点触发的提示仅限键盘导航（focus-visible），鼠标点击落焦不弹气泡，
+ *   避免操作后的提示气泡与灵动岛等操作反馈同时出现、互相打架。
  *
  * 用法：
  *   <button v-tip="'删除'">…</button>
@@ -201,6 +203,8 @@ function bindGlobalListeners() {
   listenersBound = true;
   document.addEventListener('scroll', onViewportChange, true);
   window.addEventListener('resize', onViewportChange);
+  // 任意按下（鼠标/触控）立即隐藏：操作发生时提示让位给灵动岛等操作反馈，不再共存
+  document.addEventListener('pointerdown', onViewportChange, true);
   // 焦点移到同应用其他窗口（快速录入小窗等）时立即隐藏，避免残影盖在新窗口下
   window.addEventListener('blur', onViewportChange);
 }
@@ -220,7 +224,12 @@ export const vTip = {
     bindGlobalListeners();
     const onEnter = () => { currentEl = el; showTip(el, binding.value); };
     const onLeave = hideTip;
-    const onFocusIn = () => { currentEl = el; showTip(el, binding.value); };
+    const onFocusIn = () => {
+      // 仅键盘导航（focus-visible）触发焦点提示：鼠标点击落下的焦点不弹气泡，
+      // 否则点击开关/分段选项后气泡常驻，与灵动岛操作反馈同时出现产生冲突
+      if (!el.matches(':focus-visible')) return;
+      currentEl = el; showTip(el, binding.value);
+    };
     const onFocusOut = hideTip;
     const onClick = hideTip;
     el.addEventListener('mouseenter', onEnter);
