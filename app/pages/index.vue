@@ -27,6 +27,7 @@ import { activeTab } from "~/composables/useTabs";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
 import { useSearchHighlight } from "~/composables/useSearchHighlight";
 import { useI18n } from "~/composables/useI18n";
+import { notifyIsland, type IslandKind } from "~/composables/useCopyIsland";
 // 统计页懒加载（§14.5）：统计 Tab 非首屏，异步加载降低主窗口初始包体与内存
 import { defineAsyncComponent } from "vue";
 const StatsPage = defineAsyncComponent(() => import("~/components/statistics/StatsPage.vue"));
@@ -475,14 +476,14 @@ let unlistenCommandResults: Array<() => void> = [];
 function onAddToPinnedResult(ev: unknown) {
   const status = (ev as { payload?: { status?: string } })?.payload?.status;
   if (status === 'added') showPinnedHint(t('clip.added_to_pinned'));
-  else if (status === 'exists') showPinnedHint(t('clip.exists_in_pinned'));
-  else if (status === 'none') showPinnedHint(t('clip.select_first'));
-  else if (status === 'error') showPinnedHint(t('clip.add_to_pinned_failed'));
+  else if (status === 'exists') showPinnedHint(t('clip.exists_in_pinned'), 'info');
+  else if (status === 'none') showPinnedHint(t('clip.select_first'), 'info');
+  else if (status === 'error') showPinnedHint(t('clip.add_to_pinned_failed'), 'error');
 }
 
 function onFavoriteResult(ev: unknown) {
   const fav = (ev as { payload?: { favorite?: boolean } })?.payload?.favorite;
-  showPinnedHint(fav ? t('clip.favorited') : t('clip.unfavorited'));
+  showPinnedHint(fav ? t('clip.favorited') : t('clip.unfavorited'), fav ? 'success' : 'info');
 }
 
 function onImageViewerClosed() {
@@ -579,11 +580,11 @@ async function favorite(id: number, value: number) {
   value = value === 0 ? 1 : 0;
   try {
     await clipboardService.updateFavorite(id, value)
-    showPinnedHint(value === 1 ? t('clip.favorited') : t('clip.unfavorited'));
+    showPinnedHint(value === 1 ? t('clip.favorited') : t('clip.unfavorited'), value === 1 ? 'success' : 'info');
   } catch (e) {
     // DB 失败时星标 UI 不会因此错位（列表刷新后以数据库为准），给出可见反馈
     console.error('更新收藏状态失败:', e);
-    showPinnedHint(t('clip.favorite_failed'));
+    showPinnedHint(t('clip.favorite_failed'), 'error');
   }
 }
 
@@ -592,9 +593,6 @@ const ctxMenuVisible = ref(false);
 const ctxMenuX = ref(0);
 const ctxMenuY = ref(0);
 const ctxMenuItems = ref<{ label: string; danger?: boolean; action: () => void }[]>([]);
-/** 添加到常用剪贴板的即时反馈提示 */
-const pinnedHint = ref('');
-let pinnedHintTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** 右键列表项：显示「添加到常用剪贴板」菜单 */
 function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
@@ -615,23 +613,20 @@ async function addToPinned(item: ClipboardData) {
     const type = (item.type ?? 'text') as 'text' | 'image';
     const exists = await clipboardService.isPinnedContentExist(item.content, type);
     if (exists) {
-      showPinnedHint(t('clip.exists_in_pinned'));
+      showPinnedHint(t('clip.exists_in_pinned'), 'info');
       return;
     }
     await clipboardService.insertPinnedClip(item.content, type, '', item.source);
     showPinnedHint(t('clip.added_to_pinned'));
   } catch (e) {
     console.error('添加常用剪贴板失败:', e);
-    showPinnedHint(t('clip.add_to_pinned_failed'));
+    showPinnedHint(t('clip.add_to_pinned_failed'), 'error');
   }
 }
 
-function showPinnedHint(msg: string) {
-  pinnedHint.value = msg;
-  if (pinnedHintTimer) clearTimeout(pinnedHintTimer);
-  pinnedHintTimer = setTimeout(() => {
-    pinnedHint.value = '';
-  }, 2000);
+/** 操作反馈 → 灵动岛（屏幕顶部全局胶囊，替代窗口内 toast；主窗口隐藏时同样可见） */
+function showPinnedHint(msg: string, kind: IslandKind = 'success') {
+  notifyIsland({ kind, text: msg });
 }
 
 // ===== 删除确认（DeleteConfirm 内联组件，样式/操作与便签一致）=====
@@ -667,7 +662,7 @@ async function confirmDelete() {
     } catch (e) {
       // 失败不再静默：此前确认框已关、无任何提示、列表也不刷新
       console.error('删除失败:', e);
-      showPinnedHint(t('clip.delete_failed'));
+      showPinnedHint(t('clip.delete_failed'), 'error');
     }
   }
   refocusList();
@@ -1034,13 +1029,6 @@ async function openImageViewer(item: ClipboardData) {
               </div>
               <div v-else-if="data.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
 
-              <!-- 添加到常用剪贴板的即时反馈 -->
-              <div
-                  v-if="pinnedHint"
-                  class="pointer-events-none fixed left-1/2 top-20 z-[90] -translate-x-1/2 rounded-full border border-accent bg-surface-field/95 px-4 py-2 text-sm text-ink shadow-float backdrop-blur"
-              >
-                {{ pinnedHint }}
-              </div>
               <ContextMenu
                   :visible="ctxMenuVisible"
                   :x="ctxMenuX"
