@@ -26,7 +26,7 @@ import { generateExtractorDraft, generateSchemeDraft } from '~/src/smart-clip/ai
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
-import { useIslandEnabled, setIslandEnabled, useIslandTiming, ensureIslandTimingLoaded, setIslandDelayMs, setIslandDurationMs, ISLAND_DELAY_DEFAULT, ISLAND_DURATION_DEFAULT } from '~/composables/useCopyIsland';
+import { useIslandEnabled, setIslandEnabled, useIslandTiming, ensureIslandTimingLoaded, setIslandDelayMs, setIslandDurationMs, notifyIsland, type IslandKind, ISLAND_DELAY_DEFAULT, ISLAND_DURATION_DEFAULT } from '~/composables/useCopyIsland';
 import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
 import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
 import { useI18n, setLocaleMode, LOCALES, type LocaleMode } from '~/composables/useI18n';
@@ -85,13 +85,9 @@ async function selectLocale(value: LocaleMode) {
 const autoStartEnabled = ref(false);
 /** 初始化标志：onMounted 读取系统自启状态时跳过 watch 的 enable/disable 与提示逻辑 */
 let initializingAutoStart = false;
-/** 设置页即时反馈提示（toast） */
-const hint = ref('');
-let hintTimer: ReturnType<typeof setTimeout> | null = null;
-const showHint = (msg: string) => {
-  hint.value = msg;
-  if (hintTimer) clearTimeout(hintTimer);
-  hintTimer = setTimeout(() => { hint.value = ''; }, 2500);
+/** 设置页即时反馈提示 → 灵动岛（屏幕顶部全局胶囊，替代窗口内 toast；默认成功态，失败/中性显式传 kind） */
+const showHint = (msg: string, kind: IslandKind = 'success') => {
+  notifyIsland({ kind, text: msg });
 };
 /** 是否开启悬停提示窗口（tooltip），与主窗口共享同一状态 */
 const { tooltipEnabled } = useTooltipEnabled();
@@ -165,7 +161,7 @@ async function onAppUsageToggle(val: boolean) {
     await setAppUsageEnabled(val);
     showHint(val ? t('setting.general.app_usage_on') : t('setting.general.app_usage_off'));
   } catch {
-    showHint(t('setting.general.app_usage_failed'));
+    showHint(t('setting.general.app_usage_failed'), 'error');
   }
 }
 watch(searchHighlightEnabled, async (val) => {
@@ -208,6 +204,8 @@ const AI_PROVIDER_OPTIONS = computed(() => [
 ]);
 function selectAiProvider(v: string) {
   aiProvider.value = v as AiProviderKind;
+  const opt = AI_PROVIDER_OPTIONS.value.find(o => o.value === v);
+  showHint(t('setting.general.ai_provider_saved', { name: opt?.label ?? v }));
 }
 watch(aiProvider, (val) => {
   debouncePersist('ai_provider', () => dbService.setKeyValue('ai_provider', val));
@@ -223,7 +221,7 @@ async function testAiConnection(): Promise<void> {
   if (aiTestState.value === 'testing') return;
   const key = await dbService.getKeyValue('api_key');
   if (!key) {
-    showHint(t('setting.general.api_key_missing'));
+    showHint(t('setting.general.api_key_missing'), 'error');
     return;
   }
   aiTestState.value = 'testing';
@@ -237,11 +235,11 @@ async function testAiConnection(): Promise<void> {
     aiTestError.value = res.error ?? '';
     showHint(res.ok
       ? t('setting.general.ai_test_ok', { ms: res.latency_ms })
-      : t('setting.general.ai_test_fail', { error: res.error ?? '' }));
+      : t('setting.general.ai_test_fail', { error: res.error ?? '' }), res.ok ? 'success' : 'error');
   } catch (e) {
     aiTestState.value = 'fail';
     aiTestError.value = String(e);
-    showHint(t('setting.general.ai_test_fail', { error: String(e) }));
+    showHint(t('setting.general.ai_test_fail', { error: String(e) }), 'error');
   }
 }
 
@@ -260,7 +258,11 @@ const defaultSchemeId = ref('');
 const aiCacheWindow = ref('300');
 watch(aiCacheWindow, (val) => {
   const n = Math.max(0, Math.floor(Number(val) || 0));
-  void dbService.setKeyValue('ai_result_window', String(n));
+  // 防抖落库 + 提示：逐字符输入不打扰，停顿后统一保存并弹岛
+  debouncePersist('ai_result_window', async () => {
+    await dbService.setKeyValue('ai_result_window', String(n));
+    showHint(t('smart.ai_cache_window_saved'));
+  });
 });
 
 const SMART_MODE_OPTIONS = computed(() => [
@@ -270,6 +272,7 @@ const SMART_MODE_OPTIONS = computed(() => [
 ]);
 function selectSmartMode(v: string) {
   smartMode.value = v as SmartClipMode;
+  showHint(t('smart.mode_switched', { name: t(`smart.mode_${v}`) }));
 }
 /** 提取器方式：正则 / 分隔符 / AI 指令 */
 const EXTRACTOR_METHOD_OPTIONS = computed(() => [
@@ -350,6 +353,7 @@ function addScheme(): void {
   editingSchemeId.value = scheme.id;
   void dbService.saveClipScheme(scheme);
   refreshSmartClipConfig();
+  showHint(t('smart.scheme_added'));
 }
 
 /** 方案落库：标题/描述/成员/排版/启用任一改动都即时持久化 */
@@ -357,6 +361,7 @@ function saveScheme(scheme: ClipScheme): void {
   if (!scheme.title.trim()) scheme.title = t('smart.new_scheme');
   void dbService.saveClipScheme(scheme);
   refreshSmartClipConfig();
+  showHint(t('smart.scheme_saved'));
 }
 
 async function removeScheme(scheme: ClipScheme): Promise<void> {
@@ -379,6 +384,7 @@ async function removeScheme(scheme: ClipScheme): Promise<void> {
     await dbService.setKeyValue('smart_default_scheme_id', defaultSchemeId.value);
   }
   refreshSmartClipConfig();
+  showHint(t('smart.scheme_deleted', { name: scheme.title }));
 }
 
 /** 设为/取消默认方案（默认方案 = 方案加工模式实际执行的方案） */
@@ -394,6 +400,7 @@ function toggleDefaultScheme(s: ClipScheme): void {
 function removeMember(scheme: ClipScheme, id: string): void {
   scheme.members = (scheme.members ?? []).filter((x) => x !== id);
   saveScheme(scheme);
+  showHint(t('smart.scheme_member_removed', { name: extractorName(id) }));
 }
 
 /** 重置成员：清空指定子集，回到声明式的「全部提取器自动接入」 */
@@ -429,7 +436,7 @@ async function generateSchemeByAi(): Promise<void> {
     refreshSmartClipConfig();
     showHint(t('smart.ai_generate_scheme_done', { name: scheme.title }));
   } catch (e) {
-    showHint(t('smart.ai_generate_failed', { error: String(e) }));
+    showHint(t('smart.ai_generate_failed', { error: String(e) }), 'error');
   } finally {
     generatingScheme.value = false;
   }
@@ -475,6 +482,7 @@ function saveExtractor(x: ClipExtractor): void {
   if (!x.name.trim()) x.name = t('smart.new_extractor');
   void persistExtractors(extractors.value);
   refreshSmartClipConfig();
+  showHint(t('smart.extractor_saved'));
 }
 
 /**
@@ -514,7 +522,7 @@ async function generateExtractorByAi(): Promise<void> {
     addingExtractor.value = true;
     showHint(t('smart.ai_generate_done'));
   } catch (e) {
-    showHint(t('smart.ai_generate_failed', { error: String(e) }));
+    showHint(t('smart.ai_generate_failed', { error: String(e) }), 'error');
   } finally {
     generatingExtractor.value = false;
   }
@@ -567,13 +575,14 @@ async function moveExtractor(index: number, delta: number): Promise<void> {
   extractors.value = list;
   await persistExtractors(list);
   refreshSmartClipConfig();
+  showHint(t('smart.extractors_reordered'));
 }
 
 /** 恢复内置：只补齐被删掉的内置项（按 id 判定），已存在或被改过的保持原样 */
 async function restoreExtractors(): Promise<void> {
   const missing = missingBuiltinExtractors(extractors.value, t as Translator);
   if (missing.length === 0) {
-    showHint(t('smart.extractors_restore_none'));
+    showHint(t('smart.extractors_restore_none'), 'info');
     return;
   }
   extractors.value = [...extractors.value, ...missing];
@@ -623,7 +632,7 @@ watch(autoStartEnabled, async (val) => {
   if (import.meta.env.DEV) {
     if (val) {
       autoStartEnabled.value = false;
-      showHint(t('setting.general.startup_dev_unsupported'));
+      showHint(t('setting.general.startup_dev_unsupported'), 'error');
     } else {
       try {
         await disable();
@@ -644,7 +653,7 @@ watch(autoStartEnabled, async (val) => {
     autoStartEnabled.value = !val;
     // 提示用户：Tauri autostart 默认写当前用户注册表（HKCU），一般无需管理员权限，
     // 失败多因系统策略/注册表权限限制
-    showHint(t('setting.general.startup_failed'));
+    showHint(t('setting.general.startup_failed'), 'error');
   }
 });
 
@@ -903,13 +912,13 @@ function compareVersions(a: string, b: string): number {
 
 /**
  * 联网检查 GitHub Releases 最新版本（10s 超时；仓库暂无 Release 视为已最新）。
- * 手动点击时用 toast 给出各结果提示；进入「关于」页的自动检查静默执行（卡片内状态仍更新）。
+ * 手动点击时弹灵动岛给出各结果提示；进入「关于」页的自动检查静默执行（卡片内状态仍更新）。
  */
 async function checkUpdate(options?: { silent?: boolean }) {
   const silent = options?.silent ?? false;
   if (updateState.value === 'checking') return;
   updateState.value = 'checking';
-  if (!silent) showHint(t('setting.about.checking_hint'));
+  if (!silent) showHint(t('setting.about.checking_hint'), 'info');
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 10000);
@@ -935,7 +944,7 @@ async function checkUpdate(options?: { silent?: boolean }) {
   } catch (e) {
     console.error('检查更新失败:', e);
     updateState.value = 'error';
-    if (!silent) showHint(t('setting.about.update_failed_hint'));
+    if (!silent) showHint(t('setting.about.update_failed_hint'), 'error');
   }
 }
 
@@ -945,7 +954,7 @@ async function openRepoPage() {
     else window.open(APP_REPO, '_blank', 'noopener');
   } catch (e) {
     console.error('打开主页失败:', e);
-    showHint(t('setting.about.open_repo_failed'));
+    showHint(t('setting.about.open_repo_failed'), 'error');
   }
 }
 
@@ -956,7 +965,7 @@ async function openReleasePage() {
     else window.open(url, '_blank', 'noopener');
   } catch (e) {
     console.error('打开发布页失败:', e);
-    showHint(t('setting.about.open_release_failed'));
+    showHint(t('setting.about.open_release_failed'), 'error');
   }
 }
 
@@ -967,11 +976,11 @@ async function copyRepoLink() {
     showHint(t('setting.about.repo_link_copied'));
   } catch (e) {
     console.error('复制链接失败:', e);
-    showHint(t('setting.about.copy_failed'));
+    showHint(t('setting.about.copy_failed'), 'error');
   }
 }
 
-// 首次进入「关于」页时自动静默检查一次更新（会话内仅一次，不弹 toast 打扰）
+// 首次进入「关于」页时自动静默检查一次更新（会话内仅一次，不弹灵动岛打扰）
 watch(activeSetting, (s) => {
   if (s?.type === 'about' && !aboutAutoChecked) {
     aboutAutoChecked = true;
@@ -1043,6 +1052,8 @@ function onSettingClick(setting: (typeof settings)[number]) {
 function onNavRowToggle(row: (typeof navRows.value)[number]) {
   if (navReorder.consumeDragged()) return;
   setTabEnabled(row.key, !row.enabled);
+  // row.enabled 为切换前的状态：原显示 → 现隐藏，反之亦然
+  showHint(t(row.enabled ? 'setting.shortcuts.nav_row_hidden' : 'setting.shortcuts.nav_row_shown', { name: t('titlebar.' + row.key) }));
 }
 
 // ===== 快捷键录制 =====
@@ -1161,7 +1172,7 @@ async function commitRecording(id: string, newKey: string) {
   const err = await updateShortcutKey(id, newKey);
   if (err) {
     errorMap.value[id] = err;
-    showHint(t('setting.shortcuts.save_failed') + err);
+    showHint(t('setting.shortcuts.save_failed') + err, 'error');
   } else {
     delete errorMap.value[id];
     showHint(t('setting.shortcuts.saved_hint'));
@@ -1172,7 +1183,7 @@ async function resetOne(id: string) {
   const err = await resetShortcut(id);
   if (err) {
     errorMap.value[id] = err;
-    showHint(t('setting.shortcuts.reset_failed') + err);
+    showHint(t('setting.shortcuts.reset_failed') + err, 'error');
   } else {
     delete errorMap.value[id];
     showHint(t('setting.shortcuts.reset_done_hint'));
@@ -1191,7 +1202,6 @@ watch(activeSetting, () => cancelRecording());
 
 onBeforeUnmount(() => {
   cancelRecording();
-  if (hintTimer) clearTimeout(hintTimer);
 });
 
 onMounted(async () => {
@@ -1993,14 +2003,6 @@ onMounted(async () => {
         </div>
         </Transition>
       </div>
-    </div>
-
-    <!-- 即时反馈提示（toast） -->
-    <div
-        v-if="hint"
-        class="pointer-events-none fixed left-1/2 top-20 z-[90] -translate-x-1/2 rounded-full border border-accent bg-surface-field/95 px-4 py-2 text-sm text-ink shadow-float backdrop-blur"
-    >
-      {{ hint }}
     </div>
   </div>
 </template>
