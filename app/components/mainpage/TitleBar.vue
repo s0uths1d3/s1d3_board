@@ -4,8 +4,9 @@ import { isTauri } from "~/utils/env";
 import { activeTab, setActiveTab, getVisibleTabItems, reorderTab, persistNavConfig, type TabKey } from "~/composables/useTabs";
 import { computed, ref, onMounted, onBeforeUnmount } from "vue";
 import { useLongPressReorder } from "~/composables/useLongPressReorder";
-import { cycleColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, useColorScheme, type ColorSchemeMode } from "~/composables/useColorScheme";
+import { cycleColorScheme, useColorScheme, type ColorSchemeMode } from "~/composables/useColorScheme";
 import { useI18n } from "~/composables/useI18n";
+import { notifyIsland } from "~/composables/useCopyIsland";
 
 /** 标题栏导航项：仅渲染当前可见的 tab（统计 Tab 受解锁门槛控制，§7.9，解锁后动态出现） */
 const visibleTabs = computed(() => getVisibleTabItems());
@@ -60,7 +61,7 @@ async function close() {
 const { alwaysOnTop, toggleAlwaysOnTop } = useAlwaysOnTop();
 
 // ===== 快速切换配色：标题栏按钮循环 跟随系统→琥珀→浅色→深色，与配色快捷键（默认不绑定）共用同一状态 =====
-const { scheme, resolvedScheme } = useColorScheme();
+const { scheme } = useColorScheme();
 /** 各模式的小色点预览；system 为深浅对半，直观表达"跟随系统" */
 const schemeDot: Record<ColorSchemeMode, string> = {
   system: 'linear-gradient(90deg, #f0e9e1 50%, #3a352e 50%)',
@@ -68,20 +69,11 @@ const schemeDot: Record<ColorSchemeMode, string> = {
   light: '#dfe3ea',
   dark: '#3a352e',
 };
-const nextSchemeLabel = computed(() => {
-  const next = COLOR_SCHEME_ORDER[(COLOR_SCHEME_ORDER.indexOf(scheme.value) + 1) % COLOR_SCHEME_ORDER.length]!;
-  return t(`color_scheme.${next}`);
-});
-const currentSchemeLabel = computed(() => t(`color_scheme.${scheme.value}`));
-/** system 模式下提示里附带当前解析到的配色，避免"看起来没反应"的困惑 */
 const { t } = useI18n();
-const schemeTip = computed(() => {
-  const base = `${t('titlebar.switch_color_scheme')}: ${currentSchemeLabel.value}`;
-  const resolved = scheme.value === 'system' ? ` (${t('titlebar.current_scheme', { name: t(`color_scheme.${resolvedScheme.value}`) })})` : '';
-  return `${base}${resolved}, ${t('titlebar.click_switch_to')} ${nextSchemeLabel.value}`;
-});
 async function onSchemeClick() {
-  await cycleColorScheme();
+  const next = await cycleColorScheme();
+  // 操作反馈 → 灵动岛（屏幕顶部全局胶囊），文案与设置页配色切换一致；具体切到了哪个模式由胶囊告知
+  notifyIsland({ kind: 'success', text: t('setting.general.color_scheme_saved', { name: t(`color_scheme.${next}`) }) });
 }
 
 let unlistenResized: (() => void) | null = null;
@@ -174,7 +166,7 @@ onBeforeUnmount(() => {
     <div class="no-drag flex items-center gap-2">
       <button
           class="relative flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
-          v-tip="schemeTip"
+          v-tip="t('titlebar.switch_color_scheme')"
           :aria-label="t('titlebar.switch_color_scheme')"
           @click="onSchemeClick"
       >

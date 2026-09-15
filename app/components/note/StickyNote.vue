@@ -89,14 +89,6 @@
       </div>
     </div>
 
-    <!-- 即时反馈提示（toast） -->
-    <div
-        v-if="hint"
-        class="pointer-events-none fixed left-1/2 top-20 z-[90] -translate-x-1/2 rounded-full border border-accent bg-surface-field/95 px-4 py-2 text-sm text-ink shadow-float backdrop-blur"
-    >
-      {{ hint }}
-    </div>
-
     <!-- 删除确认框：与全局一致的 DeleteConfirm 组件（就近定位、键盘操作一致） -->
     <DeleteConfirm
         :visible="!!deleteConfirmTarget"
@@ -123,6 +115,7 @@ import { useI18n } from "~/composables/useI18n";
 import { findNearestInDirection } from "~/utils/focusNavigation";
 import { useSearchHighlight } from "~/composables/useSearchHighlight";
 import { useInfiniteList } from "~/composables/useInfiniteList";
+import { notifyIsland, type IslandKind } from "~/composables/useCopyIsland";
 
 interface StickyNote extends Note {
   position?: { x: number; y: number }
@@ -256,13 +249,9 @@ const createNote = async () => {
 /** Ctrl+N 新建便签（CreateNoteCommand 派发 create-note 事件） */
 const onCreateNote = () => createNote()
 
-// ===== 即时反馈提示（toast，复用主剪贴板 pinnedHint 样式） =====
-const hint = ref('')
-let hintTimer: ReturnType<typeof setTimeout> | null = null
-const showHint = (msg: string) => {
-  hint.value = msg
-  if (hintTimer) clearTimeout(hintTimer)
-  hintTimer = setTimeout(() => { hint.value = '' }, 2000)
+// ===== 即时反馈提示 → 灵动岛（屏幕顶部全局胶囊，替代窗口内 toast） =====
+const showHint = (msg: string, kind: IslandKind = 'success') => {
+  notifyIsland({ kind, text: msg })
 }
 
 // ===== 删除确认框（DeleteConfirm 组件，样式/操作与全局一致） =====
@@ -286,7 +275,7 @@ const updateNote = async (id: string, content: string) => {
       await clipboardService.updateNote(note)
     } catch (e) {
       console.error('保存便签失败:', e)
-      showHint(t('note.save_failed'))
+      showHint(t('note.save_failed'), 'error')
     }
   }
 }
@@ -302,7 +291,7 @@ const confirmDelete = async () => {
     showHint(t('note.deleted'))
   } catch (e) {
     console.error('删除便签失败:', e)
-    showHint(t('note.delete_failed'))
+    showHint(t('note.delete_failed'), 'error')
   }
 }
 
@@ -495,7 +484,6 @@ onBeforeUnmount(() => {
     clearInterval(intervalId);
     intervalId = null;
   }
-  if (hintTimer) clearTimeout(hintTimer)
   if (searchFetchTimer) clearTimeout(searchFetchTimer)
   window.removeEventListener('keydown', onKeydown, true);
   window.removeEventListener('create-note', onCreateNote);

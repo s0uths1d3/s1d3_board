@@ -6,6 +6,7 @@ import { useFormatDate } from '~/composables/useFormatDate';
 import { findNearestInDirection } from '~/utils/focusNavigation';
 import { useInfiniteList } from '~/composables/useInfiniteList';
 import { useI18n } from '~/composables/useI18n';
+import { notifyIsland, type IslandKind } from '~/composables/useCopyIsland';
 
 const { t } = useI18n();
 const formatDateLocalized = useFormatDate();
@@ -20,8 +21,6 @@ const { items: clips, loading, hasMore, sentinel, refreshLoaded } = useInfiniteL
 });
 
 const errorMsg = ref('');
-const hint = ref('');
-let hintTimer: ReturnType<typeof setTimeout> | null = null;
 
 // 编辑态
 const editingId = ref<number | null>(null);
@@ -47,10 +46,9 @@ function typeLabelKey(item: PinnedClip) {
   return isLink(item) ? 'common.link' : 'common.text';
 }
 
-function showHint(msg: string) {
-  hint.value = msg;
-  if (hintTimer) clearTimeout(hintTimer);
-  hintTimer = setTimeout(() => { hint.value = ''; }, 2000);
+/** 操作反馈 → 灵动岛（屏幕顶部全局胶囊，替代窗口内 toast） */
+function showHint(msg: string, kind: IslandKind = 'success') {
+  notifyIsland({ kind, text: msg });
 }
 
 /** 刷新已加载范围（初次进入/编辑/置顶等操作后调用；不会预取未加载数据） */
@@ -83,7 +81,7 @@ async function saveEdit() {
     await load();
   } catch (e) {
     console.error('保存常用剪贴失败:', e);
-    showHint(t('clip.pinned_save_failed'));
+    showHint(t('clip.pinned_save_failed'), 'error');
   }
 }
 
@@ -98,7 +96,7 @@ async function togglePin(item: PinnedClip) {
     await load();
   } catch (e) {
     console.error('置顶操作失败:', e);
-    showHint(t('clip.pin_operation_failed'));
+    showHint(t('clip.pin_operation_failed'), 'error');
   }
 }
 
@@ -177,7 +175,6 @@ onUnmounted(() => {
       <p v-if="!loading && clips.length === 0" class="mb-2 text-sm text-ink-faint">
         {{ t('clip.pinned_empty') }}
       </p>
-      <p v-if="hint" class="mb-2 text-sm text-gold">{{ hint }}</p>
 
       <!-- 瀑布流卡片（columns 布局，break-inside-avoid 保证卡片不跨列） -->
       <div v-if="clips.length" class="columns-2 gap-3">

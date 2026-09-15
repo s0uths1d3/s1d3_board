@@ -161,6 +161,15 @@ export function notifyIslandPaste(content: string, type: 'text' | 'image'): void
   });
 }
 
+/**
+ * 通用反馈弹岛：各窗口内 toast（主窗口 pinnedHint / 便签 / 设置页 hint）统一迁移至此。
+ * 三者均为主窗口内组件（同一 webview），直接调用 showIsland；kind 决定图标与标签
+ * （success/info/error），text 显示具体消息，可省略（仅显示 kind 默认标签）。
+ */
+export function notifyIsland(payload: IslandShowPayload): void {
+  void showIsland(payload);
+}
+
 // 关闭开关时收起并关闭岛窗口、停掉快速通道；开启时反向恢复（模块级 watch：与设置页共享同一状态源）
 watch(setting.enabled, (v) => {
   if (v) {
