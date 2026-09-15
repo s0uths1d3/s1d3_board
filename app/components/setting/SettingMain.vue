@@ -1913,8 +1913,9 @@ onMounted(async () => {
               </li>
             </ul>
 
-            <!-- 灵动岛 API：第三方应用集成入口（本地 HTTP/SSE，接入文档 .docs/island-api.md） -->
-            <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
+            <!-- 灵动岛 API：第三方应用集成入口（本地 HTTP/SSE，接入文档 .docs/island-api.md）。
+                 仅通用标签渲染：本分支为 通用/API设置 共用，不守卫会两边重复出现 -->
+            <div v-if="activeSetting.type === 'general'" class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
               <div class="mb-3 flex items-center justify-between">
                 <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('island_api.section') }}</span>
                 <UiToggleSwitch v-model="islandApiEnabled" :label="''" />
