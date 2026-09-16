@@ -190,6 +190,11 @@ async function showTooltip(payload: TooltipPayload) {
   await getCurrentWindow()
     .setPosition(new PhysicalPosition(x, y))
     .catch(() => {});
+  // 每次显示前重新挂 topmost：tooltip 单例复用，复用路径只 show 不刷新 Z 序——
+  // 用户点击主窗口（激活 topmost 窗口会把它提到 topmost 组最前）或切换置顶后，
+  // tooltip 会落到主窗口下方被遮挡。重新挂 topmost 把自己提到 topmost 组最前，
+  // 稳定可见（focus:false 不抢焦点，悬浮提示常置顶符合预期）
+  await getCurrentWindow().setAlwaysOnTop(true).catch(() => {});
   await getCurrentWindow().show().catch(() => {});
 }
 

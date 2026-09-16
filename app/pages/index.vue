@@ -123,7 +123,14 @@ function observeImagePlaceholder(el: unknown, id: number) {
 
 // 切换 tab 时隐藏 tooltip（clip 列表随 tab 卸载，tooltip 需同步关闭）
 watch(activeTab, () => {
-  dismissTooltip();
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+  hoveringClip = false;
+  hoveringTooltip = false;
+  // 同步关闭独立 tooltip 窗口
+  emit('tooltip:hide').catch(() => {});
 })
 
 // ===== 各 tab 独立保存滚动位置：切换时保存当前 tab，恢复目标 tab =====
@@ -181,19 +188,6 @@ let hoveringTooltip = false;
 let hoveringClip = false;
 /** 延迟隐藏计时器：给鼠标从触发元素移到 tooltip 留出过渡时间 */
 let hideTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** 强制关闭独立 tooltip 窗口：切换 tab / 打开删除确认框等需要提示立即让位的场景。
- *  同时清空待发 payload，避免窗口 ready 握手把旧内容补发出来。 */
-function dismissTooltip() {
-  if (hideTimer) {
-    clearTimeout(hideTimer);
-    hideTimer = null;
-  }
-  hoveringClip = false;
-  hoveringTooltip = false;
-  latestTooltipPayload = null;
-  emit('tooltip:hide').catch(() => {});
-}
 
 /**
  * 将相对主窗口视口的 CSS 像素坐标转换为物理屏幕像素坐标（供独立 tooltip 窗口定位）。
@@ -333,9 +327,6 @@ function onListKeydown(e: KeyboardEvent) {
 function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
   // 设置项「提示窗口」关闭时不弹出 tooltip
   if (!tooltipEnabled.value) return;
-  // 删除确认框打开期间不弹出 tooltip：确认框为前景浮层，tooltip 独立窗口会与其重叠；
-  // 确认框关闭后重新悬停即恢复。
-  if (deleteConfirmVisible.value) return;
   // 图片查看器（image-viewer）打开期间禁止 tooltip 出现：
   // 查看器为独立前台窗口，悬停主列表项不再弹出 tooltip；关闭查看器（viewerLabel 置空）后自动恢复。
   if (viewerLabel) return;
@@ -638,9 +629,6 @@ const deleteConfirmTarget = ref<ClipboardData | null>(null);
 /** 点击删除按钮：弹出内联删除确认框（就近定位，不创建子窗口） */
 function handleDelete(target: ClipboardData, e?: MouseEvent) {
   if (!target) return;
-  // tooltip 窗口与确认框同屏会互相遮挡：打开确认框时先强制关闭 tooltip
-  // （鼠标点击删除与 Delete 键两条路径均经过此处）
-  dismissTooltip();
   deleteConfirmTarget.value = target;
   deleteConfirmMessage.value = t(target.type === 'image' ? 'clip.delete_confirm_image' : 'clip.delete_confirm_text');
   const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null;
