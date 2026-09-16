@@ -100,6 +100,9 @@ async function tryHideMainWindow() {
         // 灵动岛历史为用户主动打开的独立常驻窗口：主窗口失焦隐藏时不连带关闭，
         // 仅随自身标题栏关闭按钮 / 主窗口显式 x（onCloseRequested）退出
         if (w.label === 'island-history') continue;
+        // 灵动岛提示窗口独立于主窗口生命周期：岛显示期间主窗口失焦（点击其他应用）
+        // 不连带关闭岛——close 是永久销毁，岛的显隐完全由自身 island:show/超时机制控制
+        if (w.label === 'clipboard-bubble-island') continue;
         if (await w.isVisible()) await w.close();
       } catch { /* 忽略单窗关闭失败 */ }
     }
@@ -198,6 +201,8 @@ onMounted(async () => {
           for (const w of windows) {
             try {
               if (w.label === 'main') continue;
+              // 灵动岛独立运行：主窗口隐藏到托盘后岛仍正常提供复制/粘贴反馈
+              if (w.label === 'clipboard-bubble-island' || w.label === 'island-history') continue;
               if (await w.isVisible()) await w.close();
             } catch { /* 忽略单窗关闭失败 */ }
           }
