@@ -5,6 +5,8 @@ import { listen, emit, emitTo, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { writeText } from 'tauri-plugin-clipboard-api';
 import { getSmartClipEntries, parseClipItem } from '../../smart-clip/smartClip';
+import { analyzeClip, type AnalysisOutcome } from '../../smart-clip/analysis';
+import { recordPaste, recordAiAdoption } from '../../smart-clip/habitProfile';
 import { getSelectedItem } from './clipboardStore';
 import { notifyIsland, notifyIslandPaste, suppressIslandCopy } from '~/composables/useCopyIsland';
 import { useI18n } from '~/composables/useI18n';
@@ -142,6 +144,10 @@ async function collectSegments(): Promise<{
   segments: Array<{ text: string; w: number; h: number; extractorId: string }>;
   /** 选中项解析失败原因（AI 报错/网络异常）；失败仍降级为最近一次解析结果 */
   parseError?: string;
+  /** AI 分析结果（.docs/smart-clip-ai-analysis.md）：done 时产出已并入 segments，skipped/failed 由调用方弹灵动岛 */
+  analysis?: AnalysisOutcome;
+  /** 本次分析的选中文本 */
+  content: string;
 }> {
   const selected = getSelectedItem();
   const content = selected && (selected.type ?? 'text') === 'text' ? selected.content : '';
@@ -176,7 +182,21 @@ async function collectSegments(): Promise<{
     seen.add(key);
     out.push({ text, extractorId: raw.extractorId ?? '', ...measureBubble(text) });
   }
-  return { segments: out.slice(0, MAX_SEGMENTS), parseError };
+  // AI 分析：预判分流后仅散文送 AI（单次调用双产出）。解析失败时跳过——AI 链路刚报错，
+  // 分析大概率同样失败，且失败提示会与 parseError 弹岛重叠
+  let analysis: AnalysisOutcome | undefined;
+  if (content && !parseError) {
+    analysis = await analyzeClip(content);
+    if (analysis.type === 'done') {
+      for (const text of [...analysis.keywords, ...(analysis.summary ? [analysis.summary] : [])]) {
+        const key = norm(text);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push({ text, extractorId: 'ai-analysis', ...measureBubble(text) });
+      }
+    }
+  }
+  return { segments: out.slice(0, MAX_SEGMENTS), parseError, analysis, content };
 }
 
 /** 槽位逻辑坐标：按固定槽位表取偏移（先上下左右、再四角），同半径对称分布 */
@@ -350,6 +370,9 @@ async function pasteRing(index: number): Promise<void> {
     action: 'paste',
     segmentText: text.slice(0, 200),
   }).catch(() => {});
+  // 习惯画像采集（仅本地，.docs/smart-clip-ai-analysis.md）：分布统计；AI 产出被粘贴 = 采纳分子
+  void recordPaste(text, seg?.extractorId ?? '').catch(() => {});
+  if (seg?.extractorId === 'ai-analysis') void recordAiAdoption().catch(() => {});
 }
 
 /** 整体关闭：全部气泡 + 控制盘 + 事件监听 */
@@ -434,6 +457,9 @@ async function openRing(): Promise<void> {
       action,
       segmentText: seg.text.slice(0, 200),
     }).catch(() => {});
+    // 习惯画像采集（仅本地）：钉住也计偏好；AI 产出被采纳记分子
+    void recordPaste(seg.text, seg.extractorId).catch(() => {});
+    if (seg.extractorId === 'ai-analysis') void recordAiAdoption().catch(() => {});
   });
   await on('ring:close', () => void closeRing());
 
@@ -461,6 +487,18 @@ async function openRing(): Promise<void> {
   // 解析失败（AI 报错/网络异常）：环降级展示最近结果的同时，灵动岛给出错误原因
   if (collected.parseError) {
     notifyIsland({ kind: 'error', text: t('island.parse_failed', { error: briefAiError(collected.parseError) }) });
+  }
+  // AI 分析未执行/失败：按预判原因弹灵动岛说明（done 时产出已在环上，无需提示）
+  const analysis = collected.analysis;
+  if (analysis?.type === 'skipped') {
+    const text = analysis.reason === 'not_configured'
+      ? t('island.ai_not_configured')
+      : analysis.reason === 'too_long'
+        ? t('island.ai_skipped_long', { n: analysis.maxChars ?? 1000 })
+        : t(`island.ai_skipped_${analysis.reason}`);
+    notifyIsland({ kind: 'info', text });
+  } else if (analysis?.type === 'failed') {
+    notifyIsland({ kind: 'error', text: t('island.parse_failed', { error: briefAiError(String(analysis.error)) }) });
   }
   ring.segments = collected.segments.slice(0, MAX_SEGMENTS);
   if (ring.segments.length === 0) {

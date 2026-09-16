@@ -36,7 +36,7 @@ function capped(parts: string[], content: string): string[] {
 }
 
 /** 清洗 BOM / 零宽字符（复制自网页/Word 的常见隐形字符） */
-function sanitize(content: string): string {
+export function sanitize(content: string): string {
     return content
         .replace(/^\uFEFF/, '')
         .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
@@ -241,6 +241,28 @@ function tryKeywords(content: string): string[] | null {
 // ---------------------------------------------------------------------------
 // 主入口：结构化分层尝试，全部未命中 → 关键词 → 原文
 // ---------------------------------------------------------------------------
+export type StructuredLayer = 'json' | 'links' | 'log' | 'multiline' | 'separators';
+
+/** 分层顺序与 autoSplit 主入口一致；多行命中但平均行长 > 60 字视为分段散文（AI 分析预判的误伤修正），不判结构化 */
+export function detectStructured(raw: string): StructuredLayer | null {
+    try {
+        const content = sanitize(raw);
+        if (!content) return null;
+        if (tryJson(content)) return 'json';
+        if (tryLinks(content)) return 'links';
+        if (tryLogLine(content)) return 'log';
+        const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+        if (lines.length >= 2 && !lines.every((l) => l.length < 2)) {
+            const avg = lines.reduce((a, l) => a + l.length, 0) / lines.length;
+            if (avg <= 60) return 'multiline';
+        }
+        if (trySeparators(content)) return 'separators';
+        return null;
+    } catch {
+        return null;
+    }
+}
+
 export function autoSplit(raw: string): Segment[] {
     try {
         const content = sanitize(raw);

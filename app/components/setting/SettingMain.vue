@@ -23,6 +23,7 @@ import {
   type Translator,
 } from '~/src/smart-clip/extractors';
 import { generateExtractorDraft, generateSchemeDraft } from '~/src/smart-clip/aiGenerate';
+import { clampAnalysisMaxChars } from '~/src/smart-clip/analyzer';
 import { AI_CUSTOM_TEMPLATE } from '~/src/smart-clip/aiClient';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/utils/env';
@@ -226,6 +227,13 @@ watch(aiBaseUrl, (val) => {
 });
 watch(aiModel, (val) => {
   debouncePersist('ai_model', () => dbService.setKeyValue('ai_model', val ?? ''));
+});
+
+// ===== AI 分析长度上限（.docs/smart-clip-ai-analysis.md）：钳制 100–10000，非法回落 1000 =====
+const aiAnalysisMax = ref('');
+watch(aiAnalysisMax, (val) => {
+  debouncePersist('ai_analysis_max_chars', () =>
+    dbService.setKeyValue('ai_analysis_max_chars', String(clampAnalysisMaxChars(val))));
 });
 
 // ===== 自定义 JSON 模板编辑（仅 provider = custom 时显示） =====
@@ -865,6 +873,11 @@ const settings: SettingGroup[] = [
         label: 'setting.general.api_key',
         value: '',
         type: 'input'
+      },
+      {
+        label: 'setting.general.ai_analysis_max',
+        value: '',
+        type: 'input'
       }
     ]
   },
@@ -1286,6 +1299,7 @@ onMounted(async () => {
   aiProvider.value = ((await dbService.getKeyValue('ai_provider')) || 'openai-compat') as AiProviderKind;
   aiBaseUrl.value = await dbService.getKeyValue('ai_base_url');
   aiModel.value = await dbService.getKeyValue('ai_model');
+  aiAnalysisMax.value = (await dbService.getKeyValue('ai_analysis_max_chars')) || '1000';
   // 自定义 JSON 模板恢复（custom 模式编辑器内容）；为空时编辑器显示占位提示
   aiCustomConfig.value = (await dbService.getKeyValue('ai_custom_config')) || '';
   // 智能剪贴板配置恢复（设计文档 §4.3/§4.5）+ 推送处理层快照
@@ -1844,6 +1858,13 @@ onMounted(async () => {
                       v-model="aiModel"
                       :placeholder="t('setting.general.ai_model')"
                       @save="showHint(t('setting.general.ai_model_saved'))"
+                  />
+                  <!-- AI 分析长度上限：Ctrl+B 分析的字数门槛，钳制 100–10000（设计见 .docs/smart-clip-ai-analysis.md） -->
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.ai_analysis_max'"
+                      v-model="aiAnalysisMax"
+                      :placeholder="t('setting.general.ai_analysis_max')"
+                      @save="showHint(t('setting.general.ai_analysis_max_saved'))"
                   />
                   <!-- AI 提供商：OpenAI 兼容（默认）/ Anthropic 原生 / 自定义 JSON（设计文档 §4.2） -->
                   <template v-else-if="item.type === 'select' && item.label === 'setting.general.ai_provider'">
