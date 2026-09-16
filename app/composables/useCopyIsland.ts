@@ -113,6 +113,7 @@ const PREVIEW_MAX = 120;
 
 let islandWin: WebviewWindow | null = null;
 let islandReady = false;
+let islandCreating: Promise<WebviewWindow | null> | null = null;
 let suppressUntil = 0;
 let inited = false;
 
@@ -235,20 +236,32 @@ export function makeImageThumb(dataUrl: string, maxH = 56, quality = 0.7): Promi
 
 /** 单例复用：首次惰性创建，之后 show/hide（避免每次复制都新建 WebView） */
 async function ensureIsland(): Promise<WebviewWindow | null> {
-  if (islandWin) return islandWin;
-  // 复用已存在的同名窗口：每个 webview 有独立 JS 上下文（便签等窗口调用本模块时 islandWin 必为 null），
-  // HMR/重载也会丢失模块状态——此时重复创建同名窗口会触发 tauri://error 且 island:ready 不会重发，
-  // 通知随之静默丢失。故先按 label 查找存活窗口直接接管（其页面早已就绪并注册了 island:show 监听）。
+  // 就绪快路径：窗口引用有效且页面已注册 island:show 监听
+  if (islandWin && islandReady) return islandWin;
+  // 创建中（含 ready 未到）：并发调用共享同一创建 Promise，
+  // 全部等到 ready 才放行——否则后来者拿到未就绪引用，emit 打进尚未监听的页面静默丢失
+  if (islandCreating) return islandCreating;
+
   const existing = await WebviewWindow.getByLabel(ISLAND_LABEL).catch(() => null);
   if (existing) {
+    // 复用已存在的同名窗口：每个 webview 有独立 JS 上下文（便签等窗口调用本模块时 islandWin 必为 null），
+    // HMR/重载也会丢失模块状态——此时重复创建同名窗口会触发 tauri://error 且 island:ready 不会重发，
+    // 通知随之静默丢失。故先按 label 查找存活窗口直接接管（其页面早已就绪并注册了 island:show 监听）。
     islandWin = existing;
     islandReady = true;
     return islandWin;
   }
-  islandReady = false;
+  islandCreating = createIslandWindow().finally(() => { islandCreating = null; });
+  return islandCreating;
+}
 
+/** 创建岛窗口并等待页面 ready（串行化：同一时刻最多一个创建流程在跑） */
+async function createIslandWindow(): Promise<WebviewWindow | null> {
+  islandReady = false;
+  let ready = false;
+  let failed = false;
   // 关键：先注册 ready 监听再创建窗口，避免页面早于监听注册 emit 而丢失握手
-  const unReady = await listen('island:ready', () => { islandReady = true; }).catch(() => null);
+  const unReady = await listen('island:ready', () => { ready = true; }).catch(() => null);
   const win = new WebviewWindow(ISLAND_LABEL, {
     url: '/bubble?mode=island',
     title: 'Island',
@@ -264,17 +277,21 @@ async function ensureIsland(): Promise<WebviewWindow | null> {
     visible: false,
   });
   islandWin = win;
-  win.once('tauri://error', () => {
-    if (islandWin === win) islandWin = null;
-  });
+  win.once('tauri://error', () => { failed = true; });
 
-  // 等待岛页面 ready（最多 3s），确保 show 前事件监听已就绪
+  // 等待岛页面 ready（最多 3s）；失败立即短路，不空转
   const t0 = Date.now();
-  while (!islandReady && Date.now() - t0 < 3000) {
+  while (!ready && !failed && Date.now() - t0 < 3000) {
     await new Promise((r) => setTimeout(r, 40));
   }
   try { unReady?.(); } catch { /* ignore */ }
-  return islandWin;
+  if (ready) {
+    islandReady = true;
+    return win;
+  }
+  // 创建失败/超时：清引用允许下次调用重试（getByLabel/新建），绝不返回未就绪窗口
+  if (islandWin === win) islandWin = null;
+  return null;
 }
 
 /** 顶部居中（光标所在显示器）定位岛窗口 */
@@ -299,7 +316,12 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
   if (!win) return;
   try {
     await positionIsland(win);
-  } catch { /* 定位失败用默认位置 */ }
+  } catch {
+    // 定位失败 = 窗口引用已失效（被外部关闭/系统回收）：重置状态让下次调用走重建，
+    // 并放弃本次推送（emit 打进死窗口必丢，等价于"不显示"）
+    if (islandWin === win) { islandWin = null; islandReady = false; }
+    return;
+  }
   // 历史记录：真实推送前写入（全部来源汇聚点），失败静默（不影响弹岛）。
   // copy-image 的 text 是完整 base64 data URL（岛内渲染缩略图用），不直接落历史库——
   // 先降采样为小缩略图（webp 高 56px，约 1-4KB）再写入，历史窗口直接显示图片；
