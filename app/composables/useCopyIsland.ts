@@ -194,6 +194,15 @@ function closeIsland(): void {
 /** 单例复用：首次惰性创建，之后 show/hide（避免每次复制都新建 WebView） */
 async function ensureIsland(): Promise<WebviewWindow | null> {
   if (islandWin) return islandWin;
+  // 复用已存在的同名窗口：每个 webview 有独立 JS 上下文（便签等窗口调用本模块时 islandWin 必为 null），
+  // HMR/重载也会丢失模块状态——此时重复创建同名窗口会触发 tauri://error 且 island:ready 不会重发，
+  // 通知随之静默丢失。故先按 label 查找存活窗口直接接管（其页面早已就绪并注册了 island:show 监听）。
+  const existing = await WebviewWindow.getByLabel(ISLAND_LABEL).catch(() => null);
+  if (existing) {
+    islandWin = existing;
+    islandReady = true;
+    return islandWin;
+  }
   islandReady = false;
 
   // 关键：先注册 ready 监听再创建窗口，避免页面早于监听注册 emit 而丢失握手
