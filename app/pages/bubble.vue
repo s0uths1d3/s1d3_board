@@ -114,12 +114,32 @@ let islandProxTimer: ReturnType<typeof setInterval> | null = null;
 let islandScale = 1;
 let islandRect = { x: 0, y: 0, w: ISLAND_W, h: ISLAND_H };
 
+// ===== 重复提示辨识（同一时段多条相同提示）：×N 计数徽标 + 新提示金环脉冲 =====
+const ISLAND_REPEAT_WINDOW_MS = 5000; // 窗口期：相同内容在此时长内再次弹出视为重复（过后重新计数）
+const islandRepeat = ref(1);          // 当前重复轮次（>1 时胶囊显示 ×N 徽标）
+const islandPulse = ref(false);       // 新提示到达的一次性高亮脉冲（金环扩散渐隐）
+let islandRepeatKey = '';             // 上一条提示的唯一键（kind|text）
+let islandRepeatAt = 0;               // 上一条提示到达时刻（ms）
+let islandPulseTimer: ReturnType<typeof setTimeout> | null = null;
+
 /** 展示灵动岛：窗口 show 后强制回流再切动画类，保证进出场动画可见且首帧即动（隐藏窗口里 transition 会瞬间跑完） */
 async function applyIsland(payload: { kind: IslandKind; text?: string; title?: string; durationMs?: number }): Promise<void> {
   islandKind.value = payload.kind;
   islandText.value = payload.text ?? '';
   islandTitle.value = payload.title ?? '';
   islandDuration.value = payload.durationMs ?? ISLAND_SHOW_MS;
+  // 重复提示辨识：同内容（kind+text）短时间内再次弹出 → ×N 递增（胶囊显示徽标，用户可区分
+  // "又来了一条新提示"与"正在显示的旧条目"）；窗口期过后视为新一轮，重新计数。
+  // 每条新提示（无论是否重复）都触发一次金环脉冲，与入场动画叠加出"新鲜感"
+  const repeatKey = `${payload.kind}|${payload.text ?? ''}`;
+  const now = Date.now();
+  islandRepeat.value = repeatKey === islandRepeatKey && now - islandRepeatAt <= ISLAND_REPEAT_WINDOW_MS
+    ? islandRepeat.value + 1
+    : 1;
+  islandRepeatKey = repeatKey;
+  islandRepeatAt = now;
+  islandPulse.value = false;
+  if (islandPulseTimer) clearTimeout(islandPulseTimer);
   // 复位动画起点与展开态：连续事件到来时从收起态重新展开
   cancelIslandExpand();
   islandExpanded.value = false;
@@ -129,8 +149,11 @@ async function applyIsland(payload: { kind: IslandKind; text?: string; title?: s
   await win.setSize(new LogicalSize(ISLAND_W, ISLAND_H)).catch(() => {});
   await win.show().catch(() => {});
   await nextTick();
-  // 强制回流让浏览器记录收起态（替代双 rAF，节省约 2 帧延迟）
+  // 强制回流让浏览器记录收起态（替代双 rAF，节省约 2 帧延迟）；回流后挂脉冲动画类才可靠重播
   void islandPillEl.value?.offsetHeight;
+  islandPulse.value = true;
+  // 覆盖最长动画链（涟漪 0.12s 延迟 + 0.75s ≈ 0.87s），避免复位截断余韵波纹
+  islandPulseTimer = setTimeout(() => { islandPulse.value = false; }, 900);
   islandVisible.value = true;
   // 溢出检测：胶囊单行截断放不下才允许下拉展开（图片/空内容不展开）
   const el = islandTextEl.value;
@@ -501,7 +524,7 @@ onBeforeUnmount(() => {
       <div
           ref="islandPillEl"
           class="island-pill bg-surface text-ink border-line shadow-float"
-          :class="islandVisible ? 'island-in' : ''"
+          :class="[islandVisible ? 'island-in' : '', islandPulse ? 'island-pill-new' : '']"
       >
         <!-- 图标随 kind 变化：粘贴=剪贴板打勾 / 成功=对勾圈 / 失败=叹号圈 / 信息=i圈 / 复制=双层卡片 -->
         <svg v-if="islandKind === 'paste'" class="island-icon text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -538,6 +561,11 @@ onBeforeUnmount(() => {
             @mouseleave="hideImagePreview"
         />
         <span v-else-if="islandText" ref="islandTextEl" class="min-w-0 flex-1 truncate text-xs text-ink-soft">{{ islandText }}</span>
+        <!-- 重复提示计数徽标：同一时段相同内容再次弹出时递增（×2/×3…），用户可明确辨识是新提示 -->
+        <span
+            v-if="islandRepeat > 1"
+            class="island-badge shrink-0 rounded-full bg-gold/15 px-1.5 text-[10px] font-semibold leading-4 tabular-nums text-gold"
+        >×{{ islandRepeat }}</span>
       </div>
       <!-- 悬停展开的下拉面板：仅当内容溢出胶囊时渲染，逐行带行号展示完整内容（超高可滚动，样式与胶囊一致） -->
       <div
@@ -710,6 +738,57 @@ body.island-body::after {
 .island-pill.island-in {
   opacity: 1;
   transform: translateY(0) scale(1);
+}
+/* 新提示脉冲（多层组合）：主光环点亮后扩散 + 延迟余韵涟漪 + 图标弹跳 + ×N 徽标弹入；
+   全部走独立伪元素/子元素动画，不动胶囊原 border/box-shadow 与主题 token */
+.island-pill.island-pill-new::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 9999px;
+  border: 1.5px solid rgb(var(--c-gold) / 0.9);
+  pointer-events: none;
+  animation: island-new-ring 0.6s ease-out forwards;
+}
+/* 主光环：先短暂点亮（金边清晰可见）再扩散渐隐，节奏上"先确认后离去" */
+@keyframes island-new-ring {
+  0% { opacity: 0; transform: scale(1); }
+  18% { opacity: 1; transform: scale(1.005); }
+  100% { opacity: 0; transform: scale(1.12); }
+}
+/* 余韵涟漪：延迟出现、更淡更慢的第二圈，扩散感更柔（两层错峰形成波纹层次） */
+.island-pill.island-pill-new::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 9999px;
+  border: 1px solid rgb(var(--c-gold) / 0.4);
+  pointer-events: none;
+  animation: island-new-ripple 0.75s ease-out 0.12s forwards;
+  opacity: 0;
+}
+@keyframes island-new-ripple {
+  0% { opacity: 0; transform: scale(1); }
+  25% { opacity: 1; transform: scale(1.02); }
+  100% { opacity: 0; transform: scale(1.22); }
+}
+/* 图标弹跳：spring 曲线强调"新内容落下" */
+.island-pill.island-pill-new .island-icon {
+  animation: island-new-icon-pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes island-new-icon-pop {
+  0% { transform: scale(0.8); }
+  55% { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+/* ×N 徽标弹入：与脉冲同帧出现，随重复次数持续强化"又来了一条"的感知 */
+.island-pill.island-pill-new .island-badge {
+  animation: island-new-badge-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes island-new-badge-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
 }
 .island-icon {
   height: 1rem;
