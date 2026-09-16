@@ -48,6 +48,10 @@ function sanitizeAiLines(out: string): string[] {
         .filter((line) => line.length > 0);
 }
 
+/** 飞行中去重：同内容+同提取器的 AI 请求并发时共享同一 Promise（连按 Ctrl+B 不重复消耗 token）。
+ *  完成或失败后移除：成功走缓存命中，失败允许下次重试 */
+const inflightAi = new Map<string, Promise<string>>();
+
 /** 执行单个提取器：本地规则（正则/分隔符）或 AI 指令，产出 0..n 条片段 */
 export async function runExtractor(extractor: ClipExtractor, content: string): Promise<Segment[]> {
     if (extractor.method === 'ai') {
@@ -70,7 +74,20 @@ export async function runExtractor(extractor: ClipExtractor, content: string): P
             ? '\n用户近期偏好参考（提升选择准确度 / User preference hints):' +
               digest.map((d) => `\n- 提取器「${d.extractorId}」的产出被用户粘贴 ${d.count} 次 / its output was pasted ${d.count} times`).join('')
             : '';
-        const out = await aiComplete(cfg, withOutputContract(instruction) + habitHint, content);
+        // 飞行中请求直接复用：AI 返回前（最长 15s 超时）连按 Ctrl+B 只发一次真实请求
+        const pending = inflightAi.get(cacheKey);
+        if (pending) {
+            const shared = await pending;
+            return sanitizeAiLines(shared).map((text, index) => ({ index, text, source: 'ai' as const, extractorId: extractor.id }));
+        }
+        const call = aiComplete(cfg, withOutputContract(instruction) + habitHint, content);
+        inflightAi.set(cacheKey, call);
+        let out: string;
+        try {
+            out = await call;
+        } finally {
+            inflightAi.delete(cacheKey);
+        }
         void dbService.setAiCache(cacheKey, out).catch(() => {});
         return sanitizeAiLines(out).map((text, index) => ({ index, text, source: 'ai' as const, extractorId: extractor.id }));
     }
