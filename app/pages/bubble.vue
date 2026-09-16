@@ -143,6 +143,10 @@ async function applyIsland(payload: { kind: IslandKind; text?: string; title?: s
   // 复位动画起点与展开态：连续事件到来时从收起态重新展开
   cancelIslandExpand();
   islandExpanded.value = false;
+  // 新提示到达即取消上一轮隐藏计划：旧 hide 回调若在新 show 之后执行，
+  // 会把刚要显示的窗口藏回去（间歇性"弹了又立刻消失/不显示"的竞态来源）
+  if (islandOutTimer) { clearTimeout(islandOutTimer); islandOutTimer = null; }
+  if (islandHideTimer) { clearTimeout(islandHideTimer); islandHideTimer = null; }
   islandVisible.value = false;
   const win = getCurrentWindow();
   // 复位窗口为收起尺寸（上次展开后可能残留大窗口），再显示
