@@ -23,6 +23,7 @@ import {
   type Translator,
 } from '~/src/smart-clip/extractors';
 import { generateExtractorDraft, generateSchemeDraft } from '~/src/smart-clip/aiGenerate';
+import { AI_CUSTOM_TEMPLATE } from '~/src/smart-clip/aiClient';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
@@ -191,21 +192,30 @@ watch(maxLimit, async (val) => {
 });
 
 // ===== AI 通道配置（设计文档 §4.2）：提供商 / 地址 / 模型 + 连接测试 =====
-type AiProviderKind = 'openai-compat' | 'anthropic';
+// custom = 自定义 JSON 模板（path/headers/body/responsePath，支持 {{model}}/{{apiKey}}/{{system}}/{{content}} 占位符），
+// 模板内容与 SSE 流式解析在 Rust 侧（ai.rs），前端只做编辑、校验与落库
+type AiProviderKind = 'openai-compat' | 'anthropic' | 'custom';
 const aiProvider = ref<AiProviderKind>('openai-compat');
 const aiBaseUrl = ref('');
 const aiModel = ref('');
+const aiCustomConfig = ref('');
+const aiCustomError = ref('');
 const aiTestState = ref<'idle' | 'testing' | 'ok' | 'fail'>('idle');
 const aiTestLatency = ref(0);
 const aiTestError = ref('');
 const AI_PROVIDER_OPTIONS = computed(() => [
   { value: 'openai-compat' as const, label: t('setting.general.ai_provider_openai') },
   { value: 'anthropic' as const, label: t('setting.general.ai_provider_anthropic') },
+  { value: 'custom' as const, label: t('setting.general.ai_provider_custom') },
 ]);
 function selectAiProvider(v: string) {
   aiProvider.value = v as AiProviderKind;
   const opt = AI_PROVIDER_OPTIONS.value.find(o => o.value === v);
   showHint(t('setting.general.ai_provider_saved', { name: opt?.label ?? v }));
+}
+/** 宽控件设置项：控件需要整行宽度（纵向布局，标签在上）——AI 提供商（分段器 + 自定义 JSON 编辑器） */
+function isWideSettingItem(item: { label: string }): boolean {
+  return item.label === 'setting.general.ai_provider';
 }
 watch(aiProvider, (val) => {
   debouncePersist('ai_provider', () => dbService.setKeyValue('ai_provider', val));
@@ -216,6 +226,48 @@ watch(aiBaseUrl, (val) => {
 watch(aiModel, (val) => {
   debouncePersist('ai_model', () => dbService.setKeyValue('ai_model', val ?? ''));
 });
+
+// ===== 自定义 JSON 模板编辑（仅 provider = custom 时显示） =====
+/** 结构校验：JSON 可解析 + body 为对象 + headers 键值均为字符串（path/提取路径可省略有默认） */
+function validateCustomConfig(text: string): string | null {
+  let cfg: unknown;
+  try {
+    cfg = JSON.parse(text);
+  } catch (e) {
+    return t('setting.general.ai_custom_invalid', { error: String(e) });
+  }
+  if (typeof cfg !== 'object' || cfg === null || Array.isArray(cfg)) {
+    return t('setting.general.ai_custom_need_object');
+  }
+  const body = (cfg as { body?: unknown }).body;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return t('setting.general.ai_custom_need_body');
+  }
+  const headers = (cfg as { headers?: unknown }).headers;
+  if (headers !== undefined && (typeof headers !== 'object' || headers === null || Array.isArray(headers))) {
+    return t('setting.general.ai_custom_need_headers');
+  }
+  return null;
+}
+watch(aiCustomConfig, (val) => {
+  // 空值视为尚未配置（不报错）；非法 JSON 不落库，避免把坏模板存进 KV
+  const text = val.trim();
+  if (!text) {
+    aiCustomError.value = '';
+    debouncePersist('ai_custom_config', () => dbService.setKeyValue('ai_custom_config', ''));
+    return;
+  }
+  const err = validateCustomConfig(text);
+  aiCustomError.value = err ?? '';
+  if (err) return;
+  debouncePersist('ai_custom_config', () => dbService.setKeyValue('ai_custom_config', text));
+});
+/** 套用默认模板（OpenAI 形状最小可用配置，占位符说明见模板字段） */
+function applyCustomTemplate() {
+  aiCustomConfig.value = AI_CUSTOM_TEMPLATE;
+  showHint(t('setting.general.ai_custom_template_applied'));
+}
+
 /** 连接测试：invoke Rust ai_test_connection（请求细节在 Rust 侧，Key 不进 fetch） */
 async function testAiConnection(): Promise<void> {
   if (aiTestState.value === 'testing') return;
@@ -224,11 +276,30 @@ async function testAiConnection(): Promise<void> {
     showHint(t('setting.general.api_key_missing'), 'error');
     return;
   }
+  // custom 模式下模板非法或为空时直接拦截，不打无效请求
+  const customText = aiCustomConfig.value.trim();
+  if (aiProvider.value === 'custom') {
+    if (!customText) {
+      showHint(t('setting.general.ai_custom_missing'), 'error');
+      return;
+    }
+    const err = validateCustomConfig(customText);
+    if (err) {
+      showHint(err, 'error');
+      return;
+    }
+  }
   aiTestState.value = 'testing';
   try {
     const res = await invoke<{ ok: boolean; latency_ms: number; error?: string }>(
       'ai_test_connection',
-      { provider: aiProvider.value, baseUrl: aiBaseUrl.value, apiKey: key, model: aiModel.value },
+      {
+        provider: aiProvider.value,
+        baseUrl: aiBaseUrl.value,
+        apiKey: key,
+        model: aiModel.value,
+        customConfig: aiProvider.value === 'custom' ? customText : undefined,
+      },
     );
     aiTestLatency.value = res.latency_ms;
     aiTestState.value = res.ok ? 'ok' : 'fail';
@@ -1212,6 +1283,8 @@ onMounted(async () => {
   aiProvider.value = ((await dbService.getKeyValue('ai_provider')) || 'openai-compat') as AiProviderKind;
   aiBaseUrl.value = await dbService.getKeyValue('ai_base_url');
   aiModel.value = await dbService.getKeyValue('ai_model');
+  // 自定义 JSON 模板恢复（custom 模式编辑器内容）；为空时编辑器显示占位提示
+  aiCustomConfig.value = (await dbService.getKeyValue('ai_custom_config')) || '';
   // 智能剪贴板配置恢复（设计文档 §4.3/§4.5）+ 推送处理层快照
   try {
     // 'off' 尊重用户选择；'scheme'/'ai'（旧值）归一到 'scheme'；空值/未知值按「智能切分」（新默认）
@@ -1702,8 +1775,10 @@ onMounted(async () => {
               <li class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
                 {{ t(activeSetting.title) }}
               </li>
+              <!-- 宽控件项（AI 提供商：分段器 + JSON 编辑器）纵向布局占满整行，其余保持左标签右控件两栏 -->
               <li v-for="(item, itemIndex) in activeSetting.items" :key="itemIndex"
-                  class="flex items-center justify-between gap-4 p-4">
+                  class="p-4"
+                  :class="isWideSettingItem(item) ? 'flex flex-col items-stretch gap-2' : 'flex flex-wrap items-center justify-between gap-4'">
                 <div>
                   <div class="text-ink">{{ t(item.label) }}</div>
                   <div v-if="item.type === 'action' && item.label === 'setting.general.clear_database' && (clearMsg || undoActive)"
@@ -1730,7 +1805,7 @@ onMounted(async () => {
                     </span>
                   </div>
                 </div>
-                <div class="w-56 shrink-0">
+                <div class="shrink-0" :class="isWideSettingItem(item) ? 'w-full' : 'w-56'">
                   <!-- 操作型设置项（如清空数据库）：二次确认 -->
                   <template v-if="item.type === 'action' && item.label === 'setting.general.clear_database'">
                     <button v-if="!showClearConfirm" type="button"
@@ -1775,15 +1850,36 @@ onMounted(async () => {
                       :placeholder="t('setting.general.ai_model')"
                       @save="showHint(t('setting.general.ai_model_saved'))"
                   />
-                  <!-- AI 提供商：OpenAI 兼容（默认）/ Anthropic 原生（设计文档 §4.2） -->
-                  <UiSegmented
-                      v-else-if="item.type === 'select' && item.label === 'setting.general.ai_provider'"
-                      :model-value="aiProvider"
-                      :options="AI_PROVIDER_OPTIONS"
-                      block
-                      :label="t('setting.general.ai_provider')"
-                      @update:model-value="selectAiProvider"
-                  />
+                  <!-- AI 提供商：OpenAI 兼容（默认）/ Anthropic 原生 / 自定义 JSON（设计文档 §4.2） -->
+                  <template v-else-if="item.type === 'select' && item.label === 'setting.general.ai_provider'">
+                    <UiSegmented
+                        :model-value="aiProvider"
+                        :options="AI_PROVIDER_OPTIONS"
+                        block
+                        :label="t('setting.general.ai_provider')"
+                        @update:model-value="selectAiProvider"
+                    />
+                    <!-- 自定义 JSON 模板编辑器：仅 custom 模式显示；结构校验通过才防抖落库 -->
+                    <div v-if="aiProvider === 'custom'" class="mt-3 rounded-xl border border-line bg-surface-field/40 p-3">
+                      <div class="mb-2 flex items-center justify-between gap-2">
+                        <span class="text-sm font-medium text-ink">{{ t('setting.general.ai_custom_config') }}</span>
+                        <button type="button" v-tip="t('setting.general.ai_custom_template_tip')"
+                                class="btn-soft shrink-0 whitespace-nowrap px-2 py-1 text-xs" @click="applyCustomTemplate">
+                          {{ t('setting.general.ai_custom_template') }}
+                        </button>
+                      </div>
+                      <textarea
+                          v-model="aiCustomConfig"
+                          rows="14"
+                          wrap="off"
+                          spellcheck="false"
+                          class="w-full resize-y overflow-x-auto rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
+                          :placeholder="t('setting.general.ai_custom_placeholder')"
+                      ></textarea>
+                      <p v-if="aiCustomError" class="mt-1 text-xs text-danger">{{ aiCustomError }}</p>
+                      <p v-else class="mt-1 text-xs text-ink-faint">{{ t('setting.general.ai_custom_hint') }}</p>
+                    </div>
+                  </template>
                   <SettingInput
                       v-else-if="item.type === 'input' && item.label === 'setting.general.clipboard_limit'"
                       v-model="maxLimit"

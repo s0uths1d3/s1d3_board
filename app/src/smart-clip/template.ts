@@ -140,11 +140,13 @@ export async function testConnection(cfg: {
     baseUrl: string;
     apiKey: string;
     model: string;
+    customConfig?: string;
 }): Promise<{ ok: boolean; latency_ms: number; error?: string }> {
     return await invoke('ai_test_connection', {
         provider: cfg.provider,
         baseUrl: cfg.baseUrl,
         apiKey: cfg.apiKey,
         model: cfg.model,
+        customConfig: cfg.customConfig,
     });
 }

@@ -7,11 +7,18 @@
 //! - `openai-compat`：POST {base}/chat/completions，Bearer 鉴权，choices[0].message.content
 //! - `anthropic`：   POST {base}/v1/messages，x-api-key + anthropic-version 头，
 //!                    system 为顶层字段，max_tokens 必填，content[].text 拼接
+//! - `custom`：      用户在设置页自建 JSON 模板（KV ai_custom_config），
+//!                    自定义接口路径 / 请求头 / 请求体与响应提取路径；
+//!                    path 支持 {{baseUrl}} {{model}} {{apiKey}}，
+//!                    请求体/请求头支持 {{baseUrl}} {{model}} {{apiKey}} {{system}} {{content}}；
+//!                    响应为 SSE（text/event-stream）时按帧提取并 emit `ai:chunk`
+//!                    （payload {text: 累计全文}），invoke 最终仍返回拼接全文。
 //!
 //! 新增提供商 = 实现 AIProvider + 在 provider_for 注册，调用方零改动。
 
 use serde::Serialize;
 use std::time::{Duration, Instant};
+use tauri::Emitter;
 
 /// 单次 AI 请求超时
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -25,6 +32,9 @@ pub struct AiConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    /// provider = custom 时的 JSON 模板串（其余提供商为 None）
+    #[serde(default)]
+    pub custom_config: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -63,11 +73,18 @@ async fn error_from_response(resp: reqwest::Response) -> String {
 // ===================== 提供商抽象 =====================
 
 trait AIProvider {
-    async fn complete(&self, cfg: &AiConfig, system: &str, content: &str) -> Result<String, String>;
+    async fn complete(
+        &self,
+        cfg: &AiConfig,
+        system: &str,
+        content: &str,
+        app: &tauri::AppHandle,
+    ) -> Result<String, String>;
 }
 
 struct OpenAiCompatProvider;
 struct AnthropicProvider;
+struct CustomProvider;
 
 impl OpenAiCompatProvider {
     fn base(cfg: &AiConfig) -> String {
@@ -76,7 +93,13 @@ impl OpenAiCompatProvider {
 }
 
 impl AIProvider for OpenAiCompatProvider {
-    async fn complete(&self, cfg: &AiConfig, system: &str, content: &str) -> Result<String, String> {
+    async fn complete(
+        &self,
+        cfg: &AiConfig,
+        system: &str,
+        content: &str,
+        _app: &tauri::AppHandle,
+    ) -> Result<String, String> {
         let url = format!("{}/chat/completions", Self::base(cfg));
         let body = serde_json::json!({
             "model": cfg.model,
@@ -113,7 +136,13 @@ impl AnthropicProvider {
 }
 
 impl AIProvider for AnthropicProvider {
-    async fn complete(&self, cfg: &AiConfig, system: &str, content: &str) -> Result<String, String> {
+    async fn complete(
+        &self,
+        cfg: &AiConfig,
+        system: &str,
+        content: &str,
+        _app: &tauri::AppHandle,
+    ) -> Result<String, String> {
         let url = format!("{}/v1/messages", Self::base(cfg));
         let body = serde_json::json!({
             "model": cfg.model,
@@ -156,18 +185,271 @@ impl AIProvider for AnthropicProvider {
     }
 }
 
+// ===================== 自定义提供商（JSON 模板） =====================
+
+/// 自定义模式配置（设置页 JSON 编辑器的内容，KV ai_custom_config）
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CustomAiConfig {
+    /// 接口路径：拼在 Base URL 之后；以 http(s):// 开头时整体作为最终 URL（可覆盖 Base URL）
+    #[serde(default)]
+    path: String,
+    /// 请求头模板（键值均须为字符串，值支持占位符）；Content-Type 由 .json() 自动带出，可在此覆盖
+    #[serde(default)]
+    headers: serde_json::Value,
+    /// 请求体模板（占位符替换后的值保持原始类型，不做字符串转义）
+    body: serde_json::Value,
+    /// 非流式（JSON）响应的文本提取路径，如 choices[0].message.content
+    #[serde(default = "default_response_path")]
+    response_path: String,
+    /// 流式（SSE）每帧的增量文本提取路径
+    #[serde(default = "default_stream_response_path")]
+    stream_response_path: String,
+}
+
+fn default_response_path() -> String {
+    "choices[0].message.content".to_string()
+}
+
+fn default_stream_response_path() -> String {
+    "choices[0].delta.content".to_string()
+}
+
+/// 占位符替换：字符串值整串恰为一个占位符时替换为原始值（content/system 等长文本免转义），
+/// 否则做字面替换（如 "Bearer {{apiKey}}"）。占位符：{{model}} {{apiKey}} {{system}} {{content}}
+fn substitute(value: &mut serde_json::Value, vars: &[(&str, &str)]) {
+    match value {
+        serde_json::Value::String(s) => {
+            for (name, val) in vars {
+                let ph = format!("{{{{{}}}}}", name);
+                if s.as_str() == ph {
+                    *s = (*val).to_string();
+                    return;
+                }
+            }
+            for (name, val) in vars {
+                let ph = format!("{{{{{}}}}}", name);
+                if s.contains(&ph) {
+                    *s = s.replace(&ph, val);
+                }
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr {
+                substitute(v, vars);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for v in map.values_mut() {
+                substitute(v, vars);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 响应提取路径分词：choices[0].message.content 与 choices.0.message.content 等价
+fn tokenize_path(path: &str) -> Vec<String> {
+    path.split(['.', '[', ']'])
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// 按 a.b.0.c / a[0].b 混合路径取值；数字 token 先按数组下标、再按对象键尝试
+fn resolve_path<'a>(root: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let mut cur = root;
+    for token in tokenize_path(path) {
+        cur = match token.parse::<usize>() {
+            Ok(idx) => cur.get(idx).or_else(|| cur.get(token))?,
+            Err(_) => cur.get(&token)?,
+        };
+    }
+    Some(cur)
+}
+
+impl CustomProvider {
+    /// 解析并结构校验自定义配置
+    fn parse(cfg: &AiConfig) -> Result<CustomAiConfig, String> {
+        let raw = cfg
+            .custom_config
+            .as_deref()
+            .ok_or_else(|| "自定义模式缺少 JSON 配置（设置页填写后保存）".to_string())?;
+        let custom: CustomAiConfig = serde_json::from_str(raw)
+            .map_err(|e| format!("自定义 AI 配置 JSON 无效: {e}"))?;
+        if !custom.body.is_object() {
+            return Err("自定义 AI 配置的 body 必须是 JSON 对象".to_string());
+        }
+        if let Some(map) = custom.headers.as_object() {
+            for (k, v) in map {
+                if !v.is_string() {
+                    return Err(format!("自定义 AI 配置 headers.{k} 必须是字符串"));
+                }
+            }
+        } else if !custom.headers.is_null() {
+            return Err("自定义 AI 配置的 headers 必须是 JSON 对象".to_string());
+        }
+        Ok(custom)
+    }
+}
+
+impl AIProvider for CustomProvider {
+    async fn complete(
+        &self,
+        cfg: &AiConfig,
+        system: &str,
+        content: &str,
+        app: &tauri::AppHandle,
+    ) -> Result<String, String> {
+        let custom = CustomProvider::parse(cfg)?;
+        let base = normalize_base_url(&cfg.base_url, "");
+
+        // path 占位符替换：支持 {{baseUrl}} {{model}} {{apiKey}}
+        // （不开放 {{system}}/{{content}}，避免长文本注入 URL）
+        let mut path_val = serde_json::Value::String(custom.path.clone());
+        substitute(
+            &mut path_val,
+            &[
+                ("baseUrl", base.as_str()),
+                ("model", cfg.model.as_str()),
+                ("apiKey", cfg.api_key.as_str()),
+            ],
+        );
+        let path = path_val.as_str().unwrap_or_default().trim().to_string();
+
+        // URL：path 为绝对地址时直接用，否则拼在 Base URL 后
+        let url = if path.starts_with("http://") || path.starts_with("https://") {
+            path
+        } else if base.is_empty() {
+            return Err(
+                "自定义模式需要在 Base URL 填写接口地址（或在 path 中写完整 URL）".to_string(),
+            );
+        } else {
+            format!("{base}{path}")
+        };
+
+        // 请求体/请求头占位符替换（整值替换不转义，长文本安全）
+        let vars: Vec<(&str, &str)> = vec![
+            ("baseUrl", base.as_str()),
+            ("model", cfg.model.as_str()),
+            ("apiKey", cfg.api_key.as_str()),
+            ("system", system),
+            ("content", content),
+        ];
+        let mut body = custom.body.clone();
+        substitute(&mut body, &vars);
+
+        let mut req = http_client()?.post(&url).json(&body);
+        if let Some(map) = custom.headers.as_object() {
+            for (k, v) in map {
+                let mut hv = v.clone();
+                substitute(&mut hv, &vars);
+                req = req.header(k, hv.as_str().unwrap_or_default());
+            }
+        }
+
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("AI API 请求失败: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(error_from_response(resp).await);
+        }
+
+        // 按响应 Content-Type 分流：SSE 流式 → 逐帧提取累积；否则 JSON 整体提取
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_lowercase();
+        if content_type.contains("text/event-stream") {
+            complete_stream(resp, &custom, app).await
+        } else {
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("AI API 响应解析失败: {e}"))?;
+            resolve_path(&json, &custom.response_path)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| format!("AI API 响应在 {} 处没有文本", custom.response_path))
+        }
+    }
+}
+
+/// SSE 流式消费：解析 data: 帧，按 streamResponsePath 提取增量并累积；
+/// 每收到增量 emit `ai:chunk`（payload {text: 累计全文}），invoke 最终返回拼接全文
+async fn complete_stream(
+    resp: reqwest::Response,
+    custom: &CustomAiConfig,
+    app: &tauri::AppHandle,
+) -> Result<String, String> {
+    use futures_util::StreamExt;
+
+    let mut stream = resp.bytes_stream();
+    let mut buf = String::new();
+    let mut out = String::new();
+    let mut done = false;
+
+    while !done {
+        let Some(chunk) = stream.next().await else { break };
+        let bytes = chunk.map_err(|e| format!("AI API 流读取失败: {e}"))?;
+        buf.push_str(&String::from_utf8_lossy(&bytes));
+        // 跨网络分包的行缓冲：只处理完整行，剩余留待下一包
+        while let Some(pos) = buf.find('\n') {
+            let line: String = buf[..pos].trim_end_matches('\r').to_string();
+            buf.replace_range(..=pos, "");
+            let trimmed = line.trim();
+            if trimmed == "data: [DONE]" {
+                done = true;
+                break;
+            }
+            let Some(data) = trimmed.strip_prefix("data:") else { continue };
+            let data = data.trim();
+            if data.is_empty() {
+                continue;
+            }
+            let Ok(frame) = serde_json::from_str::<serde_json::Value>(data) else { continue };
+            if let Some(text) = resolve_path(&frame, &custom.stream_response_path).and_then(|v| v.as_str())
+            {
+                if !text.is_empty() {
+                    out.push_str(text);
+                    let _ = app.emit("ai:chunk", serde_json::json!({ "text": out }));
+                }
+            }
+        }
+    }
+
+    if out.is_empty() {
+        return Err(format!(
+            "流式响应未提取到文本（检查 streamResponsePath: {}）",
+            custom.stream_response_path
+        ));
+    }
+    Ok(out)
+}
+
 /// 提供商枚举：async trait 方法不可 dyn（RPITIT），用 enum 静态分派
 /// （新增提供商 = 新 variant + match 分支，调用方零改动）
 enum AiProvider {
     OpenAiCompat(OpenAiCompatProvider),
     Anthropic(AnthropicProvider),
+    Custom(CustomProvider),
 }
 
 impl AiProvider {
-    async fn complete(&self, cfg: &AiConfig, system: &str, content: &str) -> Result<String, String> {
+    async fn complete(
+        &self,
+        cfg: &AiConfig,
+        system: &str,
+        content: &str,
+        app: &tauri::AppHandle,
+    ) -> Result<String, String> {
         match self {
-            Self::OpenAiCompat(p) => p.complete(cfg, system, content).await,
-            Self::Anthropic(p) => p.complete(cfg, system, content).await,
+            Self::OpenAiCompat(p) => p.complete(cfg, system, content, app).await,
+            Self::Anthropic(p) => p.complete(cfg, system, content, app).await,
+            Self::Custom(p) => p.complete(cfg, system, content, app).await,
         }
     }
 }
@@ -176,6 +458,7 @@ impl AiProvider {
 fn provider_for(cfg: &AiConfig) -> AiProvider {
     match cfg.provider.as_str() {
         "anthropic" => AiProvider::Anthropic(AnthropicProvider),
+        "custom" => AiProvider::Custom(CustomProvider),
         _ => AiProvider::OpenAiCompat(OpenAiCompatProvider),
     }
 }
@@ -183,6 +466,13 @@ fn provider_for(cfg: &AiConfig) -> AiProvider {
 fn provider_for_err(cfg: &AiConfig) -> Result<AiProvider, String> {
     match cfg.provider.as_str() {
         "openai-compat" | "anthropic" => Ok(provider_for(cfg)),
+        "custom" => {
+            if cfg.custom_config.is_some() {
+                Ok(provider_for(cfg))
+            } else {
+                Err("自定义模式缺少 JSON 配置（设置页填写后保存）".to_string())
+            }
+        }
         other => Err(format!("未知的 AI 提供商: {other}")),
     }
 }
@@ -192,15 +482,20 @@ fn provider_for_err(cfg: &AiConfig) -> Result<AiProvider, String> {
 /// 连接测试：发一条最小请求（"ping"），返回可达性与耗时（设置页「测试连接」按钮）
 #[tauri::command]
 pub async fn ai_test_connection(
+    app: tauri::AppHandle,
     provider: String,
     base_url: String,
     api_key: String,
     model: String,
+    custom_config: Option<String>,
 ) -> Result<AiTestResult, String> {
-    let cfg = AiConfig { provider, base_url, api_key, model };
+    let cfg = AiConfig { provider, base_url, api_key, model, custom_config };
     let p = provider_for_err(&cfg)?;
     let started = Instant::now();
-    match p.complete(&cfg, "You are a connectivity test.", "ping").await {
+    match p
+        .complete(&cfg, "You are a connectivity test.", "ping", &app)
+        .await
+    {
         Ok(_) => Ok(AiTestResult { ok: true, latency_ms: started.elapsed().as_millis() as u64, error: None }),
         Err(e) => Ok(AiTestResult { ok: false, latency_ms: started.elapsed().as_millis() as u64, error: Some(e) }),
     }
@@ -209,13 +504,17 @@ pub async fn ai_test_connection(
 /// 内容加工：system 为模板指令（模板 {ai:指令} 占位符或默认指令），content 为剪贴板原文
 #[tauri::command]
 pub async fn ai_complete(
+    app: tauri::AppHandle,
     provider: String,
     base_url: String,
     api_key: String,
     model: String,
     system: String,
     content: String,
+    custom_config: Option<String>,
 ) -> Result<String, String> {
-    let cfg = AiConfig { provider, base_url, api_key, model };
-    provider_for_err(&cfg)?.complete(&cfg, &system, &content).await
+    let cfg = AiConfig { provider, base_url, api_key, model, custom_config };
+    provider_for_err(&cfg)?
+        .complete(&cfg, &system, &content, &app)
+        .await
 }
