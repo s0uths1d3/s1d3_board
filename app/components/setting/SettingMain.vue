@@ -31,6 +31,7 @@ import { useIslandEnabled, setIslandEnabled, useIslandTiming, ensureIslandTiming
 import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
 import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
 import { useI18n, setLocaleMode, LOCALES, type LocaleMode } from '~/composables/useI18n';
+import { briefAiError, parseAiError } from '~/utils/aiError';
 import { useTodoSmartRemind, setTodoSmartRemindEnabled } from '~/composables/useTodoSmartRemind';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
 import { appUsageEnabled, setAppUsageEnabled } from '~/composables/useAppUsage';
@@ -268,6 +269,8 @@ function applyCustomTemplate() {
   showHint(t('setting.general.ai_custom_template_applied'));
 }
 
+const aiTestParsed = computed(() => parseAiError(aiTestError.value));
+
 /** 连接测试：invoke Rust ai_test_connection（请求细节在 Rust 侧，Key 不进 fetch） */
 async function testAiConnection(): Promise<void> {
   if (aiTestState.value === 'testing') return;
@@ -306,11 +309,11 @@ async function testAiConnection(): Promise<void> {
     aiTestError.value = res.error ?? '';
     showHint(res.ok
       ? t('setting.general.ai_test_ok', { ms: res.latency_ms })
-      : t('setting.general.ai_test_fail', { error: res.error ?? '' }), res.ok ? 'success' : 'error');
+      : t('setting.general.ai_test_fail', { error: briefAiError(res.error ?? '') }), res.ok ? 'success' : 'error');
   } catch (e) {
     aiTestState.value = 'fail';
     aiTestError.value = String(e);
-    showHint(t('setting.general.ai_test_fail', { error: String(e) }), 'error');
+    showHint(t('setting.general.ai_test_fail', { error: briefAiError(String(e)) }), 'error');
   }
 }
 
@@ -1796,14 +1799,6 @@ onMounted(async () => {
                       {{ t('setting.general.clear_undo_btn') }}
                     </button>
                   </div>
-                  <div v-if="item.type === 'action' && item.label === 'setting.general.ai_test' && aiTestState !== 'idle'"
-                       class="mt-1 flex flex-wrap items-center gap-2 text-xs">
-                    <span :class="aiTestState === 'ok' ? 'text-gold' : 'text-danger'">
-                      {{ aiTestState === 'testing' ? t('setting.general.ai_testing')
-                        : aiTestState === 'ok' ? t('setting.general.ai_test_ok', { ms: aiTestLatency })
-                        : t('setting.general.ai_test_fail', { error: aiTestError }) }}
-                    </span>
-                  </div>
                 </div>
                 <div class="shrink-0" :class="isWideSettingItem(item) ? 'w-full' : 'w-56'">
                   <!-- 操作型设置项（如清空数据库）：二次确认 -->
@@ -2015,6 +2010,22 @@ onMounted(async () => {
                       </li>
                     </ul>
                   </UiDropdown>
+                </div>
+                <!-- AI 连接测试结果：显示在测试按钮下方（跨全行），错误格式化为状态行 + 可读原因 -->
+                <div v-if="item.type === 'action' && item.label === 'setting.general.ai_test' && aiTestState !== 'idle'"
+                     class="w-full min-w-0 basis-full text-xs">
+                  <span :class="aiTestState === 'ok' ? 'text-gold' : aiTestState === 'testing' ? 'text-ink-faint' : 'text-danger'">
+                    {{ aiTestState === 'testing' ? t('setting.general.ai_testing')
+                      : aiTestState === 'ok' ? t('setting.general.ai_test_ok', { ms: aiTestLatency })
+                      : t('setting.general.ai_test_fail_brief') }}
+                  </span>
+                  <!-- 主窗口显示完整错误：状态行 + 可读原因 + 完整原文（灵动岛只提示关键内容） -->
+                  <div v-if="aiTestState === 'fail' && aiTestError"
+                       class="mt-1 rounded-lg border border-danger/30 bg-danger/5 px-2.5 py-2">
+                    <div v-if="aiTestParsed.status" class="text-[11px] font-medium tracking-wide text-danger/80">{{ aiTestParsed.status }}</div>
+                    <div v-if="aiTestParsed.message !== aiTestParsed.full" class="mt-0.5 leading-relaxed text-danger">{{ aiTestParsed.message }}</div>
+                    <div class="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-danger/70">{{ aiTestParsed.full }}</div>
+                  </div>
                 </div>
               </li>
             </ul>

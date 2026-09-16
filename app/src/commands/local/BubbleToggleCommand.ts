@@ -6,6 +6,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { writeText } from 'tauri-plugin-clipboard-api';
 import { getSmartClipEntries, parseClipItem } from '../../smart-clip/smartClip';
 import { getSelectedItem } from './clipboardStore';
+import { notifyIsland } from '~/composables/useCopyIsland';
+import { useI18n } from '~/composables/useI18n';
+import { briefAiError } from '~/utils/aiError';
 import { hashText } from '~/utils/hash';
 import dbService from '../../db/dbService';
 
@@ -135,15 +138,25 @@ function measureBubble(text: string): { w: number; h: number } {
  * 无选中项/解析失败时，回退为**最近一条**解析结果（不再拍平整份历史，
  * 避免新旧解析结果混在同一环里，出现"显示文字与处理结果不一致"）。
  */
-async function collectSegments(): Promise<Array<{ text: string; w: number; h: number; extractorId: string }>> {
+async function collectSegments(): Promise<{
+  segments: Array<{ text: string; w: number; h: number; extractorId: string }>;
+  /** 选中项解析失败原因（AI 报错/网络异常）；失败仍降级为最近一次解析结果 */
+  parseError?: string;
+}> {
   const selected = getSelectedItem();
   const content = selected && (selected.type ?? 'text') === 'text' ? selected.content : '';
   let segs: Array<{ text: string; extractorId?: string }> = [];
+  let parseError: string | undefined;
   if (selected && content) {
     try {
-      const entry = await parseClipItem(selected.id, content, Date.now());
+      const entry = await parseClipItem(selected.id, content, Date.now(), (e) => {
+        // AI 提取失败被管道降级吞掉前的回调：记录原因供灵动岛提示（首个错误优先）
+        parseError ??= String(e);
+      });
       segs = entry.segments.map((s) => ({ text: s.text, extractorId: s.extractorId }));
-    } catch { /* 降级为最近一次解析结果 */ }
+    } catch (e) {
+      parseError = String(e); /* 降级为最近一次解析结果 */
+    }
   }
   if (segs.length === 0) {
     const latest = getSmartClipEntries()[0];
@@ -163,7 +176,7 @@ async function collectSegments(): Promise<Array<{ text: string; w: number; h: nu
     seen.add(key);
     out.push({ text, extractorId: raw.extractorId ?? '', ...measureBubble(text) });
   }
-  return out.slice(0, MAX_SEGMENTS);
+  return { segments: out.slice(0, MAX_SEGMENTS), parseError };
 }
 
 /** 槽位逻辑坐标：按固定槽位表取偏移（先上下左右、再四角），同半径对称分布 */
@@ -434,11 +447,19 @@ async function openRing(): Promise<void> {
   await waitHubReady(hubLabel);
   if (!ring) return; // 握手期间环已被关闭（控制盘创建失败 / 重按 Ctrl+B）
 
-  // 片段就绪（AI/规则处理完成）后才显示环盘；无可展示片段直接关闭
-  // 解析可能耗时（AI 网络往返）：期间环可能已被关闭（tauri://error / 重按 Ctrl+B），赋值前必须守卫
+  // AI 等待提示：400ms 后仍未完成才弹「解析中」（缓存命中/规则解析的快路径不打扰）
+  const { t } = useI18n();
+  const parseHintTimer = setTimeout(() => {
+    notifyIsland({ kind: 'info', text: t('island.parsing'), durationMs: 6000 });
+  }, 400);
   const collected = await collectSegments();
+  clearTimeout(parseHintTimer);
   if (!ring) return;
-  ring.segments = collected.slice(0, MAX_SEGMENTS);
+  // 解析失败（AI 报错/网络异常）：环降级展示最近结果的同时，灵动岛给出错误原因
+  if (collected.parseError) {
+    notifyIsland({ kind: 'error', text: t('island.parse_failed', { error: briefAiError(collected.parseError) }) });
+  }
+  ring.segments = collected.segments.slice(0, MAX_SEGMENTS);
   if (ring.segments.length === 0) {
     await closeRing();
     return;

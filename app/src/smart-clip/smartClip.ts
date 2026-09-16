@@ -44,12 +44,13 @@ export function updateSmartClipConfig(cfg: {
 }
 
 /** 处理管道统一入口：off 直通单段原文 / auto 智能切分 / scheme 按默认方案加工 */
-async function processContent(content: string, ctx: ProcessContext): Promise<Segment[]> {
+async function processContent(content: string, ctx: ProcessContext, onSoftError?: (e: unknown) => void): Promise<Segment[]> {
     if (ctx.mode === 'off') return single(content, 'rule');
     if (ctx.mode === 'auto') return autoSplit(content);
 
     // 方案模式：执行方案（成员为空 = 全部提取器；非空 = 指定子集）+ 可选 body 排版；
-    // 未启用方案或零产出时降级为智能切分（不再是生硬的整段原文）。失败一律降级，保证数据不丢。
+    // 未启用方案或零产出时降级为智能切分（不再是生硬的整段原文）。失败一律降级，保证数据不丢；
+    // 降级同时经 onSoftError 把错误暴露给调用方（Ctrl+B 弹岛提示失败原因），管道行为不变。
     try {
         if (ctx.scheme && ctx.scheme.enabled === 1) {
             const segs = await runScheme(ctx.scheme, ctx.extractors, content);
@@ -59,6 +60,7 @@ async function processContent(content: string, ctx: ProcessContext): Promise<Seg
         return autoSplit(content);
     } catch (e) {
         console.error('[smart-clip] 方案加工失败，降级为智能切分:', e);
+        onSoftError?.(e);
         return autoSplit(content);
     }
 }
@@ -118,13 +120,25 @@ async function handleCopyEvent(detail: CopyEventDetail): Promise<void> {
  * - 命中缓存（同 id、同内容、且规则/模板配置未变）直接复用，避免重复调用 AI；
  * - 否则走与复制事件一致的处理管道（off 直通 / rule 规则 / ai 模板+AI），结果写入内存 store。
  */
-export async function parseClipItem(id: number, content: string, ts: number): Promise<SmartClipEntry> {
+export async function parseClipItem(
+    id: number,
+    content: string,
+    ts: number,
+    /** 降级软错误回调（AI 提取失败等，管道仍返回降级结果）；Ctrl+B 用它弹岛提示失败原因 */
+    onSoftError?: (e: unknown) => void,
+): Promise<SmartClipEntry> {
     const cached = entries.find((e) => e.id === id && e.content === content && e.configVersion === configVersion);
     if (cached) return cached;
     const ctx = await resolveContext();
-    const segments = await processContent(content, ctx);
+    let softError: unknown;
+    const segments = await processContent(content, ctx, (e) => {
+        softError = e;
+        onSoftError?.(e);
+    });
     const entry: SmartClipEntry = { id, content, segments, ts, configVersion };
-    pushEntry(entry);
+    // 失败降级结果不缓存：AI 失败（如模型名配错）只影响本次，修复配置后下次调用真实重试 AI；
+    // 若缓存降级结果，后续同内容永远命中缓存、不再调 AI，错误提示也无法复现。
+    if (!softError) pushEntry(entry);
     return entry;
 }
 
