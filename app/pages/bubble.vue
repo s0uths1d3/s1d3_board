@@ -529,7 +529,7 @@ onBeforeUnmount(() => {
       >
         <div ref="islandPanelInnerEl" class="island-panel-text">
           <div v-for="(line, i) in islandRenderedLines" :key="i" class="island-panel-row">
-            <span class="island-line-num">{{ i + 1 }}</span>
+            <span v-if="islandLineCount > 1" class="island-line-num">{{ i + 1 }}</span>
             <span class="island-line">{{ line }}</span>
           </div>
           <!-- 元信息：总行数；行数被渲染上限截断时附带省略提示（与 tooltip 行为一致） -->
