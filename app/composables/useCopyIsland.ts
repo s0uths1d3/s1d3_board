@@ -1,6 +1,6 @@
 import { ref, watch } from 'vue';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { availableMonitors, cursorPosition, PhysicalPosition } from '@tauri-apps/api/window';
+import { availableMonitors, cursorPosition, getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window';
 import { emit, listen } from '@tauri-apps/api/event';
 import { readText } from 'tauri-plugin-clipboard-api';
 import dbService from '~/src/db/dbService';
@@ -169,6 +169,22 @@ export function notifyIslandPaste(content: string, type: 'text' | 'image'): void
 export function notifyIsland(payload: IslandShowPayload): void {
   void showIsland(payload);
 }
+
+// ===== 全局粘贴感知（Rust 全局 Ctrl+V 钩子 → island:paste-detected）=====
+// 用户在任意应用按 Ctrl+V 粘贴时同步弹"已粘贴"（跟随灵动岛总开关）；
+// 内容预览取当前剪贴板文本（图片等非文本只弹标签）。应用自身粘贴流程由 Rust 侧
+// PASTE_INJECTING 抑制标志拦截（不 emit），不会重复弹岛
+listen('island:paste-detected', () => {
+  // 仅主窗口上下文响应：岛链路（检测/写入/窗口管理）为单上下文设计，
+  // 全局广播会被每个加载本模块的 webview 收到，不限制会重复弹岛、重复写历史
+  if (getCurrentWindow().label !== 'main') return;
+  if (!setting.enabled.value) return;
+  void (async () => {
+    let text = '';
+    try { text = (await readText()) ?? ''; } catch { /* 图片等非文本：仅弹标签 */ }
+    void showIsland({ kind: 'paste', text: text.slice(0, PREVIEW_MAX) });
+  })();
+}).catch(() => {});
 
 // 关闭开关时收起并关闭岛窗口、停掉快速通道；开启时反向恢复（模块级 watch：与设置页共享同一状态源）
 watch(setting.enabled, (v) => {

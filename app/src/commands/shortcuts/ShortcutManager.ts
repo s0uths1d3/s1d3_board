@@ -1,10 +1,12 @@
-import { register, unregister, unregisterAll } from '@tauri-apps/plugin-global-shortcut';
+import { register, unregister } from '@tauri-apps/plugin-global-shortcut';
 import type { ShortcutConfig } from './ShortcutConfig';
 import statsService from "~/src/statistics/statsService";
 import { isEditingField } from "~/utils/focusNavigation";
 
 export class ShortcutManager {
     private localHandlers: (() => void)[] = [];
+    /** JS 侧注册的全局快捷键清单：清理时逐个注销（见 unregisterAllGlobals） */
+    private globalKeys: string[] = [];
 
     async register(config: ShortcutConfig) {
         // 未绑定（空 key）或单独禁用的快捷键不注册/不响应
@@ -34,6 +36,7 @@ export class ShortcutManager {
                     console.error(`[Shortcut Command Failed] ${config.id}:`, e);
                 }
             });
+            if (!this.globalKeys.includes(config.key)) this.globalKeys.push(config.key);
             console.log(`[Global Shortcut Registered] ${config.key}`);
         } else if (config.scope === 'local') {
             const handler = async (e: KeyboardEvent) => {
@@ -145,9 +148,19 @@ export class ShortcutManager {
         return failed;
     }
 
-    /** 注销所有全局快捷键 */
+    /** 注销所有全局快捷键（仅 JS 侧管理的键） */
     async unregisterAllGlobals() {
-        await unregisterAll();
+        // 逐个注销而非插件级 unregisterAll：后者清空整个插件注册表，
+        // 会连 Rust 侧启动时注册的钩子（全局 Ctrl+V 粘贴感知）一并误删，
+        // 导致 Ctrl+V 钩子在前端 initShortcuts 时被静默清除、粘贴感知永久失效
+        for (const key of this.globalKeys) {
+            try {
+                await unregister(key);
+            } catch {
+                // 已失效/未注册的键忽略（register 前也有逐键预注销兜底）
+            }
+        }
+        this.globalKeys = [];
         console.log('[All Global Shortcuts Unregistered]');
     }
 

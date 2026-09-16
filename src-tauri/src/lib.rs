@@ -39,6 +39,8 @@ pub fn run() {
             }
             // 桌面应用使用时长：启动前台切换监听与 30s 分段结算（累计仅在设置开启后生效）
             app_usage::start(app.handle().clone());
+            // 全局粘贴感知：系统级 Ctrl+V → 灵动岛"已粘贴" + 转发粘贴按键（失败仅降级）
+            commands::register_global_paste_hotkey(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

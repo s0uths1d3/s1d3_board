@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { writeText } from 'tauri-plugin-clipboard-api';
 import { getSmartClipEntries, parseClipItem } from '../../smart-clip/smartClip';
 import { getSelectedItem } from './clipboardStore';
-import { notifyIsland } from '~/composables/useCopyIsland';
+import { notifyIsland, notifyIslandPaste, suppressIslandCopy } from '~/composables/useCopyIsland';
 import { useI18n } from '~/composables/useI18n';
 import { briefAiError } from '~/utils/aiError';
 import { hashText } from '~/utils/hash';
@@ -334,11 +334,14 @@ async function pasteRing(index: number): Promise<void> {
   for (const s of current.slots) void s.win.hide().catch(() => {});
   void current.hub.hide().catch(() => {});
   if (!text) return;
+  // 灵动岛：粘贴也写剪贴板，先抑制随之触发的"已复制"误报，写入成功后显示"已粘贴"（与 pasteUtil 同规范）
+  suppressIslandCopy();
   try {
     await writeText(text);
   } catch {
     return;
   }
+  void notifyIslandPaste(text, 'text');
   setTimeout(() => { invoke('paste').catch(() => {}); }, 200);
   // 习惯记录：用户用实际粘贴为该提取器的产出"投了票"
   void dbService.insertClipHabit({
