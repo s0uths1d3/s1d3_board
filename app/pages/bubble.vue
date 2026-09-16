@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { listen, emit, emitTo } from '@tauri-apps/api/event';
 import { getCurrentWindow, cursorPosition, LogicalSize } from '@tauri-apps/api/window';
 import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { isTauri } from '~/utils/env';
 import { useI18n } from '~/composables/useI18n';
+import { showImagePreview, hideImagePreview, dismissImagePreview } from '~/composables/useImagePreview';
 import type { IslandKind } from '~/composables/useCopyIsland';
 
 /**
@@ -66,6 +67,17 @@ const islandVisible = ref(false);
 const islandKind = ref<IslandKind>('copy');
 const islandText = ref('');
 const islandTitle = ref('');             // 自定义标签（灵动岛 API 调用可指定；空则用 kind 默认标签）
+
+// 岛窗口隐藏/收起时同步关掉图片放大预览（预览是独立窗口，不随岛 DOM 隐藏）
+watch(islandVisible, (v) => { if (!v) dismissImagePreview(); });
+
+/** 岛内缩略图悬停：独立 tooltip 窗口放大预览原图（islandText 即完整 data URL） */
+function onIslandImageEnter(e: MouseEvent): void {
+  const el = e.currentTarget as HTMLElement | null;
+  if (el && islandKind.value === 'copy-image' && islandText.value) {
+    void showImagePreview(islandText.value, el);
+  }
+}
 const islandPillEl = ref<HTMLElement | null>(null);
 const islandTextEl = ref<HTMLElement | null>(null);
 const islandPanelInnerEl = ref<HTMLElement | null>(null);
@@ -516,8 +528,15 @@ onBeforeUnmount(() => {
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </svg>
         <span class="shrink-0 text-xs font-medium">{{ islandLabel }}</span>
-        <!-- 图片复制：缩略图预览；文本复制：单行截断预览 -->
-        <img v-if="islandKind === 'copy-image' && islandText" :src="islandText" alt="" class="h-7 w-7 shrink-0 rounded-md object-cover" />
+        <!-- 图片复制：缩略图预览（悬停弹出独立窗口放大预览原图，按原图比例适配+屏幕钳制）；文本复制：单行截断预览 -->
+        <img
+            v-if="islandKind === 'copy-image' && islandText"
+            :src="islandText"
+            alt=""
+            class="h-7 w-7 shrink-0 rounded-md object-cover"
+            @mouseenter="onIslandImageEnter"
+            @mouseleave="hideImagePreview"
+        />
         <span v-else-if="islandText" ref="islandTextEl" class="min-w-0 flex-1 truncate text-xs text-ink-soft">{{ islandText }}</span>
       </div>
       <!-- 悬停展开的下拉面板：仅当内容溢出胶囊时渲染，逐行带行号展示完整内容（超高可滚动，样式与胶囊一致） -->
