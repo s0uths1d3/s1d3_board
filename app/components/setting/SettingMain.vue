@@ -204,6 +204,13 @@ const aiCustomConfig = ref('');
 const aiCustomError = ref('');
 const aiTestState = ref<'idle' | 'testing' | 'ok' | 'fail'>('idle');
 const aiTestLatency = ref(0);
+/** 时延分档着色：≤300ms 绿（畅通）/ ≤1000ms 金（一般）/ 更高红（偏慢） */
+const aiTestLatencyClass = computed(() => {
+  if (aiTestState.value !== 'ok') return '';
+  return aiTestLatency.value <= 300 ? 'text-success'
+    : aiTestLatency.value <= 1000 ? 'text-gold'
+      : 'text-danger';
+});
 const aiTestError = ref('');
 const AI_PROVIDER_OPTIONS = computed(() => [
   { value: 'openai-compat' as const, label: t('setting.general.ai_provider_openai') },
@@ -2035,7 +2042,7 @@ onMounted(async () => {
                 <!-- AI 连接测试结果：显示在测试按钮下方（跨全行），错误格式化为状态行 + 可读原因 -->
                 <div v-if="item.type === 'action' && item.label === 'setting.general.ai_test' && aiTestState !== 'idle'"
                      class="w-full min-w-0 basis-full text-xs">
-                  <span :class="aiTestState === 'ok' ? 'text-gold' : aiTestState === 'testing' ? 'text-ink-faint' : 'text-danger'">
+                  <span :class="aiTestState === 'testing' ? 'text-ink-faint' : aiTestState === 'ok' ? aiTestLatencyClass : 'text-danger'">
                     {{ aiTestState === 'testing' ? t('setting.general.ai_testing')
                       : aiTestState === 'ok' ? t('setting.general.ai_test_ok', { ms: aiTestLatency })
                       : t('setting.general.ai_test_fail_brief') }}
