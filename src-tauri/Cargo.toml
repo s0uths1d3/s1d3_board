@@ -33,6 +33,9 @@ tauri-plugin-autostart = "2"
 tauri-plugin-opener = "2"
 enigo = "0.5.0"
 tauri-plugin-notification = "2"
+# 灵动岛历史导出：save 对话框选路径（选中路径自动进 fs scope）+ 文本文件写入
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 # 应用图标提取：PNG 编码（Windows HICON 转码 / Linux 主题图标转码）与 base64 数据 URL
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"

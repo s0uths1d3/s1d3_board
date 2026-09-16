@@ -6,7 +6,7 @@ import { computed, ref, onMounted, onBeforeUnmount } from "vue";
 import { useLongPressReorder } from "~/composables/useLongPressReorder";
 import { cycleColorScheme, useColorScheme, type ColorSchemeMode } from "~/composables/useColorScheme";
 import { useI18n } from "~/composables/useI18n";
-import { notifyIsland } from "~/composables/useCopyIsland";
+import { notifyIsland, toggleIslandHistoryWindow } from "~/composables/useCopyIsland";
 
 /** 标题栏导航项：仅渲染当前可见的 tab（统计 Tab 受解锁门槛控制，§7.9，解锁后动态出现） */
 const visibleTabs = computed(() => getVisibleTabItems());
@@ -185,6 +185,20 @@ onBeforeUnmount(() => {
       </button>
 
       <div v-if="isTauri()" class="flex items-center gap-2">
+      <button
+          class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
+          v-tip="t('titlebar.island_history')"
+          :aria-label="t('titlebar.island_history')"
+          @click="toggleIslandHistoryWindow"
+      >
+        <!-- 历史时钟图标 -->
+        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3v5h5" />
+          <path d="M3.05 13a9 9 0 1 0 .5-5L3 8" />
+          <path d="M12 7v5l4 2" />
+        </svg>
+      </button>
+
       <button
           class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
           v-tip="t('titlebar.minimize')"

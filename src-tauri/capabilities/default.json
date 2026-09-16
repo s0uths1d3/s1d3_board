@@ -6,7 +6,8 @@
     "main",
     "image-viewer-*",
     "tooltip-*",
-    "clipboard-bubble-*"
+    "clipboard-bubble-*",
+    "island-history"
   ],
   "permissions": [
     "core:path:default",
@@ -20,6 +21,7 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-is-focused",
+    "core:window:allow-unminimize",
     "core:window:allow-set-icon",
     "core:window:allow-set-focus",
     "core:window:allow-set-always-on-top",
@@ -52,6 +54,8 @@
     "core:window:allow-scale-factor",
     "core:window:allow-current-monitor",
     "core:webview:allow-set-webview-focus",
-    "notification:default"
+    "notification:default",
+    "dialog:default",
+    "fs:allow-write-text-file"
   ]
 }

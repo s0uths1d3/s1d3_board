@@ -1,7 +1,8 @@
 <template>
   <div class="flex h-screen flex-col overflow-hidden rounded-2xl">
-    <!-- 图片查看器/tooltip/智能剪贴板气泡等子窗口不渲染主窗口的自定义 TitleBar -->
-    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/tooltip' && route.path !== '/bubble'" />
+    <!-- 图片查看器/tooltip/智能剪贴板气泡/灵动岛历史等子窗口不渲染主窗口的自定义 TitleBar
+         （历史窗口为原生边框，自带标题栏与关闭按钮，不重复渲染导航与窗口控制） -->
+    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/tooltip' && route.path !== '/bubble' && route.path !== '/island-history'" />
     <main id="app-main" class="flex-1 overflow-y-auto">
       <NuxtPage />
     </main>
@@ -96,6 +97,9 @@ async function tryHideMainWindow() {
     for (const w of windows) {
       try {
         if (w.label === 'main') continue;
+        // 灵动岛历史为用户主动打开的独立常驻窗口：主窗口失焦隐藏时不连带关闭，
+        // 仅随自身标题栏关闭按钮 / 主窗口显式 x（onCloseRequested）退出
+        if (w.label === 'island-history') continue;
         if (await w.isVisible()) await w.close();
       } catch { /* 忽略单窗关闭失败 */ }
     }

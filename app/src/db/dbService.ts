@@ -181,6 +181,16 @@ class DatabaseService {
                     created_at INTEGER NOT NULL
                 )
             `);
+            // 灵动岛历史消息（全部弹岛来源汇聚写入，FIFO 保留最近 500 条）
+            await this.db!.execute(`
+                CREATE TABLE IF NOT EXISTS island_history
+                (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind       TEXT NOT NULL,
+                    text       TEXT NOT NULL DEFAULT '',
+                    created_at INTEGER NOT NULL
+                )
+            `);
         } catch (e) {
             console.warn('[db] 兜底建表 app_usage/app_icons/clip_templates/clip_habits/clip_ai_cache 失败:', e);
         }
@@ -692,6 +702,34 @@ class DatabaseService {
         await this.db!.execute(
             'DELETE FROM clip_habits WHERE id NOT IN (SELECT id FROM clip_habits ORDER BY id DESC LIMIT 500)',
         );
+    }
+
+    /** 灵动岛历史：全部弹岛来源（复制/粘贴/AI/设置操作/第三方 API）汇聚写入，FIFO 保留最近 500 条 */
+    public async insertIslandHistory(h: { kind: string; text: string }): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute(
+            'INSERT INTO island_history (kind, text, created_at) VALUES ($1, $2, $3)',
+            [h.kind, h.text, Date.now()],
+        );
+        await this.db!.execute(
+            'DELETE FROM island_history WHERE id NOT IN (SELECT id FROM island_history ORDER BY id DESC LIMIT 500)',
+        );
+    }
+
+    /** 灵动岛历史查询：按时间倒序（最新在前） */
+    public async getIslandHistory(limit = 500): Promise<Array<{ id: number; kind: string; text: string; createdAt: number }>> {
+        await this.ensureDbInitialized();
+        const rows = await this.db!.select(
+            'SELECT id, kind, text, created_at FROM island_history ORDER BY id DESC LIMIT $1',
+            [limit],
+        ) as Array<{ id: number; kind: string; text: string; created_at: number }>;
+        return rows.map((r) => ({ id: r.id, kind: r.kind, text: r.text, createdAt: r.created_at }));
+    }
+
+    /** 清空灵动岛历史 */
+    public async clearIslandHistory(): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute('DELETE FROM island_history');
     }
 
     /** 偏好摘要：最近 100 次 paste 中，各提取器产出被粘贴的次数（降序 Top5） */

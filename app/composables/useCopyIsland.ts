@@ -207,6 +207,32 @@ function closeIsland(): void {
   islandReady = false;
 }
 
+/**
+ * 图片缩略图生成（灵动岛历史记录用）：data URL 原图 → 高 maxH 像素的 webp 小图（保透明、体积小，约 1-4KB）。
+ * 仅用于历史链路降采样，岛窗口缩略图仍用原始 data URL；解码/绘制失败时 reject，由调用方兜底。
+ */
+export function makeImageThumb(dataUrl: string, maxH = 56, quality = 0.7): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxH / Math.max(1, img.naturalHeight));
+        const w = Math.max(1, Math.round(img.naturalWidth * scale));
+        const h = Math.max(1, Math.round(img.naturalHeight * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { reject(new Error('canvas 2d context unavailable')); return; }
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/webp', quality));
+      } catch (e) { reject(e instanceof Error ? e : new Error(String(e))); }
+    };
+    img.onerror = () => reject(new Error('image decode failed'));
+    img.src = dataUrl;
+  });
+}
+
 /** 单例复用：首次惰性创建，之后 show/hide（避免每次复制都新建 WebView） */
 async function ensureIsland(): Promise<WebviewWindow | null> {
   if (islandWin) return islandWin;
@@ -274,6 +300,22 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
   try {
     await positionIsland(win);
   } catch { /* 定位失败用默认位置 */ }
+  // 历史记录：真实推送前写入（全部来源汇聚点），失败静默（不影响弹岛）。
+  // copy-image 的 text 是完整 base64 data URL（岛内渲染缩略图用），不直接落历史库——
+  // 先降采样为小缩略图（webp 高 56px，约 1-4KB）再写入，历史窗口直接显示图片；
+  // 生成失败写空串兜底，历史窗口按类型显示「[图片]」占位
+  if (payload.kind === 'copy-image' && payload.text) {
+    const kind = payload.kind;
+    void makeImageThumb(payload.text)
+      .then((thumb) => dbService.insertIslandHistory({ kind, text: thumb }))
+      .catch(() => dbService.insertIslandHistory({ kind, text: '' }))
+      .catch(() => {});
+  } else {
+    void dbService.insertIslandHistory({
+      kind: payload.kind,
+      text: payload.text ?? payload.title ?? '',
+    }).catch(() => {});
+  }
   await emit('island:show', {
     kind: payload.kind,
     text: payload.text,
@@ -338,4 +380,57 @@ export function initCopyIsland(): void {
       if (win) void positionIsland(win).catch(() => {});
     });
   });
+}
+
+const HISTORY_LABEL = 'island-history';
+let historyToggleBusy = false;
+
+/**
+ * 打开（或聚焦）灵动岛历史窗口（标题栏图标调用，单例）：
+ * - 已存在 → 聚焦置前；不存在 → 创建（focus:true 独立前台窗口，主窗口失焦时
+ *   tryHideMainWindow 的 childFocused 豁免生效，不会连带隐藏/关闭本窗口）
+ * - 主窗口若处于置顶状态，新窗口跟随置顶（syncChildOnTop 同款逻辑）
+ */
+export async function toggleIslandHistoryWindow(): Promise<void> {
+  if (!isTauri() || historyToggleBusy) return;
+  historyToggleBusy = true;
+  try {
+    const existing = await WebviewWindow.getByLabel(HISTORY_LABEL).catch(() => null);
+    if (existing) {
+      // 聚焦瞬间主窗口失焦：标记子窗口豁免期。Windows 下窗口切前台但 focused 状态未就绪时，
+      // tryHideMainWindow 会误判"无子窗口持有焦点"而连带隐藏（image-viewer 同款竞态）
+      (window as any).__childOpeningUntil = Date.now() + 600;
+      await existing.show().catch(() => {});
+      await existing.unminimize().catch(() => {});
+      await existing.setFocus().catch(() => {});
+      return;
+    }
+    // 创建期豁免（tooltip/viewer 同款）：新窗口就绪并持焦点前主窗口已失焦，
+    // 若不豁免，tryHideMainWindow 的"关闭所有可见子窗口"循环会把刚创建的历史窗口一并关闭
+    (window as any).__childOpeningUntil = Date.now() + 600;
+    const win = new WebviewWindow(HISTORY_LABEL, {
+      url: '/island-history',
+      title: 'Island History',
+      width: 440,
+      height: 600,
+      minWidth: 360,
+      minHeight: 420,
+      center: true,
+      resizable: true,
+      // 主窗口同款：无边框透明窗口，页面自绘标题栏（drag-region 拖拽 + 窗口控制按钮）
+      decorations: false,
+      transparent: true,
+      focus: true,
+      visible: true,
+    });
+    void win.once('tauri://created', async () => {
+      // 窗口已创建，延长豁免期至其稳定聚焦（viewer 同款），避免创建期间的失焦误触发隐藏
+      (window as any).__childOpeningUntil = Date.now() + 400;
+      try {
+        if (await getCurrentWindow().isAlwaysOnTop()) await win.setAlwaysOnTop(true);
+      } catch { /* 主窗口置顶状态查询失败不跟随 */ }
+    });
+  } finally {
+    setTimeout(() => { historyToggleBusy = false; }, 400);
+  }
 }
