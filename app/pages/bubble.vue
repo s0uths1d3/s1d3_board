@@ -57,8 +57,10 @@ watch(ringSelected, (v) => {
 
 // ===== 环心控制盘 =====
 const hubSelected = ref(0);
-const hubPage = ref(0);
 const hubTotal = ref(0);
+const hubSource = ref('');
+/** 总页数（环上限 RING_LIMIT=8/页）：仅 1 页时翻页行整体隐藏 */
+const hubPages = computed(() => Math.ceil(hubTotal.value / 8));
 
 // ===== 灵动岛提示胶囊（island 模式）=====
 // 停留时长由 useCopyIsland 按设置随 island:show 下发（durationMs），此处仅作兜底默认值
@@ -492,10 +494,10 @@ onMounted(async () => {
   if (isRingHub) {
     // 透明窗口：同 ring 气泡，去除 body 背景让圆润卡片直接悬浮于桌面
     document.body.classList.add('island-body');
-    unlisteners.push(await listen<{ selected: number; page: number; total: number }>('ring:state', (ev) => {
+    unlisteners.push(await listen<{ selected: number; page: number; total: number; source?: string }>('ring:state', (ev) => {
       hubSelected.value = ev.payload.selected;
-      hubPage.value = ev.payload.page;
       hubTotal.value = ev.payload.total;
+      hubSource.value = ev.payload.source ?? '';
     }));
     // ready 握手：通知管理器推送初始状态
     await emit('bubble:ring:hub-ready', getCurrentWindow().label);
@@ -695,49 +697,39 @@ onBeforeUnmount(() => {
           class="bubble-badge-in absolute bottom-1 right-2 text-[10px] font-semibold tabular-nums text-gold">{{ ringIndex + 1 }}</span>
   </div>
 
-  <!-- 环心控制盘：箭头导航 + 翻页 + 关闭（透明窗口 + 圆润卡片，外层 p-1.5 为阴影留白） -->
+  <!-- 环心控制盘：极简布局——原文预览 + 片段导航，无标题栏/状态文本/操作提示；
+       Esc 关环、PgUp/PgDn 翻页键盘始终可用（透明窗口 + 圆润卡片，外层 p-1.5 为阴影留白） -->
   <div v-else-if="isRingHub" class="h-screen p-1.5">
     <div class="flex h-full flex-col justify-center gap-2 rounded-2xl border border-accent bg-surface/95 px-3.5 py-2.5 shadow-soft backdrop-blur">
-    <div class="flex items-center justify-between gap-2">
-      <span class="text-[10px] uppercase tracking-wide text-ink-faint">{{ t('bubble.title') }}</span>
-      <button type="button" class="text-ink-faint transition-colors hover:text-danger" :title="t('common.close')"
-              @click="hubClose">
-        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <path d="M18 6 6 18M6 6l12 12" />
-        </svg>
-      </button>
+
+    <!-- 原文预览：环心展示本次拆分的原始 clip 内容（占满剩余空间，超长滚动查看） -->
+    <div class="hub-source min-h-0 flex-1 overflow-y-auto rounded-lg bg-surface-muted/60 px-2 py-1">
+      <span class="whitespace-pre-wrap break-all text-[10px] leading-relaxed text-ink-soft">{{ hubSource }}</span>
     </div>
 
-    <div class="flex items-center justify-between gap-2">
+    <!-- 片段导航：仅箭头按钮，选中态由环气泡金边高亮呈现 -->
+    <div class="flex items-center justify-center gap-6">
       <button type="button" class="btn-soft btn-circle p-1 disabled:opacity-30" :title="t('bubble.prev')"
               @click="hubNav(-1)">
         <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>
       </button>
-      <span class="min-w-[4rem] text-center text-xs tabular-nums text-ink">
-        {{ hubTotal ? Math.min(hubSelected + 1, hubTotal) : 0 }} / {{ hubTotal }}
-      </span>
       <button type="button" class="btn-soft btn-circle p-1 disabled:opacity-30" :title="t('bubble.next')"
               @click="hubNav(1)">
         <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
       </button>
     </div>
 
-    <div class="flex items-center justify-between gap-2 text-[10px] text-ink-faint">
-      <button type="button" class="transition-colors hover:text-gold disabled:opacity-30" :title="t('bubble.prev_page')"
-              :disabled="hubTotal === 0" @click="hubPageNav(-1)">
+    <!-- 翻页：仅多页时显示（单页完全隐藏） -->
+    <div v-if="hubPages > 1" class="flex items-center justify-center gap-6">
+      <button type="button" class="text-ink-faint transition-colors hover:text-gold" :title="t('bubble.prev_page')"
+              @click="hubPageNav(-1)">
         <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5" /><path d="m18 17-5-5 5-5" /></svg>
       </button>
-      <span class="tabular-nums">
-        {{ hubPage + 1 }} / {{ Math.max(1, Math.ceil(hubTotal / 8)) }}
-      </span>
-      <button type="button" class="transition-colors hover:text-gold disabled:opacity-30" :title="t('bubble.next_page')"
-              :disabled="hubTotal === 0" @click="hubPageNav(1)">
+      <button type="button" class="text-ink-faint transition-colors hover:text-gold" :title="t('bubble.next_page')"
+              @click="hubPageNav(1)">
         <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 17 5-5-5-5" /><path d="m14 17 5-5-5-5" /></svg>
       </button>
     </div>
-
-    <!-- 键盘操作提示：控制盘持有焦点，方向键/Enter/Esc 直接可用 -->
-    <div class="text-center text-[9px] leading-none text-ink-faint">{{ t('bubble.paste_hint') }}</div>
     </div>
   </div>
 </template>
@@ -763,6 +755,15 @@ body.island-body::before,
 body.island-body::after {
   display: none !important;
 }
+
+/* 环心原文预览：窄窗口内使用细滚动条（WebView2 默认滚动条过宽，挤占 240px 环心宽度） */
+.hub-source {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.45) transparent;
+}
+.hub-source::-webkit-scrollbar { width: 4px; }
+.hub-source::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.45); border-radius: 2px; }
+.hub-source::-webkit-scrollbar-track { background: transparent; }
 </style>
 
 <style scoped>

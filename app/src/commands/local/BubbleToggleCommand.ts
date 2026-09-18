@@ -72,6 +72,8 @@ interface RingState {
   /** 当前选中 / 当前页（跨窗口的单一事实来源，经 ring:state 广播） */
   selected: number;
   page: number;
+  /** 原始 clip 内容：环心控制盘预览展示（随 ring:state 广播） */
+  source: string;
   /** 源内容哈希：习惯记录用（关联"同类内容 → 用户选择"） */
   contentHash: string;
   center: { x: number; y: number };
@@ -259,14 +261,64 @@ async function runRingAnalysis(plan: AnalysisPlan | null, base: RingSegment[]): 
   return added;
 }
 
-/** 槽位逻辑坐标：按固定槽位表取偏移（先上下左右、再四角），同半径对称分布 */
+/** 对角槽位半径放大系数：45° 斜向空间更充裕，为 5-8 槽位满环留出间距 */
+const DIAGONAL_SCALE = 1.45;
+/** 相邻气泡最小间距（逻辑像素） */
+const BUBBLE_GAP = 16;
+/** 对角槽位外推上限：防止极端大尺寸气泡把外推推得跑出屏幕 */
+const MAX_RADIUS = 460;
+/** 重叠外推步长（每轮每槽位） */
+const PUSH_STEP = 6;
+/**
+ * 几何相邻槽位对（索引：0 上 / 1 下 / 2 左 / 3 右 / 4 左上 / 5 右上 / 6 左下 / 7 右下）：
+ * 仅正位与对角的 45° 邻接对可能互相遮挡（对角-对角、正位-对侧距离恒充分）。
+ */
+const ADJACENT_PAIRS: Array<[number, number]> = [
+  [0, 4], [0, 5], [1, 6], [1, 7], [2, 4], [2, 6], [3, 5], [3, 7],
+];
+
+/**
+ * 某页各槽位半径（确定性：输入相同输出相同，slotPosition 多处调用位置一致）。
+ * 对角基准拉远后，仍按相邻槽位气泡**实际尺寸**迭代外推——重叠对中的对角槽位
+ * 沿自身方向外推（正位沿轴外推会跑出屏幕，不动），直到 x 或 y 任一轴分离。
+ */
+function pageRadii(page: number): number[] {
+  const radii = SLOT_OFFSETS.map((_, i) => (i >= 4 ? RING_RADIUS * DIAGONAL_SCALE : RING_RADIUS));
+  if (!ring) return radii;
+  const start = page * RING_LIMIT;
+  const count = Math.max(0, Math.min(ring.segments.length - start, RING_LIMIT));
+  if (count < 2) return radii;
+  const off = (i: number) => SLOT_OFFSETS[i] ?? { x: 0, y: -1 };
+  const separated = (a: number, b: number): boolean => {
+    const sa = ring!.segments[start + a];
+    const sb = ring!.segments[start + b];
+    const dx = Math.abs(off(a).x * radii[a]! - off(b).x * radii[b]!);
+    const dy = Math.abs(off(a).y * radii[a]! - off(b).y * radii[b]!);
+    const needX = ((sa?.w ?? BUBBLE_W) + (sb?.w ?? BUBBLE_W)) / 2 + BUBBLE_GAP;
+    const needY = ((sa?.h ?? BUBBLE_H) + (sb?.h ?? BUBBLE_H)) / 2 + BUBBLE_GAP;
+    return dx >= needX || dy >= needY;
+  };
+  for (let iter = 0; iter < 60; iter++) {
+    let pushed = false;
+    for (const [a, b] of ADJACENT_PAIRS) {
+      if (a >= count || b >= count || separated(a, b)) continue;
+      for (const k of [a, b]) {
+        if (k >= 4 && radii[k]! < MAX_RADIUS) { radii[k]! += PUSH_STEP; pushed = true; }
+      }
+    }
+    if (!pushed) break;
+  }
+  return radii;
+}
+
+/** 槽位逻辑坐标：按固定槽位表取偏移（先上下左右、再四角），半径按页内尺寸防遮挡 */
 function slotPosition(index: number): { x: number; y: number } {
   if (!ring) return { x: 0, y: 0 };
   const page = Math.floor(index / RING_LIMIT);
   const i = index - page * RING_LIMIT;
   const off = SLOT_OFFSETS[i % SLOT_OFFSETS.length] ?? { x: 0, y: -1 };
   const seg = ring.segments[index];
-  const r = RING_RADIUS;
+  const r = pageRadii(page)[i % SLOT_OFFSETS.length] ?? RING_RADIUS;
   return {
     x: ring.center.x + off.x * r - (seg?.w ?? BUBBLE_W) / 2,
     y: ring.center.y + off.y * r - (seg?.h ?? BUBBLE_H) / 2,
@@ -344,12 +396,13 @@ async function ensurePageBubbles(page: number): Promise<void> {
   for (let i = 0; i < count; i++) await ensureBubble(start + i);
 }
 
-/** 广播环形状态（选中 / 页码 / 总数），气泡与控制盘据此渲染 */
+/** 广播环形状态（选中 / 页码 / 总数 / 原文预览），气泡与控制盘据此渲染 */
 async function broadcastState(): Promise<void> {
   await emit('ring:state', {
     selected: ring?.selected ?? 0,
     page: ring?.page ?? 0,
     total: ring?.segments.length ?? 0,
+    source: ring?.source ?? '',
   }).catch(() => {});
 }
 
@@ -477,7 +530,9 @@ async function pasteRing(index: number): Promise<void> {
   for (const s of current.slots) void s.win.hide().catch(() => {});
   void current.hub.hide().catch(() => {});
   if (!text) return;
-  // 灵动岛：粘贴也写剪贴板，先抑制随之触发的"已复制"误报，写入成功后显示"已粘贴"（与 pasteUtil 同规范）
+  // 灵动岛：粘贴也写剪贴板，先抑制随之触发的"已复制"误报，写入成功后显示"已粘贴"（与 pasteUtil 同规范）。
+  // 注意：此处不抑制入库计数 bump——环盘粘贴没有命令层显式 increaseUseCount，
+  // 计数完全由剪贴板监听的 upsert bump 承担（主窗口粘贴路径才需要抑制防双计）
   suppressIslandCopy();
   try {
     await writeText(text);
@@ -560,6 +615,7 @@ async function openRing(): Promise<void> {
     segments: [],
     selected: 0,
     page: 0,
+    source: content,
     contentHash,
     center: { x: cx, y: cy },
     hidden: false,

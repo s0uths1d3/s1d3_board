@@ -28,7 +28,6 @@ unpin_window = "Unpin"
 minimize = "Minimize"
 maximize = "Maximize"
 restore = "Restore"
-close = "Close"
 
 [clip]
 search_placeholder = "Search · ↑/↓ select · Enter paste"
@@ -423,14 +422,12 @@ clearing = "Clearing…"
 clear_confirm_btn = "Confirm clear"
 
 [bubble]
-title = "Smart Clipboard"
 pinned_title = "Pinned snippet"
 empty_title = "Nothing parsed yet"
 empty_hint = "Copied text is parsed by the active rule automatically; or select a clip and press Ctrl+B to parse it"
 pin = "Pin as standalone bubble"
 click_to_copy = "Click to copy"
 copied = "Copied"
-paste_hint = "Arrows select · Enter paste · PgUp/PgDn page · Esc close"
 prev = "Previous bubble"
 next = "Next bubble"
 prev_page = "Previous page"

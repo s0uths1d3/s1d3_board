@@ -28,7 +28,6 @@ unpin_window = "取消置顶"
 minimize = "最小化"
 maximize = "最大化"
 restore = "还原"
-close = "关闭"
 
 [clip]
 search_placeholder = "输入以搜索 · ↑/↓ 选择 · Enter 粘贴"
@@ -423,14 +422,12 @@ clearing = "清空中…"
 clear_confirm_btn = "确认清空"
 
 [bubble]
-title = "智能剪贴板"
 pinned_title = "已钉住片段"
 empty_title = "暂无解析内容"
 empty_hint = "复制文本后按当前规则自动解析；也可在列表选中一条后按 Ctrl+B 解析"
 pin = "钉住为独立气泡"
 click_to_copy = "点击复制"
 copied = "已复制"
-paste_hint = "↑↓←→ 选择 · Enter 粘贴 · PgUp/PgDn 翻页 · Esc 关闭"
 prev = "上一个气泡"
 next = "下一个气泡"
 prev_page = "上一页"
