@@ -54,7 +54,10 @@ async function processContent(content: string, ctx: ProcessContext, onSoftError?
     try {
         if (ctx.scheme && ctx.scheme.enabled === 1) {
             const segs = await runScheme(ctx.scheme, ctx.extractors, content);
-            if (segs.length === 0) return autoSplit(content);
+            // 零产出，或仅产出「原文整段」（提取器实际没切分任何东西：如单行内容过
+            // 换行分隔提取器，split 后仍是整段）→ 同样降级为智能切分，保证中间有
+            // 空格/制表符等结构的内容仍被正确分词
+            if (segs.length === 0 || isUnsplitPassThrough(segs, content)) return autoSplit(content);
             return renderSchemeBody(ctx.scheme, content, segs);
         }
         return autoSplit(content);
@@ -63,6 +66,13 @@ async function processContent(content: string, ctx: ProcessContext, onSoftError?
         onSoftError?.(e);
         return autoSplit(content);
     }
+}
+
+/** 方案产出是否只是「原文整段直通」：单段且与原文空白归一化后相同 = 无有效加工 */
+function isUnsplitPassThrough(segs: Segment[], content: string): boolean {
+    if (segs.length !== 1) return false;
+    const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
+    return norm(segs[0]?.text ?? '') === norm(content);
 }
 
 function single(content: string, source: Segment['source']): Segment[] {

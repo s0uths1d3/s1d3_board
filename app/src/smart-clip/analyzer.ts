@@ -1,4 +1,4 @@
-import { detectStructured, isSimpleWords, sanitize } from './autoSplit';
+import { detectStructured, isCodeRelated, isSimpleWords, sanitize } from './autoSplit';
 
 /**
  * AI 分析预判打标（.docs/smart-clip-ai-analysis.md）：
@@ -123,7 +123,8 @@ export function analyzeVerdict(raw: string, maxChars: number): VerdictResult {
 
     if (detectTechArtifact(content)) return { verdict: 'tech' };
     if (isNoise(content)) return { verdict: 'noise' };
-    // 简单词串（无句读、<60 字、≥2 词）：本地按空格直拆，不送 AI
+    // 代码相关（代码形态 token 占比 ≥ 20%）：不分词不送 AI，灵动岛沿用 tech 提示
+    if (isCodeRelated(content)) return { verdict: 'tech' };
     if (isSimpleWords(content)) return { verdict: 'words' };
     if (content.length < PROSE_MIN_CHARS) return { verdict: 'too_short' };
     return { verdict: 'prose' };

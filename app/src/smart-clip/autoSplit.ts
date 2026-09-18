@@ -276,7 +276,74 @@ export function isSimpleWords(content: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// 主入口：结构化分层尝试，全部未命中 → 关键词 → 原文
+// 7. 超长分块兜底：> 1000 字仍无任何结构/分隔可切的单块内容 → 按句读/空白边界
+//    直接分成多个部分（预判 too_long 的「直接分部分」本地路径），避免整段
+//    落在单个气泡里；超出 MAX_PARTS 的剩余内容并入末段不丢内容
+// ---------------------------------------------------------------------------
+const CHUNK_THRESHOLD = 1000;
+const CHUNK_TARGET = 300;
+
+function tryChunks(content: string): string[] | null {
+    if (content.length <= CHUNK_THRESHOLD) return null;
+    const out: string[] = [];
+    let start = 0;
+    while (start < content.length && out.length < MAX_PARTS) {
+        // 剩余不足两段目标长度时直接收尾，避免出现碎尾段
+        if (content.length - start <= CHUNK_TARGET * 2) {
+            out.push(content.slice(start));
+            break;
+        }
+        // 优先在硬上限附近回退找句读/空白边界下刀；无边界（无空格长串）硬切
+        const hardEnd = start + CHUNK_TARGET;
+        let end = -1;
+        for (let i = hardEnd; i > start + CHUNK_TARGET / 2; i--) {
+            if (/[\s。．,，.!？?；;、]/.test(content.charAt(i - 1))) { end = i; break; }
+        }
+        if (end < 0) end = hardEnd;
+        out.push(content.slice(start, end));
+        start = end;
+    }
+    if (start < content.length && out.length >= MAX_PARTS) {
+        out[out.length - 1] += content.slice(start);
+    }
+    return out.length >= 2 ? out : null;
+}
+
+// ---------------------------------------------------------------------------
+// 6.5 代码相关性：代码形态 token（snake/camel/点分/代码符号/关键字）占比 ≥ 20%
+//     视为代码相关——预判落 tech（不送 AI，灵动岛「代码或技术内容」提示），
+//     autoSplit 跳过分词（空格拆词/关键词提取），仅保留结构层切分
+// ---------------------------------------------------------------------------
+export const CODE_RATIO_THRESHOLD = 0.2;
+
+const CODE_KEYWORD_RE = /^(?:function|def|const|var|async|await|import|fn|func|void|SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|CREATE|ALTER)$/;
+
+/** 单 token 代码形态判定：snake_case / 小驼峰（≥8 字符或 ≥2 驼峰）/ 点分 / 代码符号 / 关键字 / 十六进制 */
+function isCodeToken(t: string): boolean {
+    if (!/[a-zA-Z]/.test(t)) return false; // 纯数字/符号不计（避免小数、运算符误判）
+    if (CODE_KEYWORD_RE.test(t)) return true;
+    if (/[a-zA-Z]_[a-zA-Z0-9]/.test(t)) return true; // snake_case（含 MAX_SIZE 常量）
+    if (/[(){}\[\];=<>$\\]/.test(t)) return true;    // 代码符号（不含 / ：防 and/or、24/7 误判）
+    if (/^\w+(\.\w+)+$/.test(t)) return true;        // 点分形态 a.b / main.py / v1.2.3
+    if (/^0x[0-9a-f]+$/i.test(t)) return true;       // 十六进制字面量
+    // 小驼峰：限定小写开头（排除 GitHub/iPhone 等品牌大写开头），≥8 字符或 ≥2 驼峰
+    return /^[a-z]/.test(t) && /[a-z][A-Z]/.test(t) && (t.length >= 8 || /[a-z][A-Z][a-z]*[A-Z]/.test(t));
+}
+
+/** 代码形态 token 占比（代码 token / 全部空白分隔 token） */
+export function codeTokenRatio(content: string): number {
+    const tokens = content.match(/\S+/g);
+    if (!tokens || tokens.length === 0) return 0;
+    return tokens.filter(isCodeToken).length / tokens.length;
+}
+
+/** 代码相关判定：占比 ≥ 20% 即不分词、不送 AI */
+export function isCodeRelated(content: string): boolean {
+    return codeTokenRatio(content) >= CODE_RATIO_THRESHOLD;
+}
+
+// ---------------------------------------------------------------------------
+// 主入口：结构化分层尝试，全部未命中 → 关键词 → 超长分块 → 原文
 // ---------------------------------------------------------------------------
 export type StructuredLayer = 'json' | 'links' | 'log' | 'path' | 'multiline' | 'separators';
 
@@ -312,18 +379,27 @@ export function autoSplit(raw: string): Segment[] {
             if (parts && parts.length >= 2) return toSegments(parts);
         }
 
-        // 简单词串直拆：无句读的空格词串（含 20~60 字区间）本地按空格切分，不走 AI
-        if (isSimpleWords(content)) return toSegments(clean(content.split(/\s+/)));
+        // 代码相关（代码形态 token 占比 ≥ 20%）不分词：跳过空格拆词与关键词提取，
+        // 结构层切分（多行/JSON/路径/分隔符）保留——对代码仍是正确粒度；预判落 tech
+        const codeRelated = isCodeRelated(content);
+
+        // 简单词串直拆：无句读的空格词串（含 20~60 字区间）本地按空格切分，不走 AI（仅非代码内容）
+        if (!codeRelated && isSimpleWords(content)) return toSegments(clean(content.split(/\s+/)));
 
         // 短文本兜底：20 字以内未命中简单词串（含句读等）时仍按空白拆词（≥2 段才有意义），
-        // 短片段不再整段落在单气泡里
-        if (content.length < 20) {
+        // 短片段不再整段落在单气泡里（仅非代码内容）
+        if (!codeRelated && content.length < 20) {
             const words = clean(content.split(/\s+/));
             if (words.length >= 2) return toSegments(words);
         }
 
-        const keys = tryKeywords(content);
+        const keys = codeRelated ? null : tryKeywords(content);
         if (keys) return toSegments(keys);
+
+        // 超长分块：> 1000 字的单块内容（无结构/分隔/关键词可切）直接分部分，
+        // 灵动岛由预判 too_long 提示「内容超过 {n} 字，已跳过 AI 分析」
+        const chunks = tryChunks(content);
+        if (chunks) return toSegments(chunks);
 
         return single(content);
     } catch (e) {
