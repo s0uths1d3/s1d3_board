@@ -79,12 +79,18 @@ const JSON_CONTRACT = [
 const inflight = new Map<string, Promise<AnalysisOutcome>>();
 
 async function runAnalysis(cfg: AiClientConfig, content: string, cacheKey: string): Promise<AnalysisOutcome> {
-    // 偏好摘要：确定性生成；数据不足返回 null → 中性模板
+    // 偏好摘要：确定性生成；数据不足返回 null → 中性模板。
+    // 摘要拼在 **user 消息头部**而非 system——digest 随每次粘贴行为变化，若进 system
+    // 会令「静态指令前缀」整体失效：provider 前缀缓存（DeepSeek/Qwen 自动上下文缓存、
+    // OpenAI ≥1024 token 自动缓存）每次调用全部未命中，token 全价。
+    // system 保持纯静态 → 逐次调用稳定命中缓存；digest 置于 user 首部（相对稳定在前、
+    // 每次变化的内容在后），同一 digest 周期内连续分析时 user 前缀也部分复用。
     const digest = await buildDigest();
-    const system = INSTRUCTION + JSON_CONTRACT + (digest ? `\n\n${digest}` : '');
+    const system = INSTRUCTION + JSON_CONTRACT;
+    const user = digest ? `${digest}\n\n${content}` : content;
     try {
         // 散文夹密钥：发送前脱敏（[REDACTED]），密钥不外发第三方接口
-        const out = await aiComplete(cfg, system, redactSecrets(content));
+        const out = await aiComplete(cfg, system, redactSecrets(user));
         const parsed = parseResult(out);
         if (!parsed) throw new Error('AI 分析产出为空');
         void dbService.setAiCache(cacheKey, JSON.stringify(parsed)).catch(() => {});
