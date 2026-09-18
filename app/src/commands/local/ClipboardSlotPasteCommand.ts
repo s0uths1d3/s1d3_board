@@ -15,6 +15,8 @@ export class ClipboardSlotPasteCommand implements Command {
         if (event?.state !== 'Pressed') return;
         const item = data.value[this.slot - 1];
         if (!item || !item.content) return;
+        // 抑制写剪贴板触发的入库计数 bump：本命令已显式 +1，剪贴板监听再 bump 会双计（+2）
+        clipboardService.suppressUseCountBump();
         await clipboardService.increaseUseCount(item.id);
         await pasteContentToActiveApp(item.content, item.type);
     }

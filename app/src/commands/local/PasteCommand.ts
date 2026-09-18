@@ -26,9 +26,11 @@ export class PasteCommand implements Command {
         const { content, type } = selected;
         if (!content) return;
 
-        // 递增使用次数：传数据库 id（此前误传行索引，会污染 id===行号 的无关记录并打乱列表排序）
+        // 递增使用次数：传数据库 id（此前误传行索引，会污染 id===行号 的无关记录并打乱列表排序）。
+        // 抑制写剪贴板触发的入库计数 bump：本条已显式 +1，剪贴板监听再 bump 会双计（+2）
         const id = getSelectedRowId();
         if (id !== undefined) {
+            clipboardService.suppressUseCountBump();
             await clipboardService.increaseUseCount(id).catch((err) => {
                 console.error('记录使用次数失败:', err);
             });

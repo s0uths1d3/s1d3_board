@@ -290,6 +290,15 @@ class DatabaseService {
      *   不会撞 content UNIQUE 约束（此前的"先查后插"存在竞态，第二条会抛错丢事件）；
      * - 新插入时额外做统计埋点与按上限裁剪。
      */
+    /** 本应用粘贴写入抑制窗口：窗口内 saveClipboard 的 ON CONFLICT 不递增 count
+     *  （粘贴流程已由命令层显式 increaseUseCount，剪贴板监听再 bump 会双计） */
+    private useCountSuppressUntil = 0;
+
+    /** 标记"即将由本应用粘贴流程写剪贴板"：与 suppressIslandCopy 同源时序，写入前调用 */
+    public suppressUseCountBump(ms = 1200): void {
+        this.useCountSuppressUntil = Date.now() + ms;
+    }
+
     private async saveClipboard(content: string, type: 'text' | 'image'): Promise<void> {
         const now = Math.floor(Date.now());
         // 先查一次用于区分"新插入 / 计数递增"（统计与裁剪只应发生在新插入时）；
@@ -299,11 +308,13 @@ class DatabaseService {
             [content]
         );
         const isNew = existingRecord.length === 0;
+        // 本应用粘贴流程的写入：命令层已显式计数，重复复制 bump 抑制为 +0，防双计
+        const bump = Date.now() >= this.useCountSuppressUntil ? 1 : 0;
 
         const result = await this.db!.execute(
             "INSERT INTO clipboard (content, category, type, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) " +
-            "ON CONFLICT(content) DO UPDATE SET count = count + 1, updated_at = $5",
-            [content, 'T', type, now, now]
+            "ON CONFLICT(content) DO UPDATE SET count = count + $6, updated_at = $5",
+            [content, 'T', type, now, now, bump]
         );
         console.log(`Clipboard ${type} saved (upsert):`, result);
         // 灵动岛：复制行为反馈（文本/图片、重复复制同一内容同样提示；

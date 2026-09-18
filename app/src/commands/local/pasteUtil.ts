@@ -19,7 +19,10 @@ import { notifyIslandPaste, suppressIslandCopy } from '~/composables/useCopyIsla
 export async function pasteContentToActiveApp(content: string, type: 'text' | 'image'): Promise<void> {
     if (!content) return;
 
-    // 灵动岛：粘贴也会写剪贴板，先抑制随之触发的"已复制"，写入成功后再显示"已粘贴"
+    // 灵动岛：粘贴也会写剪贴板，先抑制随之触发的"已复制"，写入成功后再显示"已粘贴"。
+    // 注意：此处不抑制入库计数 bump——PinnedClipPasteCommand 等无显式计数的路径靠
+    // 剪贴板监听的 upsert bump 计数；有显式 increaseUseCount 的命令须自行调
+    // dbService.suppressUseCountBump() 防双计（见 PasteCommand / ClipboardSlotPasteCommand）
     suppressIslandCopy();
 
     // 1. 写入系统剪贴板（跨平台，按类型区分）
