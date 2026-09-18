@@ -7,11 +7,12 @@ import { findNearestInDirection } from '~/utils/focusNavigation';
 import { useInfiniteList } from '~/composables/useInfiniteList';
 import { useI18n } from '~/composables/useI18n';
 import { notifyIsland, type IslandKind } from '~/composables/useCopyIsland';
+import DeleteConfirm from '~/components/common/DeleteConfirm.vue';
 
 const { t } = useI18n();
 const formatDateLocalized = useFormatDate();
 
-/** 常用剪贴管理页：不限量存储、不可删除，瀑布流卡片，右滑置顶，时间倒序（置顶优先）。
+/** 常用剪贴管理页：不限量存储、可单条删除（确认框防误删），瀑布流卡片，右滑置顶，时间倒序（置顶优先）。
  *  仅前 10 条支持 Ctrl+1~0 快捷粘贴（对应卡片角标序号）。
  *  流式加载：首屏只加载第一页，滚动到底部自动加载下一页（pinned 无轮询，仅在操作后刷新已加载范围）。 */
 const { items: clips, loading, hasMore, sentinel, refreshLoaded } = useInfiniteList<PinnedClip>({
@@ -79,13 +80,21 @@ async function saveEdit() {
     await clipboardService.updatePinnedClip(target.id, content, editingName.value.trim(), target.type);
     editingId.value = null;
     await load();
+    showHint(t('clip.pinned_saved'));
   } catch (e) {
     console.error('保存常用剪贴失败:', e);
     showHint(t('clip.pinned_save_failed'), 'error');
   }
 }
 
+/** 取消编辑：有未保存改动（名称或内容相对原文变化；图片只看名称）时灵动岛提示丢弃 */
 function cancelEdit() {
+  const target = clips.value.find((c) => c.id === editingId.value);
+  if (target) {
+    const nameDirty = (target.name ?? '') !== editingName.value;
+    const contentDirty = target.type === 'text' && target.content !== editingContent.value;
+    if (nameDirty || contentDirty) showHint(t('clip.pinned_edit_discarded'), 'info');
+  }
   editingId.value = null;
 }
 
@@ -100,6 +109,45 @@ async function togglePin(item: PinnedClip) {
   }
 }
 
+// ===== 删除（单条移除，仅删常用剪贴记录，不动剪贴板主列表原条目）=====
+const deleteConfirmVisible = ref(false);
+const deleteConfirmMessage = ref('');
+const deleteConfirmAnchor = ref<DOMRect | null>(null);
+const deleteConfirmTarget = ref<PinnedClip | null>(null);
+
+/** 请求删除：弹出内联确认框（anchor 就近定位；键盘触发无 anchor 时居中） */
+function requestDelete(item: PinnedClip, e?: MouseEvent) {
+  deleteConfirmTarget.value = item;
+  deleteConfirmMessage.value = t('clip.pinned_delete_confirm');
+  const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null;
+  deleteConfirmAnchor.value = btn?.getBoundingClientRect() ?? null;
+  deleteConfirmVisible.value = true;
+}
+
+/** 确认删除：移除并刷新，灵动岛反馈结果 */
+async function confirmDelete() {
+  const target = deleteConfirmTarget.value;
+  deleteConfirmVisible.value = false;
+  deleteConfirmTarget.value = null;
+  deleteConfirmAnchor.value = null;
+  if (!target) return;
+  try {
+    await clipboardService.deletePinnedClip(target.id);
+    await load();
+    showHint(t('clip.pinned_deleted'));
+  } catch (e) {
+    console.error('删除常用剪贴失败:', e);
+    showHint(t('clip.pinned_delete_failed'), 'error');
+  }
+}
+
+/** 取消删除：仅关闭确认框 */
+function cancelDelete() {
+  deleteConfirmVisible.value = false;
+  deleteConfirmTarget.value = null;
+  deleteConfirmAnchor.value = null;
+}
+
 /** 把选中卡片滚动到可见区域 */
 async function scrollSelectedIntoView() {
   await nextTick();
@@ -109,10 +157,12 @@ async function scrollSelectedIntoView() {
   el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-/** 键盘交互：方向键移动选择（常用剪贴不可删除，故不再响应 Delete/Backspace）；Ctrl 组合键（切换标签）交还给全局快捷键 */
+/** 键盘交互：方向键移动选择；Delete/Backspace 删除选中项（弹确认框）；Ctrl 组合键（切换标签）交还给全局快捷键 */
 async function onKeydown(e: KeyboardEvent) {
   // 处于编辑态时，方向键/删除交给输入框处理，不拦截
   if (editingId.value != null) return;
+  // 删除确认框打开时：键盘操作由 DeleteConfirm 组件统一处理，这里不响应（避免误删/重复弹框）
+  if (deleteConfirmVisible.value) return;
 
   // Ctrl/Meta 组合（如 Ctrl+←/→ 切换标签）不在此处理
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -144,9 +194,12 @@ async function onKeydown(e: KeyboardEvent) {
       break;
     }
     case 'Delete':
-    case 'Backspace':
+    case 'Backspace': {
+      const target = clips.value[selectedIndex.value];
+      if (target) requestDelete(target);
+      break;
+    }
     default:
-      // 常用剪贴不可删除：Delete/Backspace 不执行任何操作
       handled = false;
   }
 
@@ -260,7 +313,7 @@ onUnmounted(() => {
                   <span v-if="item.source" class="max-w-[8em] truncate">{{ item.source }}</span>
                 </div>
 
-                <!-- 操作按钮（编辑/置顶；常用剪贴不可删除） -->
+                <!-- 操作按钮（编辑/置顶/删除） -->
                 <div class="flex items-center gap-1 border-t border-accent/50 px-3 py-2">
                   <button type="button" class="btn-soft btn-circle p-1.5" v-tip="t('common.edit')" @click="startEdit(item)" @pointerdown.stop.prevent>
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
@@ -269,6 +322,9 @@ onUnmounted(() => {
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
                     </svg>
+                  </button>
+                  <button type="button" class="btn-soft btn-circle p-1.5 text-danger" v-tip="t('common.delete')" @click="requestDelete(item, $event)" @pointerdown.stop.prevent>
+                    <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>
                   </button>
                 </div>
               </template>
@@ -288,5 +344,14 @@ onUnmounted(() => {
       </div>
       <div v-else-if="clips.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
     </div>
+
+    <!-- 删除确认框（内联组件，与剪贴板/便签一致；键盘触发无 anchor 时居中） -->
+    <DeleteConfirm
+        :visible="deleteConfirmVisible"
+        :message="deleteConfirmMessage"
+        :anchor="deleteConfirmAnchor"
+        @confirm="confirmDelete"
+        @cancel="cancelDelete"
+    />
   </div>
 </template>

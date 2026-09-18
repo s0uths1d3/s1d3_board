@@ -526,9 +526,15 @@ class DatabaseService {
         );
     }
 
+    /** 删除单条常用剪贴项（仅从常用剪贴移除，不影响剪贴板主列表原条目） */
+    public async deletePinnedClip(id: number): Promise<void> {
+        await this.ensureDbInitialized();
+        await this.db!.execute("DELETE FROM pinned_clip WHERE id = $1", [id]);
+    }
+
     /**
      * 清空业务数据（剪贴板 / 便签 / 待办）与统计数据（daily_stat），
-     * 保留配置表（settings、shortcut_binding）与常用剪贴（pinned_clip，不可删除）。
+     * 保留配置表（settings、shortcut_binding）与常用剪贴（pinned_clip，重置不动它，单条删除走 deletePinnedClip）。
      * 同时重置各表的自增主键计数。
      *
      * 清空前把上述表完整备份到 clear_backup_* 表，配合 undoClearDatabase（5 秒
