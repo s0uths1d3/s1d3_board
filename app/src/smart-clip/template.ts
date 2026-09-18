@@ -3,6 +3,8 @@ import type { ClipExtractor, ClipScheme } from '../entities';
 import type { Segment } from './types';
 import { aiComplete, loadAiConfig } from './aiClient';
 import { parseByRule } from './ruleEngine';
+import { sanitize } from './autoSplit';
+import { PROSE_MIN_CHARS } from './analyzer';
 import { hashText } from '~/utils/hash';
 import dbService from '../db/dbService';
 
@@ -58,6 +60,9 @@ export async function runExtractor(extractor: ClipExtractor, content: string): P
         // 未填指令的 AI 提取器直接跳过（不再有全局默认指令兜底），避免无意义调用
         const instruction = extractor.expression.trim();
         if (!instruction) return [];
+        // 内容过短（与 analyzeVerdict 的 too_short 同阈值）不调 AI：单词/短语没有提取价值，
+        // 且模型常把输出契约行原文回声成「片段」污染气泡环；本地提取器不受影响照常执行
+        if (sanitize(content).length < PROSE_MIN_CHARS) return [];
         const cfg = await loadAiConfig();
 
         // 冷却缓存：同一内容 + 同一提取器在时间窗口内不重复调 AI（防连按 Ctrl+B 重复生成）

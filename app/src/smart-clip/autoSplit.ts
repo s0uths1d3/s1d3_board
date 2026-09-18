@@ -124,6 +124,29 @@ function tryLogLine(content: string): string[] | null {
 }
 
 // ---------------------------------------------------------------------------
+// 3.5 路径：单行无空白 + ≥2 个路径分隔符 + 路径形态（盘符/UNC/./~/扩展名/全标识符段）→
+//     按分隔符拆成层级片段（尾段文件名天然在列）。
+//     e:\dev\s1d3\app\utils\aiError.ts → [e:\dev, s1d3, app, utils, aiError.ts]
+// ---------------------------------------------------------------------------
+function tryPath(content: string): string[] | null {
+    if (content.includes('\n') || /\s/.test(content)) return null;
+    if ((content.match(/[\\/]/g) ?? []).length < 2) return null;
+    if (/^[a-zA-Z][\w+.-]*:\/\//.test(content)) return null; // URL（http:// 等）交给链接层
+    const shape = /^[a-zA-Z]:[\\/]/.test(content)   // 盘符
+        || /^\\\\/.test(content)                     // UNC
+        || /^[./~]/.test(content)                    // ./ 相对路径 / ~ 家目录
+        || /\.[A-Za-z0-9]{1,8}$/.test(content)       // 末段带扩展名
+        || content.split(/[\\/]/).every((p) => /^[\w.-]{1,64}$/.test(p)); // 全段标识符形态
+    if (!shape) return null;
+    const drive = content.match(/^[a-zA-Z]:[\\/]/)?.[0];
+    const body = drive ? content.slice(drive.length) : content;
+    const parts = clean(body.split(/[\\/]/));
+    if (parts.length < 2) return null;
+    if (drive) parts[0] = drive + parts[0]; // 盘符并入首段（e:\dev 而非孤立的 e:）
+    return capped(parts, content);
+}
+
+// ---------------------------------------------------------------------------
 // 4. 多行：≥2 非空行逐行成段（地址块 / 逐行列表 / 表格行）
 // ---------------------------------------------------------------------------
 function tryLines(content: string): string[] | null {
@@ -239,9 +262,23 @@ function tryKeywords(content: string): string[] | null {
 }
 
 // ---------------------------------------------------------------------------
+// 6. 简单词串：无句读的短空格词串（< 60 字、空白分隔 ≥2 词）按空白直拆，
+//    不再送 AI 分析（与 analyzeVerdict 的 'words' 判定共用同一helper）
+// ---------------------------------------------------------------------------
+export const SIMPLE_WORDS_MAX_CHARS = 60;
+
+export function isSimpleWords(content: string): boolean {
+    if (content.length >= SIMPLE_WORDS_MAX_CHARS) return false;
+    if (!/\s/.test(content)) return false;
+    // 句读（含英文句点/小数点形态）视为句子散文形态 → 交 AI 分析
+    if (/[.。．!！?？;；]/.test(content)) return false;
+    return clean(content.split(/\s+/)).length >= 2;
+}
+
+// ---------------------------------------------------------------------------
 // 主入口：结构化分层尝试，全部未命中 → 关键词 → 原文
 // ---------------------------------------------------------------------------
-export type StructuredLayer = 'json' | 'links' | 'log' | 'multiline' | 'separators';
+export type StructuredLayer = 'json' | 'links' | 'log' | 'path' | 'multiline' | 'separators';
 
 /** 分层顺序与 autoSplit 主入口一致；多行命中但平均行长 > 60 字视为分段散文（AI 分析预判的误伤修正），不判结构化 */
 export function detectStructured(raw: string): StructuredLayer | null {
@@ -251,6 +288,7 @@ export function detectStructured(raw: string): StructuredLayer | null {
         if (tryJson(content)) return 'json';
         if (tryLinks(content)) return 'links';
         if (tryLogLine(content)) return 'log';
+        if (tryPath(content)) return 'path';
         const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
         if (lines.length >= 2 && !lines.every((l) => l.length < 2)) {
             const avg = lines.reduce((a, l) => a + l.length, 0) / lines.length;
@@ -268,10 +306,20 @@ export function autoSplit(raw: string): Segment[] {
         const content = sanitize(raw);
         if (!content) return single(raw);
 
-        const layers = [tryJson, tryLinks, tryLogLine, tryLines, trySeparators];
+        const layers = [tryJson, tryLinks, tryLogLine, tryPath, tryLines, trySeparators];
         for (const layer of layers) {
             const parts = layer(content);
             if (parts && parts.length >= 2) return toSegments(parts);
+        }
+
+        // 简单词串直拆：无句读的空格词串（含 20~60 字区间）本地按空格切分，不走 AI
+        if (isSimpleWords(content)) return toSegments(clean(content.split(/\s+/)));
+
+        // 短文本兜底：20 字以内未命中简单词串（含句读等）时仍按空白拆词（≥2 段才有意义），
+        // 短片段不再整段落在单气泡里
+        if (content.length < 20) {
+            const words = clean(content.split(/\s+/));
+            if (words.length >= 2) return toSegments(words);
         }
 
         const keys = tryKeywords(content);

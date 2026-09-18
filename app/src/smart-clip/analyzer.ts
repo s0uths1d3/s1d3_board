@@ -1,4 +1,4 @@
-import { detectStructured, sanitize } from './autoSplit';
+import { detectStructured, isSimpleWords, sanitize } from './autoSplit';
 
 /**
  * AI 分析预判打标（.docs/smart-clip-ai-analysis.md）：
@@ -6,7 +6,10 @@ import { detectStructured, sanitize } from './autoSplit';
  * 其余分支本地处理并由调用方按原因弹灵动岛提示。全部为微秒级纯函数，无 IO。
  */
 
-export type Verdict = 'too_long' | 'structured' | 'encoded' | 'tech' | 'noise' | 'too_short' | 'prose';
+export type Verdict = 'too_long' | 'structured' | 'encoded' | 'tech' | 'noise' | 'words' | 'too_short' | 'prose';
+
+/** 过短阈值：低于此长度视为无 AI 分析/提取价值（too_short 判定与方案 AI 提取器门控共用） */
+export const PROSE_MIN_CHARS = 20;
 
 export interface VerdictResult {
     verdict: Verdict;
@@ -120,7 +123,9 @@ export function analyzeVerdict(raw: string, maxChars: number): VerdictResult {
 
     if (detectTechArtifact(content)) return { verdict: 'tech' };
     if (isNoise(content)) return { verdict: 'noise' };
-    if (content.length < 20) return { verdict: 'too_short' };
+    // 简单词串（无句读、<60 字、≥2 词）：本地按空格直拆，不送 AI
+    if (isSimpleWords(content)) return { verdict: 'words' };
+    if (content.length < PROSE_MIN_CHARS) return { verdict: 'too_short' };
     return { verdict: 'prose' };
 }
 
