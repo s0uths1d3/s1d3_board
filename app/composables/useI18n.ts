@@ -5,7 +5,7 @@ import { isTauri } from '~/utils/env';
 import { messages, TAG_NAMES, LOCALES, type AppLocale } from '~/i18n/messages';
 
 /**
- * 轻量 i18n（自研，替代 vue-i18n）：
+ * 轻量 i18n：
  * - 语言模式 localeMode：system（跟随系统）/ zh-cn / en-us，reactive
  * - resolvedLocale：system 模式下按 navigator.language 探测（zh* → zh-cn，其余 → en-us）
  * - 持久化到 settings 表（app_locale，存模式值）；首次无记录时默认 system（跟随系统）
@@ -26,7 +26,7 @@ let inited = false;
 
 /** 按系统语言探测（仅 system 模式使用） */
 function detectSystemLocale(): AppLocale {
-  if (typeof navigator === 'undefined') return 'zh-cn';
+  if (typeof navigator === 'undefined') return 'en-us';
   return (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh-cn' : 'en-us';
 }
 
