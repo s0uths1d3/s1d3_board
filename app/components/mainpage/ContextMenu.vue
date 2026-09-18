@@ -16,7 +16,7 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'close'): void }>();
 
 const menuRef = ref<HTMLElement | null>(null);
-const menuStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' });
+const menuStyle = ref<Record<string, string>>({ left: '0px', top: '0px' });
 
 function close() {
   emit('close');
@@ -39,16 +39,18 @@ watch(
     if (v) {
       window.addEventListener('mousedown', onDocMouseDown, true);
       window.addEventListener('keydown', onDocKeyDown, true);
-      // 渲染后校正位置：不超出视口
+      // 渲染后校正位置：不超出视口；高度放不下时钳高 + 内部滚动（内容不被窗口边缘裁切）
       requestAnimationFrame(() => {
         if (!menuRef.value) return;
         const rect = menuRef.value.getBoundingClientRect();
         const pad = 8;
         const left = Math.min(props.x, window.innerWidth - rect.width - pad);
-        const top = Math.min(props.y, window.innerHeight - rect.height - pad);
+        const available = Math.max(0, window.innerHeight - 2 * pad);
+        const maxHeight = rect.height > available ? `${Math.floor(available)}px` : '';
         menuStyle.value = {
           left: `${Math.max(pad, left)}px`,
-          top: `${Math.max(pad, top)}px`,
+          top: `${Math.max(pad, Math.min(props.y, window.innerHeight - (maxHeight ? available : rect.height) - pad))}px`,
+          ...(maxHeight ? { maxHeight, overflowY: 'auto' } : {}),
         };
       });
     } else {

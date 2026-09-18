@@ -52,6 +52,9 @@ const panelEl = ref<HTMLElement | null>(null);
  *  初始 visibility:hidden：面板先挂载测尺寸、定位成功后再显示，
  *  避免首次打开时闪现在未定位/错位的坐标上 */
 const panelStyle = ref<Record<string, string>>({ visibility: 'hidden' });
+/** 面板高度钳制（maxHeight + 滚动）：空间不足时由 positionPanel 计算，
+ *  施加在 panelEl（panelClass 那层）上——wrapper 收高约束不了子元素高度 */
+const panelCapStyle = ref<Record<string, string>>({});
 
 const MARGIN = 8;
 
@@ -67,7 +70,8 @@ function close() {
 
 /**
  * 面板定位：以触发器矩形为锚，按对齐/方向计算；越界时水平收进视口、
- * 垂直翻转到空间更充裕的一侧。失败时静默保持原位置，不阻塞面板显示。
+ * 垂直翻转到空间更充裕的一侧；该侧空间仍放不下完整面板时钳制面板最大高度
+ * 并内部滚动（内容永不超出窗口边缘被裁切）。失败时静默保持原位置，不阻塞面板显示。
  */
 function positionPanel() {
   const trigger = triggerEl.value;
@@ -76,7 +80,6 @@ function positionPanel() {
   try {
     const rect = trigger.getBoundingClientRect();
     const pw = panel.offsetWidth || 0;
-    const ph = panel.offsetHeight || 0;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
@@ -87,10 +90,18 @@ function positionPanel() {
 
     const spaceBelow = vh - rect.bottom - MARGIN;
     const spaceAbove = rect.top - MARGIN;
+    // 内容真实高度：scrollHeight 含被 maxHeight 裁掉的部分，钳高后重定位不会振荡
+    const contentH = panel.scrollHeight || panel.offsetHeight || 0;
     let up = props.direction === 'up';
-    if (!up && spaceBelow < ph && spaceAbove > spaceBelow) up = true;
-    let top = up ? rect.top - ph - 4 : rect.bottom + 4;
-    top = Math.max(MARGIN, Math.min(top, vh - ph - MARGIN));
+    if (!up && spaceBelow < contentH && spaceAbove > spaceBelow) up = true;
+    // 所选侧放不下完整面板 → 钳到该侧可用空间（不超过视口），超出部分内部滚动
+    const available = Math.max(0, Math.min(up ? spaceAbove : spaceBelow, vh - 2 * MARGIN));
+    const renderH = Math.min(contentH, available);
+    panelCapStyle.value = renderH < contentH
+        ? { maxHeight: `${Math.floor(renderH)}px`, overflowY: 'auto' }
+        : {};
+    let top = up ? rect.top - renderH - 4 : rect.bottom + 4;
+    top = Math.max(MARGIN, Math.min(top, vh - renderH - MARGIN));
 
     panelStyle.value = {
       left: `${Math.round(left)}px`,
@@ -209,6 +220,7 @@ onBeforeUnmount(() => {
           <div
               ref="panelEl"
               :class="panelClass"
+              :style="panelCapStyle"
               class="outline-none"
               @click="onPanelClick"
           >

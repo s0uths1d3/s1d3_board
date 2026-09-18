@@ -57,6 +57,29 @@ function computeStyle(anchor?: DOMRect | null) {
   style.value = { left: `${left}px`, top: `${top}px` }
 }
 
+/** 渲染后按真实高度二次校正：H 只是估算值（文案可多行），窗口放不下时
+ *  钳制最大高度 + 内部滚动，确认框内容永不超出窗口边缘被裁切 */
+function adjustToRealSize(anchor?: DOMRect | null) {
+  const el = document.querySelector<HTMLElement>('[data-delete-confirm]')
+  if (!el) return
+  const vh = window.innerHeight
+  const realH = el.offsetHeight
+  const available = Math.max(0, vh - 16)
+  const capped = realH > available
+  if (capped) {
+    el.style.maxHeight = `${Math.floor(available)}px`
+    el.style.overflowY = 'auto'
+  }
+  const renderH = Math.min(realH, available)
+  if (!anchor) {
+    style.value = { ...style.value, top: `${Math.max(8, (vh - renderH) / 2)}px` }
+    return
+  }
+  let top = anchor.top
+  if (top + renderH > vh - 8) top = Math.max(8, anchor.bottom - renderH - 12)
+  style.value = { ...style.value, top: `${top}px` }
+}
+
 function focusAction(action: 'confirm' | 'cancel') {
   focusedAction = action
   ;(action === 'confirm' ? okBtn.value : cancelBtn.value)?.focus()
@@ -67,7 +90,10 @@ watch(
     (v) => {
       if (v) {
         computeStyle(props.anchor)
-        nextTick(() => focusAction('confirm'))
+        nextTick(() => {
+          focusAction('confirm')
+          adjustToRealSize(props.anchor)
+        })
         keyHandler = (e: KeyboardEvent) => {
           // capture 阶段 + stopImmediatePropagation：
           // 确认框打开时键盘操作优先由确认框处理，抢在 ShortcutManager 的
@@ -109,6 +135,7 @@ onBeforeUnmount(() => {
     <div
         v-if="visible"
         role="alert"
+        data-delete-confirm
         class="glass-card fixed z-50 flex w-[400px] max-w-[90vw] flex-col items-center rounded-2xl p-6 shadow-float"
         :style="style"
     >

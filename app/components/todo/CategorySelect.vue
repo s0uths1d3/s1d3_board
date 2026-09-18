@@ -77,7 +77,7 @@ watch(open, (v) => {
   <UiDropdown
       v-model:open="open"
       class="w-auto max-w-[13rem]"
-      align="start"
+      align="center"
       :close-on-select="false"
       aria-label="分类"
       panel-class="glass-card w-max min-w-40 max-w-64 rounded-xl p-1 shadow-float"

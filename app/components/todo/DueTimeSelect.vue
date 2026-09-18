@@ -139,37 +139,40 @@ const customDateOptions = computed(() =>
 )
 
 /** 面板定位：与触发按钮左对齐；根据视口上下空间自动向下或向上展开，避免被窗口底部遮挡。
- *  同时记录展开方向，便于弹入动画从触发侧生长，避免"突然跳到上方"的突兀感。 */
+ *  同时记录展开方向，便于弹入动画从触发侧生长，避免"突然跳到上方"的突兀感。
+ *  所选侧空间放不下完整面板时钳制面板最大高度（覆盖 max-h-80 类），超出部分内部滚动。 */
 function positionPanel() {
   if (!rootEl.value) return
   const rect = rootEl.value.getBoundingClientRect()
   const vw = window.innerWidth
   const vh = window.innerHeight
-  let left = rect.left
-  if (left + PANEL_WIDTH > vw - MARGIN) left = Math.max(MARGIN, vw - PANEL_WIDTH - MARGIN)
+  // 水平居中于触发按钮，越界收进视口（右侧超界先收右，左边界兜底）
+  let left = rect.left + rect.width / 2 - PANEL_WIDTH / 2
+  if (left + PANEL_WIDTH > vw - MARGIN) left = vw - PANEL_WIDTH - MARGIN
+  left = Math.max(MARGIN, left)
 
-  // 面板的实际高度优先以已渲染 DOM 测量；首次渲染前使用估算值
-  const panelRect = panelEl.value?.getBoundingClientRect()
-  const panelHeight = panelRect?.height ?? 248
+  // 面板的实际高度优先以已渲染 DOM 测量（scrollHeight 含被 maxHeight 裁掉的部分，重定位不振荡）；
+  // 首次渲染前使用估算值
+  const panelRect = panelEl.value
+  const panelHeight = panelRect ? (panelRect.scrollHeight || panelRect.offsetHeight) : 248
 
   const spaceBelow = vh - rect.bottom - MARGIN
   const spaceAbove = rect.top - MARGIN
 
-  let top: number
-  let up = false
-  if (spaceBelow >= panelHeight || spaceBelow >= spaceAbove) {
-    top = rect.bottom + 4
-  } else {
-    top = rect.top - panelHeight - 4
-    up = true
-    // 视口上下空间均不足时钳制上边界，避免面板顶出屏幕外
-    if (top < MARGIN) top = MARGIN
-  }
+  // 展开方向：下方放得下、或下方空间 ≥ 上方 → 向下；否则向上
+  let up = spaceBelow < panelHeight && spaceBelow < spaceAbove
+  // 所选侧放不下完整面板 → 钳到该侧可用空间（不超过视口），内联样式覆盖 max-h-80
+  const available = Math.max(0, Math.min(up ? spaceAbove : spaceBelow, vh - 2 * MARGIN))
+  const renderH = Math.min(panelHeight, available)
+
+  let top = up ? rect.top - renderH - 4 : rect.bottom + 4
+  top = Math.max(MARGIN, Math.min(top, vh - renderH - MARGIN))
 
   panelStyle.value = {
     left: `${left}px`,
     top: `${top}px`,
     width: `${PANEL_WIDTH}px`,
+    ...(renderH < panelHeight ? { maxHeight: `${Math.floor(renderH)}px` } : {}),
     '--pop-origin': up ? 'bottom' : 'top',
     '--pop-shift': up ? '-6px' : '6px',
   }

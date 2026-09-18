@@ -85,7 +85,7 @@ const rowLevelInput = (e: Event, idx: number) => {
       align="center"
       :close-on-select="false"
       :aria-label="t('todo.priority')"
-      panel-class="glass-card w-64 rounded-2xl p-2 shadow-float"
+      :panel-class="managing ? 'glass-card w-64 rounded-2xl p-2 shadow-float' : 'glass-card w-44 rounded-2xl p-2 shadow-float'"
   >
     <template #trigger="{ open }">
       <label

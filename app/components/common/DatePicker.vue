@@ -248,8 +248,9 @@ function positionPanel() {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 
-  // 面板已渲染时用真实尺寸（datetime 模式比估算值高得多），否则退回估算值
-  const panelH = panelRef.value?.offsetHeight || PANEL_HEIGHT;
+  // 面板已渲染时用真实尺寸（scrollHeight 含被 maxHeight 裁掉的部分，重定位不振荡；
+  // datetime 模式比估算值高得多），否则退回估算值
+  const contentH = panelRef.value ? (panelRef.value.scrollHeight || panelRef.value.offsetHeight) : PANEL_HEIGHT;
   const panelW = panelRef.value?.offsetWidth || PANEL_WIDTH;
 
   // 左右：默认对齐按钮左缘，超右边界则收进视口
@@ -257,24 +258,25 @@ function positionPanel() {
   if (left + panelW > vw - 8) left = Math.max(8, vw - panelW - 8);
   if (left < 8) left = 8;
 
-  // 上下：优先向下展开；放不下且上方足够时向上弹；两者都放不下则钳制在视口内
-  let top = rect.bottom + 8;
+  // 上下：优先向下展开；放不下且上方足够时向上弹；
+  // 两侧都放不下完整面板时选空间更大的一侧，钳高 + 内部滚动（永不超出窗口边缘被裁切）
+  const spaceBelow = vh - rect.bottom - 8;
+  const spaceAbove = rect.top - 8;
   let up = false;
-  if (top + panelH > vh - 8) {
-    const aboveTop = rect.top - panelH - 8;
-    if (aboveTop >= 8) {
-      top = aboveTop;
-      up = true;
-    } else {
-      top = Math.max(8, Math.min(top, vh - panelH - 8));
-    }
+  if (rect.bottom + 8 + contentH > vh - 8) {
+    up = rect.top - contentH - 8 >= 8 ? true : spaceAbove > spaceBelow;
   }
+  const available = Math.max(0, Math.min(up ? spaceAbove : spaceBelow, vh - 16));
+  const renderH = Math.min(contentH, available);
+  let top = up ? rect.top - renderH - 8 : rect.bottom + 8;
+  top = Math.max(8, Math.min(top, vh - renderH - 8));
   const rightAligned = left !== rect.left;
 
   panelStyle.value = {
     left: `${left}px`,
     top: `${top}px`,
     width: `${Math.max(rect.width, PANEL_WIDTH)}px`,
+    ...(renderH < contentH ? { maxHeight: `${Math.floor(renderH)}px`, overflowY: 'auto' } : {}),
     // 弹出动画的原点：从按钮方向展开（向下弹出 top 原点，向上弹出 bottom 原点）
     '--picker-origin': `${up ? 'bottom' : 'top'} ${rightAligned ? 'right' : 'left'}`,
   };
