@@ -37,16 +37,19 @@ const items = ref<IslandHistoryItem[]>([]);
 const loading = ref(true);
 const confirmClear = ref(false);
 
-/** kind → 色点/类型文案（i18n 键；仅类型名随界面语言，消息内容保持原始存储） */
+/** kind → 色点/类型文案（i18n 键；仅类型名随界面语言，消息内容保持原始存储）。
+ *  loading 过程岛不落历史（emitIslandShow 跳过），此条目仅为满足 Record 完整性 */
 const kindMeta: Record<IslandKind, { dot: string; labelKey: string }> = {
   copy: { dot: 'bg-gold', labelKey: 'island_history.type_copy' },
   'copy-image': { dot: 'bg-gold', labelKey: 'island_history.type_copy_image' },
+  cut: { dot: 'bg-gold', labelKey: 'island_history.type_cut' },
   paste: { dot: 'bg-blue', labelKey: 'island_history.type_paste' },
   info: { dot: 'bg-ink-soft', labelKey: 'island_history.type_info' },
   success: { dot: 'bg-green', labelKey: 'island_history.type_success' },
   error: { dot: 'bg-danger', labelKey: 'island_history.type_error' },
+  loading: { dot: 'bg-gold', labelKey: 'island_history.type_info' },
 };
-const KIND_ORDER: IslandKind[] = ['copy', 'copy-image', 'paste', 'info', 'success', 'error'];
+const KIND_ORDER: IslandKind[] = ['copy', 'copy-image', 'cut', 'paste', 'info', 'success', 'error'];
 
 // ===== 类型筛选：单选即时过滤，下拉面板附各类型计数 =====
 type FilterKind = IslandKind | 'all';

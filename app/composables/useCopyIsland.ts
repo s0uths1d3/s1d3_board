@@ -95,14 +95,16 @@ export async function setIslandDurationMs(v: number): Promise<void> {
   try { await dbService.setKeyValue(ISLAND_DURATION_KEY, String(islandDurationMs.value)); } catch { /* 写入失败不影响本次会话 */ }
 }
 
-export type IslandKind = 'copy' | 'copy-image' | 'paste' | 'info' | 'success' | 'error';
+export type IslandKind = 'copy' | 'copy-image' | 'cut' | 'paste' | 'info' | 'success' | 'error' | 'loading';
 
-/** 弹岛载荷：kind 图标与默认标签 / title 自定义标签（API 调用） / durationMs 单次停留时长覆盖 */
+/** 弹岛载荷：kind 图标与默认标签 / title 自定义标签（API 调用） / durationMs 单次停留时长覆盖 /
+ *  sticky 驻留（过程提示：不按时长收回，直到下一条岛替换；页面侧有兜底超时防残留） */
 export interface IslandShowPayload {
   kind: IslandKind;
   text?: string;
   title?: string;
   durationMs?: number;
+  sticky?: boolean;
 }
 
 const ISLAND_LABEL = 'clipboard-bubble-island';
@@ -138,7 +140,8 @@ function startIslandPoller(): void {
       lastPollText = text;
       if (!changed || !text || Date.now() < suppressUntil) return;
       lastShownCopy = { content: text, until: Date.now() + 900 };
-      void showIsland({ kind: 'copy', text: text.slice(0, PREVIEW_MAX) });
+      // Ctrl+X 感知窗口内的剪贴板变化按"已剪切"提示（一次性消费，避免窗口内后续复制误标）
+      void showIsland({ kind: consumeCut() ? 'cut' : 'copy', text: text.slice(0, PREVIEW_MAX) });
     }).catch(() => { /* 非文本内容（图片等）读取失败：交给原生路径 */ });
   }, ISLAND_POLL_MS);
 }
@@ -147,6 +150,7 @@ function stopIslandPoller(): void {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   lastPollText = null;
   lastShownCopy = null;
+  cutUntil = 0;
 }
 
 /** 抑制"已复制"提示：本应用主动写剪贴板（粘贴流程）时调用 */
@@ -185,6 +189,24 @@ listen('island:paste-detected', () => {
     try { text = (await readText()) ?? ''; } catch { /* 图片等非文本：仅弹标签 */ }
     void showIsland({ kind: 'paste', text: text.slice(0, PREVIEW_MAX) });
   })();
+}).catch(() => {});
+
+// ===== 全局剪切感知（Rust 全局 Ctrl+X / Cmd+X 钩子 → island:cut-detected）=====
+// Ctrl+X 的剪贴板写入与复制无法区分：钩子事件只标记感知窗口（1.5s，一次性消费），
+// 窗口内剪贴板真实变化（快速通道 / 原生 island:copy）才弹"已剪切"——
+// 无选区剪切失败（剪贴板未变）不弹岛不误报
+const CUT_WINDOW_MS = 1500;
+let cutUntil = 0;
+/** 感知窗口内则消费一次剪切标记（一次性：一次 Ctrl+X 只对应一次剪贴板写入） */
+function consumeCut(): boolean {
+  if (Date.now() >= cutUntil) return false;
+  cutUntil = 0;
+  return true;
+}
+listen('island:cut-detected', () => {
+  if (getCurrentWindow().label !== 'main') return;
+  if (!setting.enabled.value) return;
+  cutUntil = Date.now() + CUT_WINDOW_MS;
 }).catch(() => {});
 
 // 关闭开关时收起并关闭岛窗口、停掉快速通道；开启时反向恢复（模块级 watch：与设置页共享同一状态源）
@@ -323,26 +345,30 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
     return;
   }
   // 历史记录：真实推送前写入（全部来源汇聚点），失败静默（不影响弹岛）。
+  // loading 过程岛（AI 解析中）不落历史——它只是瞬时过程态，结果岛才值得回溯；
   // copy-image 的 text 是完整 base64 data URL（岛内渲染缩略图用），不直接落历史库——
   // 先降采样为小缩略图（webp 高 56px，约 1-4KB）再写入，历史窗口直接显示图片；
   // 生成失败写空串兜底，历史窗口按类型显示「[图片]」占位
-  if (payload.kind === 'copy-image' && payload.text) {
-    const kind = payload.kind;
-    void makeImageThumb(payload.text)
-      .then((thumb) => dbService.insertIslandHistory({ kind, text: thumb }))
-      .catch(() => dbService.insertIslandHistory({ kind, text: '' }))
-      .catch(() => {});
-  } else {
-    void dbService.insertIslandHistory({
-      kind: payload.kind,
-      text: payload.text ?? payload.title ?? '',
-    }).catch(() => {});
+  if (payload.kind !== 'loading') {
+    if (payload.kind === 'copy-image' && payload.text) {
+      const kind = payload.kind;
+      void makeImageThumb(payload.text)
+        .then((thumb) => dbService.insertIslandHistory({ kind, text: thumb }))
+        .catch(() => dbService.insertIslandHistory({ kind, text: '' }))
+        .catch(() => {});
+    } else {
+      void dbService.insertIslandHistory({
+        kind: payload.kind,
+        text: payload.text ?? payload.title ?? '',
+      }).catch(() => {});
+    }
   }
   await emit('island:show', {
     kind: payload.kind,
     text: payload.text,
     title: payload.title,
     durationMs: payload.durationMs ?? islandDurationMs.value,
+    sticky: payload.sticky ?? false,
   }).catch(() => {});
 }
 
@@ -372,10 +398,14 @@ export function initCopyIsland(): void {
     const d = (ev as CustomEvent<{ content: string; type: 'text' | 'image' }>).detail;
     if (!d || Date.now() < suppressUntil) return;
     if (d.type === 'text' && lastShownCopy && lastShownCopy.content === d.content && Date.now() < lastShownCopy.until) return;
+    // Ctrl+X 感知窗口内的文本变化按"已剪切"提示（快速通道已显示的同一内容已被上方去重跳过）
+    const cut = d.type === 'text' && consumeCut();
     lastShownCopy = d.type === 'text' ? { content: d.content, until: Date.now() + 900 } : lastShownCopy;
-    void showIsland(d.type === 'image'
-      ? { kind: 'copy-image', text: d.content }
-      : { kind: 'copy', text: d.content.slice(0, PREVIEW_MAX) });
+    void showIsland(cut
+      ? { kind: 'cut', text: d.content.slice(0, PREVIEW_MAX) }
+      : d.type === 'image'
+        ? { kind: 'copy-image', text: d.content }
+        : { kind: 'copy', text: d.content.slice(0, PREVIEW_MAX) });
   });
   // 灵动岛 API：Rust 侧 HTTP 服务（island_api.rs）转发的第三方显示请求。
   // kind 由 Rust 校验过，此处再防御性收敛；durationMs>0 时单次覆盖停留时长（钳制到合法范围）。

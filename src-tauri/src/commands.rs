@@ -47,13 +47,15 @@ pub async fn paste() -> Result<(), String> {
         .map_err(|e| format!("粘贴任务执行失败: {e}"))?
 }
 
-/// 全局粘贴感知（跨平台）：用户在任意应用按粘贴键（Ctrl+V / Cmd+V）时广播
-/// island:paste-detected → 前端灵动岛弹"已粘贴"（跟随灵动岛总开关，含历史记录）。
-/// - Windows：WH_KEYBOARD_LL 低级键盘钩子——只观察不拦截，粘贴由系统原生完成；
+/// 全局粘贴/剪切感知（跨平台）：用户在任意应用按粘贴键（Ctrl+V / Cmd+V）或剪切键
+/// （Ctrl+X / Cmd+X）时广播 island:paste-detected / island:cut-detected → 前端灵动岛
+/// 弹"已粘贴"/"已剪切"（跟随灵动岛总开关，含历史记录）。
+/// - Windows：WH_KEYBOARD_LL 低级键盘钩子——只观察不拦截，粘贴/剪切由系统原生完成；
 /// - macOS：CGEventTap ListenOnly——同样只观察不拦截；需系统「辅助功能」权限
 ///   （未授权时 tap 创建失败，功能不启用并输出提示）；物理键按 HID 事件源过滤；
 /// - Linux：X11 无观察型全局钩子，退化为插件 on_shortcut（拦截）+ enigo 注入转发，
 ///   注入键会被 grab 再次捕获，靠 PASTE_INJECTING 覆盖窗口防循环。
+///   剪切感知 Linux 不启用：拦截型快捷键不转发会破坏系统剪切，不值得为此注入转发。
 pub fn register_global_paste_hotkey(app: &tauri::AppHandle) {
     let _ = PASTE_HOOK_APP.set(app.clone());
     #[cfg(target_os = "windows")]
@@ -101,7 +103,7 @@ unsafe fn paste_hook_thread() {
     while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {}
 }
 
-/// 低级键盘钩子回调：检测物理 Ctrl+V（首按）→ 广播粘贴事件；一律 CallNextHookEx 放行
+/// 低级键盘钩子回调：检测物理 Ctrl+V / Ctrl+X（首按）→ 广播粘贴/剪切事件；一律 CallNextHookEx 放行
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn paste_ll_keyboard_proc(ncode: i32, wparam: usize, lparam: isize) -> isize {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
@@ -112,15 +114,17 @@ unsafe extern "system" fn paste_ll_keyboard_proc(ncode: i32, wparam: usize, lpar
     if ncode >= 0 && (wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize) {
         let info = &*(lparam as *const KBDLLHOOKSTRUCT);
         // V 键 + Ctrl 按住 = 粘贴动作（长按 V 的自动重复会多次触发，对应系统连续粘贴，符合语义）；
+        // X 键 + Ctrl 按住 = 剪切动作（事件仅作感知标记，前端等剪贴板真实变化才弹"已剪切"）；
         // INJECTED（应用/其他软件合成的键）不触发；PASTE_INJECTING 兜底防时序窗口误报
         let injected = info.flags & LLKHF_INJECTED != 0;
-        if info.vkCode == 0x56
-            && !injected
-            && GetAsyncKeyState(0x11) as u16 & 0x8000 != 0
-            && !PASTE_INJECTING.load(Ordering::SeqCst)
-        {
+        let ctrl_held = GetAsyncKeyState(0x11) as u16 & 0x8000 != 0;
+        if !injected && ctrl_held && !PASTE_INJECTING.load(Ordering::SeqCst) {
             if let Some(app) = PASTE_HOOK_APP.get() {
-                let _ = app.emit("island:paste-detected", ());
+                if info.vkCode == 0x56 {
+                    let _ = app.emit("island:paste-detected", ());
+                } else if info.vkCode == 0x58 {
+                    let _ = app.emit("island:cut-detected", ());
+                }
             }
         }
     }
@@ -148,6 +152,7 @@ mod paste_tap {
     const K_FIELD_SOURCE_STATE: u32 = 41; // kCGEventSourceStateID
     const K_SOURCE_HID: i64 = 1; // kCGEventSourceStateHIDSystemState：物理硬件键盘
     const K_VK_ANSI_V: i64 = 9; // kVK_ANSI_V
+    const K_VK_ANSI_X: i64 = 7; // kVK_ANSI_X
 
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
@@ -171,7 +176,7 @@ mod paste_tap {
         static kCFRunLoopCommonModes: *const c_void;
     }
 
-    /// ListenOnly 回调：物理 Cmd+V 按下时广播粘贴事件；listen-only 语义下原样返回 event（放行）
+    /// ListenOnly 回调：物理 Cmd+V / Cmd+X 按下时广播粘贴/剪切事件；listen-only 语义下原样返回 event（放行）
     unsafe extern "C" fn paste_tap_cb(
         _proxy: *mut c_void,
         etype: u32,
@@ -180,11 +185,13 @@ mod paste_tap {
     ) -> CGEventRef {
         if etype == K_EVENT_KEY_DOWN {
             let is_physical = CGEventGetIntegerValueField(event, K_FIELD_SOURCE_STATE) == K_SOURCE_HID;
-            let is_cmd_v = CGEventGetFlags(event) & K_FLAG_COMMAND != 0
-                && CGEventGetIntegerValueField(event, K_FIELD_KEYCODE) == K_VK_ANSI_V;
-            if is_physical && is_cmd_v && !PASTE_INJECTING.load(Ordering::SeqCst) {
+            let cmd = CGEventGetFlags(event) & K_FLAG_COMMAND != 0;
+            let keycode = CGEventGetIntegerValueField(event, K_FIELD_KEYCODE);
+            let is_cmd_v = cmd && keycode == K_VK_ANSI_V;
+            let is_cmd_x = cmd && keycode == K_VK_ANSI_X;
+            if is_physical && (is_cmd_v || is_cmd_x) && !PASTE_INJECTING.load(Ordering::SeqCst) {
                 if let Some(app) = PASTE_HOOK_APP.get() {
-                    let _ = app.emit("island:paste-detected", ());
+                    let _ = app.emit(if is_cmd_v { "island:paste-detected" } else { "island:cut-detected" }, ());
                 }
             }
         }
