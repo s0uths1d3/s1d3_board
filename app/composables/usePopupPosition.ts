@@ -58,7 +58,16 @@ export async function applyPopupPosition(): Promise<void> {
       if (!raw) return;
       const pos = JSON.parse(raw) as { x?: number; y?: number };
       if (typeof pos?.x === 'number' && typeof pos?.y === 'number') {
-        await win.setPosition(new PhysicalPosition(pos.x, pos.y));
+        // 位置合法性校验：Windows 最小化窗口的 outerPosition 为 (-32000,-32000)，
+        // 若在最小化状态下保存过位置，恢复时会把主窗口弹到屏幕外（表现为
+        // Ctrl+I「无法显示主窗口」）。仅当位置落在任一显示器范围内（留余量）
+        // 才应用，否则忽略恢复、保持当前位置（下次 hide 时会重新保存正确位置）。
+        const monitors = await availableMonitors();
+        const inside = monitors.some(m =>
+          pos.x! >= m.position.x - 100 && pos.x! < m.position.x + m.size.width &&
+          pos.y! >= m.position.y - 100 && pos.y! < m.position.y + m.size.height,
+        );
+        if (inside) await win.setPosition(new PhysicalPosition(pos.x, pos.y));
       }
       return;
     }

@@ -10,13 +10,22 @@ export class ToggleWindowCommand implements Command {
         const win = getCurrentWindow();
         try {
             const visible = await win.isVisible();
-            if (visible) {
+            // 焦点参与 toggle 判定：可见但未持焦（环盘/其它子窗口持焦、或滞留后台）
+            // 时按 Ctrl+I 的意图是「唤出」而非「隐藏」——否则环盘打开期间主窗口被
+            // __ringActive 豁免自动隐藏而保持可见，Ctrl+I 会误执行 hide，表现为
+            // 「按了没反应 / 无法显示主窗口」。主窗口 setFocus 后环心失焦自动退场
+            // （ring.shown 门控下的 closeRing），环盘无需在此显式关闭。
+            const focused = visible ? await win.isFocused().catch(() => false) : false;
+            if (visible && focused) {
                 // 隐藏前记录当前位置（含用户拖动过的新位置），供「上次位置」模式恢复
                 await savePopupLastPosition().catch(() => {});
                 await win.hide();
             } else {
                 // 按设置的弹出位置模式定位（光标处 / 上次位置 / 屏幕中央）后再显示
                 await applyPopupPosition().catch(() => {});
+                if (await win.isMinimized().catch(() => false)) {
+                    await win.unminimize().catch(() => {});
+                }
                 await win.show();
 
                 // 等待窗口/WebView2 完成显示后再聚焦，避免对未就绪的 webview

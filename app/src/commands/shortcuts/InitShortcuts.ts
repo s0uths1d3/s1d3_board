@@ -1,4 +1,5 @@
 import { ref } from 'vue';
+import { unregister } from '@tauri-apps/plugin-global-shortcut';
 import { ShortcutManager } from './ShortcutManager';
 import { ToggleWindowCommand } from '../global/ToggleWindowCommand';
 import { HideWindowCommand } from '../local/HideWindowCommand';
@@ -52,11 +53,12 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         enabled: true
     },
     {
-        // 气泡窗口为全局快捷粘贴入口：应用隐藏/任意前台应用下按 Ctrl+B 均可唤出（scope: global）
+        // Ctrl+B 为局部快捷键：仅剪贴板主窗口聚焦时响应（不全局拦截浏览器/其他应用的加粗键）；
+        // 环打开期间焦点在环心控制盘，由其 keydown 转发 ring:close 实现 toggle off
         id: 'bubble_toggle',
         key: 'CommandOrControl+B',
         defaultKey: 'CommandOrControl+B',
-        scope: 'global',
+        scope: 'local',
         command: bubbleToggleCommand,
         title: 'shortcut.bubble_toggle',
         enabled: true
@@ -250,10 +252,12 @@ export async function initShortcuts() {
     } catch (e) {
         console.error('注销残留快捷键失败:', e);
     }
-
     // 从数据库恢复用户自定义的快捷键（仅覆盖存在的项，缺省保持默认）
+    // 数据库记录的键值清单：供下方历史残留全局热键清理使用（作用域需越过本 try 块）
+    const savedKeys: { id: string; value: string }[] = [];
     try {
         const saved = await dbService.loadShortcutSettings();
+        savedKeys.push(...saved);
         for (const item of saved) {
             const target = shortcuts.value.find(s => s.id === item.id);
             if (!target) continue;
@@ -292,6 +296,20 @@ export async function initShortcuts() {
         }
     } catch (e) {
         console.error('加载快捷键启用状态失败:', e);
+    }
+
+    // 历史残留清理（registerAll 之前）：页面 reload 后 JS 侧 globalKeys 清单随模块重载丢失，
+    // unregisterAllGlobals 无法注销 Rust 侧旧全局热键（如某键从 global 迁移为 local 前的注册）。
+    // 残留热键在 Windows 上会持续剥离按键（前台窗口 keydown 收不到），且回调通道已随旧 webview
+    // 销毁而失效，表现为该组合键"完全无响应"。清单 = 默认 global 键 ∪ 当前配置 global 键 ∪
+    // 数据库记录过的全部键（旧 scope 无从判断，覆盖所有曾以 global 注册的键；对 local 键
+    // unregister 未注册会抛错，try-catch 吞掉即可，且后续 registerAll 会重新注册现配 global 键）
+    const staleKeys = new Set<string>();
+    for (const d of DEFAULT_SHORTCUTS) if (d.scope === 'global' && d.key) staleKeys.add(d.key);
+    for (const s of shortcuts.value) if (s.scope === 'global' && s.key) staleKeys.add(s.key);
+    for (const item of savedKeys) if (item.value) staleKeys.add(item.value);
+    for (const key of staleKeys) {
+        try { await unregister(key); } catch { /* 未注册过则忽略 */ }
     }
 
     await manager.registerAll(shortcuts.value);

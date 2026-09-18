@@ -327,6 +327,9 @@ function onListKeydown(e: KeyboardEvent) {
 function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
   // 设置项「提示窗口」关闭时不弹出 tooltip
   if (!tooltipEnabled.value) return;
+  // 环盘（Ctrl+B 气泡环）显示期间禁止 tooltip：主窗口被 __ringActive 豁免保持可见，
+  // 悬停 clip 列表不应再弹出 tooltip 窗口；关环（__ringActive 置 false）后自动恢复
+  if ((window as any).__ringActive) return;
   // 图片查看器（image-viewer）打开期间禁止 tooltip 出现：
   // 查看器为独立前台窗口，悬停主列表项不再弹出 tooltip；关闭查看器（viewerLabel 置空）后自动恢复。
   if (viewerLabel) return;
