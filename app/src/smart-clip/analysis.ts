@@ -18,6 +18,16 @@ export type AnalysisOutcome =
     | { type: 'done'; keywords: string[]; summary: string }
     | { type: 'failed'; error: unknown };
 
+/**
+ * 分析计划：本地预判（planAnalysis，毫秒级）与 AI 执行（start，单次调用）分离。
+ * 调用方拿到计划即可立刻弹出对应灵动岛（AI 链路 → 解析中驻留；本地分支 → 结果岛），
+ * 仅 ai 分支持有执行器——解析失败等场景不调用 start 即不消耗 token。
+ */
+export type AnalysisPlan =
+    | { type: 'skipped'; outcome: AnalysisOutcome & { type: 'skipped' } }
+    | { type: 'cached'; outcome: AnalysisOutcome & { type: 'done' } }
+    | { type: 'ai'; start: () => Promise<AnalysisOutcome> };
+
 /** AI 提供商可用性：缺 baseUrl/apiKey（custom 缺模板）视为未配置 */
 async function ensureConfigured(): Promise<boolean> {
     const cfg = await loadAiConfig();
@@ -87,18 +97,28 @@ async function runAnalysis(cfg: AiClientConfig, content: string, cacheKey: strin
     }
 }
 
+/** 发起单次 AI 调用（飞行中去重：同 key 并发共享同一 Promise，连按 Ctrl+B 不重复消耗 token） */
+function startAnalysis(cfg: AiClientConfig, content: string, cacheKey: string): Promise<AnalysisOutcome> {
+    const pending = inflight.get(cacheKey);
+    if (pending) return pending;
+    const call = runAnalysis(cfg, content, cacheKey).finally(() => { inflight.delete(cacheKey); });
+    inflight.set(cacheKey, call);
+    return call;
+}
+
 /**
- * 分析入口：预判分流 → skipped（含原因）/ done（keywords+summary）/ failed。
- * 缓存键 = analysis 前缀 + 内容 hash + 偏好摘要版本号（习惯变更旧缓存自然失效），
- * 与方案 AI 提取器缓存（无前缀）隔离，互不命中。
+ * 本地预判（毫秒级，无 AI 成本）：未配置/非散文 → skipped；缓存命中 → cached；
+ * 其余散文 → ai（携带单次调用执行器）。AI 单次调用只发生在 start() 被调用时。
  */
-export async function analyzeClip(content: string): Promise<AnalysisOutcome> {
-    if (!(await ensureConfigured())) return { type: 'skipped', reason: 'not_configured' };
+export async function planAnalysis(content: string): Promise<AnalysisPlan> {
+    if (!(await ensureConfigured())) {
+        return { type: 'skipped', outcome: { type: 'skipped', reason: 'not_configured' } };
+    }
 
     const maxChars = clampAnalysisMaxChars(await dbService.getKeyValue('ai_analysis_max_chars'));
     const verdict = analyzeVerdict(content, maxChars);
     if (verdict.verdict !== 'prose') {
-        return { type: 'skipped', reason: verdict.verdict, maxChars };
+        return { type: 'skipped', outcome: { type: 'skipped', reason: verdict.verdict, maxChars } };
     }
 
     const version = await getDigestVersion();
@@ -107,17 +127,9 @@ export async function analyzeClip(content: string): Promise<AnalysisOutcome> {
     const cached = await dbService.getAiCache(cacheKey, windowSec);
     if (cached !== null) {
         const parsed = parseResult(cached);
-        if (parsed) return { type: 'done', ...parsed };
+        if (parsed) return { type: 'cached', outcome: { type: 'done', ...parsed } };
     }
 
-    const pending = inflight.get(cacheKey);
-    if (pending) return pending;
     const cfg = await loadAiConfig();
-    const call = runAnalysis(cfg, content, cacheKey);
-    inflight.set(cacheKey, call);
-    try {
-        return await call;
-    } finally {
-        inflight.delete(cacheKey);
-    }
+    return { type: 'ai', start: () => startAnalysis(cfg, content, cacheKey) };
 }

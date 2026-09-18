@@ -13,14 +13,17 @@ Ctrl+B 手动触发的 AI 分析（关键词 + 一句话总结）分流策略。
 
 ## 触发与前置条件
 
-Ctrl+B 按下后的完整流程：
+Ctrl+B 按下后的完整流程（两阶段上屏：按下瞬间弹岛，本地拆分完成即显示基础环，AI 产出完成后立刻补上）：
 
 ```
-1. AI 提供商未配置（无 provider/model） → 弹岛「请先配置 AI 提供商」，结束
-2. 读取预判标签（复制时已打好；未打标则现场本地判定一次）
-3. 按七级分流决策表执行：命中 1–6 级 → 本地结果 + 对应灵动岛提示，结束
-4. 第 7 级散文 → 生成偏好摘要（含版本号）→ 发起 AI 单次调用（关键词 + 总结）
-   → 沿用现有「AI 解析中 / 成功 / 失败」提示
+1. 本地预判（毫秒级，无 AI 成本）：未配置（无 provider/model）→ 弹岛「请先配置 AI 提供商」；
+   七级分流命中 1–6 级 → 对应灵动岛提示；命中缓存 → 直接弹成功岛；
+   其余散文（第 7 级）→ 立刻弹「AI 解析中」驻留岛
+2. 阶段一：解析当前选中项（命中内存缓存即时返回，缓存 AI 产出同步并入），
+   与环盘控制盘窗口创建并行推进 → 本地片段就绪即建窗显示基础气泡 + 控制盘
+3. 阶段二：仅散文 AI 链路发起 AI 单次调用（关键词 + 总结）；解析失败时跳过分析，
+   结果岛（成功/失败/信息）替换驻留岛平滑切换 → 新增片段立刻补建气泡上环，
+   控制盘计数刷新
 ```
 
 与智能剪贴板三种模式的交互：
@@ -29,9 +32,9 @@ Ctrl+B 按下后的完整流程：
 |---|---|
 | `off` | AI 分析独立于切分模式，Ctrl+B 仍可触发（切分关闭不影响按需分析） |
 | `auto` | autoSplit 结果即打标来源 |
-| `scheme` | 与方案内 AI 提取器**并存**，缓存键独立（分析缓存键加独立前缀），互不命中 |
+| `scheme` | 与方案内 AI 提取器**并存**，缓存键独立（分析缓存键加独立前缀），互不命中；AI 提取器对过短内容（< 20 字，与第 7 级同阈值）本地跳过不调 AI，本地提取器不受影响 |
 
-## 七级分流决策表
+## 八级分流决策表
 
 | 优先级 | 判定 | 本地处理 | 灵动岛提示 |
 |---|---|---|---|
@@ -40,8 +43,9 @@ Ctrl+B 按下后的完整流程：
 | 3 | 高熵内容（密钥/编码/哈希，覆盖率 > 60%） | 原文直通单段 | 编码或密钥内容，已跳过 AI 分析 |
 | 4 | 技术工件（代码/SQL/命令/配置/diff，信号判定） | 本地切分结果 | 代码或技术内容，已跳过 AI 分析 |
 | 5 | 数字/符号噪声（占比 > 80%） | 原文直通单段 | 内容无有效语义，已跳过 AI 分析 |
-| 6 | 长度 < 20 字 | 本地结果 | 内容过短，无需 AI 分析 |
-| 7 | 其余散文（20 字 ~ 上限） | AI 单次调用 | 沿用现有提示 |
+| 6 | 简单词串（< 60 字、空白分隔 ≥2 词、无句读 `.。．!?；`） | 按空格直拆 | 简单内容，已按空格切分 |
+| 7 | 长度 < 20 字 | 本地结果 | 内容过短，无需 AI 分析 |
+| 8 | 其余散文（20 字 ~ 上限） | AI 单次调用 | 沿用现有提示 |
 
 预判顺序固定：结构层在前，高熵/技术工件/噪声为「散文层排污阀」依次排后，避免大段 base64、代码、纯数字串误入散文分支送 AI。多行代码会先被第 2 级 tryLines 拦下（提示「已本地切分」），单行代码落到第 4 级——两条路径殊途同归，均不送 AI。
 
@@ -201,19 +205,20 @@ autoSplit 分层落点即判定结果，命中任一结构层即结构化：
 | 冷却窗口 | 沿用 `ai_cache` 300 秒 |
 | 飞行中去重 | 等待期连按 Ctrl+B 共享同一请求，不重复消耗 token（沿用现有机制） |
 | 失败 | 不缓存（超时/非 2xx/JSON 解析失败/产出为空一律），下次按即真实重试 |
-| 快路径 | 缓存命中返回 < 400ms 时不弹「AI 解析中」，直接展示结果（沿用现有行为） |
+| 快路径 | 预判阶段即查缓存：命中则直接弹成功岛，从不弹「AI 解析中」（不再依赖 400ms 计时） |
 
 ## 灵动岛提示汇总（i18n）
 
 | key | 中文 | 英文 |
 |---|---|---|
-| `island.aiNotConfigured` | 请先配置 AI 提供商 | Configure an AI provider first |
-| `island.aiSkippedLong` | 内容超过 {n} 字，已跳过 AI 分析 | Content exceeds {n} chars; AI analysis skipped |
-| `island.aiSkippedStructured` | 结构化内容，已本地切分 | Structured content; split locally |
-| `island.aiSkippedEncoded` | 编码或密钥内容，已跳过 AI 分析 | Encoded content or secret; AI analysis skipped |
-| `island.aiSkippedTech` | 代码或技术内容，已跳过 AI 分析 | Code or technical content; AI analysis skipped |
-| `island.aiSkippedNoise` | 内容无有效语义，已跳过 AI 分析 | Content has no semantic value; AI analysis skipped |
-| `island.aiSkippedShort` | 内容过短，无需 AI 分析 | Content too short for AI analysis |
+| `island.ai_not_configured` | 请先配置 AI 提供商 | Configure an AI provider first |
+| `island.ai_skipped_long` | 内容超过 {n} 字，已跳过 AI 分析 | Content exceeds {n} chars; AI analysis skipped |
+| `island.ai_skipped_structured` | 结构化内容，已本地切分 | Structured content; split locally |
+| `island.ai_skipped_encoded` | 编码或密钥内容，已跳过 AI 分析 | Encoded content or secret; AI analysis skipped |
+| `island.ai_skipped_tech` | 代码或技术内容，已跳过 AI 分析 | Code or technical content; AI analysis skipped |
+| `island.ai_skipped_noise` | 内容无有效语义，已跳过 AI 分析 | Content has no semantic value; AI analysis skipped |
+| `island.ai_skipped_words` | 简单内容，已按空格切分 | Simple content split by spaces |
+| `island.ai_skipped_too_short` | 内容过短，无需 AI 分析 | Content too short for AI analysis |
 
 提示时机统一为 **Ctrl+B 按下后**（分流结果反馈），复制入库时静默不弹岛。同内容连按命中缓存时依赖 bubble.vue 既有 5 秒窗口重复计数徽标，不叠加弹窗。
 
@@ -250,3 +255,6 @@ autoSplit 分层落点即判定结果，命中任一结构层即结构化：
 
 - 2026-09-16 初版：七级分流决策表（含多行散文误伤修正、技术工件级、噪声阀）、高熵预判信号与散文夹密钥脱敏、单次双产出调用规范、缓存与并发规则、灵动岛提示文案表、边界情况速查
 - 2026-09-16 技术工件全面排除 AI（代码/SQL/命令/配置/diff，≥2 类互异信号判定）；新增用户习惯体系与标准交换协议（本地 schema、确定性摘要生成、单向注入、版本化失效、隐私边界、采纳率反馈闭环）
+- 2026-09-17 时机重构：本地预判与 AI 执行分离（planAnalysis / plan.start），Ctrl+B 按下瞬间按预判结果弹岛（AI 链路 → 解析中驻留岛，本地分支/缓存命中 → 结果岛直出），移除 400ms 计时；环盘窗口与处理管道并行推进，处理完成后整环显示
+- 2026-09-18 简单词串级：分流升级为八级，新增第 6 级 `words` 判定（< 60 字、空白分隔 ≥2 词、无句读 `.。．!?；`）——本地按空格直拆不送 AI，灵动岛提示「简单内容，已按空格切分」；无空格的过短内容仍落第 7 级 too_short
+- 2026-09-17 两阶段上屏：本地拆分完成即显示基础气泡+控制盘（不等 AI），AI 分析完成后新增片段立刻补建气泡上环并刷新控制盘计数；气泡 ready 握手显示以环盘 shown 门控，避免窗口抢在整环之前单独冒出

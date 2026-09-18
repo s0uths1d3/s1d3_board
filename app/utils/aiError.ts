@@ -26,3 +26,37 @@ export function briefAiError(raw: string): string {
   const flat = (p.status ? `${p.status} · ${p.message}` : p.message).replace(/\s+/g, ' ').trim();
   return flat.length > 120 ? `${flat.slice(0, 120)}…` : flat;
 }
+
+// ===== 错误分类（灵动岛失败提示用）：类型标识 + 简明原因，用户无需读懂原始报错串 =====
+
+export type AiErrKind = 'network' | 'timeout' | 'http' | 'model' | 'unknown';
+
+function truncate(s: string, n: number): string {
+  const flat = s.replace(/\s+/g, ' ').trim();
+  return flat.length > n ? `${flat.slice(0, n)}…` : flat;
+}
+
+/**
+ * 错误分类：kind 决定类型标识文案（island.ai_err_*），detail 为可省略的简明原因。
+ * - network：fetch 失败 / DNS / 连接重置等网络层异常
+ * - timeout：请求超时（15 秒上限）
+ * - http：Rust 侧非 2xx（「AI API 返回 400 …」形态）
+ * - model：模型返回无法解析 / 产出为空
+ * - unknown：未识别错误，透传简明原文
+ */
+export function classifyAiError(raw: string): { kind: AiErrKind; detail: string } {
+  const p = parseAiError(raw);
+  if (p.status) {
+    return { kind: 'http', detail: truncate(`${p.status} · ${p.message}`, 60) };
+  }
+  if (/failed to fetch|fetch failed|network\s?error|networkerror|econnrefused|econnreset|enotfound|ehostunreach|enetunreach|err_network|err_connection|proxy/i.test(raw)) {
+    return { kind: 'network', detail: '' };
+  }
+  if (/timed?\s?out|timeout|aborterror|\babort\b/i.test(raw)) {
+    return { kind: 'timeout', detail: '' };
+  }
+  if (/产出为空|无法解析|unexpected|invalid json|\bjson\b|\bparse\b/i.test(raw)) {
+    return { kind: 'model', detail: truncate(raw.replace(/^error:\s*/i, ''), 60) };
+  }
+  return { kind: 'unknown', detail: truncate(raw.replace(/^error:\s*/i, ''), 60) };
+}
