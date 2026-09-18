@@ -70,6 +70,20 @@ async fn error_from_response(resp: reqwest::Response) -> String {
     format!("AI API 返回 {status}: {brief}")
 }
 
+/// 读取响应体并解析 JSON（2xx 路径）：解析失败时附响应体前 200 字符。
+/// 典型场景：中转站/代理返回 200 + HTML 错误页或限流页，resp.json() 只报
+/// "error decoding response body"，不带片段无法定位服务端实际返回了什么
+async fn json_with_preview(resp: reqwest::Response) -> Result<serde_json::Value, String> {
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("AI API 响应读取失败: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| {
+        let preview: String = text.chars().take(200).collect();
+        format!("AI API 响应解析失败: {e}；响应片段: {preview}")
+    })
+}
+
 // ===================== 提供商抽象 =====================
 
 trait AIProvider {
@@ -118,10 +132,7 @@ impl AIProvider for OpenAiCompatProvider {
         if !resp.status().is_success() {
             return Err(error_from_response(resp).await);
         }
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("AI API 响应解析失败: {e}"))?;
+        let json: serde_json::Value = json_with_preview(resp).await?;
         json["choices"][0]["message"]["content"]
             .as_str()
             .map(|s| s.to_string())
@@ -163,10 +174,7 @@ impl AIProvider for AnthropicProvider {
         if !resp.status().is_success() {
             return Err(error_from_response(resp).await);
         }
-        let json: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("AI API 响应解析失败: {e}"))?;
+        let json: serde_json::Value = json_with_preview(resp).await?;
         // content 是块数组：拼接全部 type === "text" 的块
         let mut out = String::new();
         if let Some(blocks) = json["content"].as_array() {
@@ -366,10 +374,7 @@ impl AIProvider for CustomProvider {
         if content_type.contains("text/event-stream") {
             complete_stream(resp, &custom, app).await
         } else {
-            let json: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("AI API 响应解析失败: {e}"))?;
+            let json: serde_json::Value = json_with_preview(resp).await?;
             resolve_path(&json, &custom.response_path)
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
