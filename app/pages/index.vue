@@ -24,6 +24,7 @@ import ContextMenu from "~/components/mainpage/ContextMenu.vue";
 import PinnedClipList from "~/components/pinned/PinnedClipList.vue";
 import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
 import { activeTab } from "~/composables/useTabs";
+import { SwitchTabCommand } from "~/src/commands/local/SwitchTabCommand";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
 import { useSearchHighlight } from "~/composables/useSearchHighlight";
 import { useI18n } from "~/composables/useI18n";
@@ -420,8 +421,21 @@ function handleTypeFilter() {
   filter.value.type = filter.value.type === 'image' ? 'all' : 'image'
 }
 
+/** 鼠标侧键导航：后退键(XButton1, button=3)=上一个标签，前进键(XButton2, button=4)=下一个标签。
+ *  复用 SwitchTabCommand 的循环切换（与 Ctrl+←/→ 一致，统计页未解锁自动跳过）。
+ *  mousedown 阶段即响应（跟手）并 preventDefault，阻止 WebView2 把侧键当浏览器历史导航；
+ *  仅主窗口挂载（气泡/历史窗口无标签页概念） */
+function onMouseSideButton(e: MouseEvent) {
+  if (e.button !== 3 && e.button !== 4) return;
+  e.preventDefault();
+  void new SwitchTabCommand(e.button === 3 ? -1 : 1).execute();
+}
+
 onMounted(async () => {
   console.log('mounting...')
+
+  // 鼠标侧键：后退/前进切换标签页（上一页/下一页）
+  window.addEventListener('mousedown', onMouseSideButton);
 
   // 全局快捷键已在 app.vue 统一注册；列表项的本地 keydown 仍绑定在 <ul> 上
   // 剪贴板列表更新改为事件驱动：dbService 剪贴板监听写库成功后派发
@@ -550,6 +564,7 @@ function onMainWindowShown() {
 
 onBeforeUnmount(async () => {
   console.log('unmounting outside...')
+  window.removeEventListener('mousedown', onMouseSideButton);
   window.removeEventListener('window-shown', onMainWindowShown);
   unlistenTooltipHover.forEach((u) => u());
   unlistenTooltipHover = [];
