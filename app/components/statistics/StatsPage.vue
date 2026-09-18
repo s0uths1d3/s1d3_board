@@ -91,6 +91,7 @@ const kingClip = ref<{ content: string; count: number } | null>(null);
 const trendOptions = computed<{ key: string; name: string; fields: StatField[] }[]>(() => [
   { key: 'activity', name: t('statistics.trend_activity'), fields: ['clip_text', 'clip_image', 'clip_use'] },
   { key: 'clip_use', name: t('statistics.trend_paste'), fields: ['clip_use'] },
+  { key: 'smart', name: t('statistics.trend_smart'), fields: ['ai_analysis', 'clip_cut'] },
   { key: 'usage', name: t('statistics.trend_duration'), fields: ['usage_seconds'] },
   { key: 'shortcut', name: t('statistics.trend_shortcut'), fields: ['shortcut_count'] },
   { key: 'todo', name: t('todo.title'), fields: ['todo_added', 'todo_completed', 'todo_reminded'] },
@@ -206,6 +207,8 @@ const metricCards = computed(() => {
     { name: t('statistics.metric_clip_total'), value: (s.clip_text ?? 0) + (s.clip_image ?? 0), hint: t('statistics.metric_clip_total_hint'), icon: 'clip' },
     { name: t('statistics.metric_image'), value: s.clip_image ?? 0, hint: t('statistics.metric_image_hint'), icon: 'image' },
     { name: t('statistics.metric_paste'), value: s.clip_use ?? 0, hint: t('statistics.metric_paste_hint'), icon: 'paste' },
+    { name: t('statistics.metric_ai_analysis'), value: s.ai_analysis ?? 0, hint: t('statistics.metric_ai_analysis_hint'), icon: 'ai' },
+    { name: t('statistics.metric_cut'), value: s.clip_cut ?? 0, hint: t('statistics.metric_cut_hint'), icon: 'cut' },
     { name: t('statistics.metric_todo_ops'), value: (s.todo_added ?? 0) + (s.todo_completed ?? 0), hint: t('statistics.metric_todo_ops_hint'), icon: 'todo' },
     { name: t('statistics.metric_todo_chars'), value: fmtNum(s.todo_chars ?? 0), hint: t('statistics.metric_todo_chars_hint'), icon: 'todo_text' },
     { name: t('statistics.metric_note'), value: s.note_added ?? 0, hint: t('statistics.metric_note_hint'), icon: 'note' },
@@ -302,6 +305,8 @@ const icons: Record<string, string> = {
   clip: 'M8 8V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2M4 8h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z',
   image: 'M4 16l4.586-4.586a2 2 0 0 1 2.828 0L16 16m-2-2 1.586-1.586a2 2 0 0 1 2.828 0L20 14m-6-6h.01M6 20h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z',
   paste: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2',
+  ai: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Zm7 12l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9L19 15Z',
+  cut: 'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM8.12 8.12 12 12l-3.88 3.88M20 4 8.12 15.88M14.8 14.8 20 20',
   todo: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4',
   todo_text: 'M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M7 13h6M7 17h4',
   note: 'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
@@ -380,7 +385,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
         <div v-if="title" class="glass-card overflow-hidden rounded-2xl">
           <div class="relative flex items-center gap-4 bg-gradient-to-r from-gold/25 via-gold/10 to-transparent p-5">
             <div class="gold-bar min-w-0">
-              <div class="text-xs uppercase tracking-widest text-gold">{{ t('statistics.unique_title') }} · Unique Title</div>
+              <div class="text-xs uppercase tracking-widest text-gold">{{ t('statistics.unique_title') }}</div>
               <div class="mt-0.5 text-2xl font-bold text-ink">{{ tName(title.name) }}</div>
               <div class="mt-0.5 text-xs text-ink-faint">{{ t('statistics.unique_title_desc') }}</div>
             </div>
@@ -552,7 +557,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
               {{ opt.name }}
             </button>
             <span v-if="isDownsampled" class="ml-auto text-xs text-ink-faint">
-              区间超 {{ TREND_DOWNSAMPLE_DAYS }} 天，已按月聚合（{{ series.length }} 个月）
+              {{ t('statistics.downsample_hint', { days: TREND_DOWNSAMPLE_DAYS, months: series.length }) }}
             </span>
           </div>
           <div v-if="series.length === 0" class="text-sm text-ink-faint">{{ t('statistics.no_trend_data') }}</div>
@@ -571,7 +576,7 @@ const trendMax = computed(() => Math.max(...series.value.map(r => r.value), 0));
           </div>
           <div class="mt-2 flex justify-between text-[10px] text-ink-faint tabular-nums">
             <span>{{ series[0]?.stat_date ?? '' }}</span>
-            <span>峰值 {{ fmtNum(trendMax) }}</span>
+            <span>{{ t('statistics.peak', { n: fmtNum(trendMax) }) }}</span>
             <span>{{ series[series.length - 1]?.stat_date ?? '' }}</span>
           </div>
           </div>

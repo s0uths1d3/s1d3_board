@@ -4,6 +4,7 @@ import { availableMonitors, cursorPosition, getCurrentWindow, PhysicalPosition }
 import { emit, listen } from '@tauri-apps/api/event';
 import { readText } from 'tauri-plugin-clipboard-api';
 import dbService from '~/src/db/dbService';
+import statsService from '~/src/statistics/statsService';
 import { createBooleanSetting } from './useBooleanSetting';
 import { isTauri } from '~/utils/env';
 
@@ -362,6 +363,11 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
         text: payload.text ?? payload.title ?? '',
       }).catch(() => {});
     }
+  }
+  // 统计埋点：剪切成功 1 次（daily_stat.clip_cut）——在真实推送时记，延迟排队中被
+  // 后续事件丢弃的 payload 不计（快速通道 / 原生事件双路径已由 consumeCut 一次性去重）
+  if (payload.kind === 'cut') {
+    void statsService.record({ clip_cut: 1 }).catch(() => {});
   }
   await emit('island:show', {
     kind: payload.kind,

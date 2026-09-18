@@ -1,6 +1,7 @@
 import { aiComplete, loadAiConfig, type AiClientConfig } from './aiClient';
 import { analyzeVerdict, clampAnalysisMaxChars, redactSecrets, type Verdict } from './analyzer';
 import { buildDigest, getDigestVersion, recordAnalysisShown } from './habitProfile';
+import statsService from '../statistics/statsService';
 import { hashText } from '~/utils/hash';
 import dbService from '../db/dbService';
 
@@ -96,6 +97,8 @@ async function runAnalysis(cfg: AiClientConfig, content: string, cacheKey: strin
         void dbService.setAiCache(cacheKey, JSON.stringify(parsed)).catch(() => {});
         // 产出即视为展示：记采纳率分母（AI 产出被粘贴时由 paste 路径记分子）
         void recordAnalysisShown(parsed.keywords.length).catch(() => {});
+        // 统计埋点：AI 分析成功 1 次（daily_stat.ai_analysis）
+        void statsService.record({ ai_analysis: 1 }).catch(() => {});
         return { type: 'done', ...parsed };
     } catch (e) {
         // 失败不缓存：超时/非 2xx/解析失败/产出为空一律，下次按即真实重试
