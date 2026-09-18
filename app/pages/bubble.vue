@@ -21,7 +21,7 @@ import type { IslandKind } from '~/composables/useCopyIsland';
  *   选中高亮来自 ring:state 广播；Ctrl+悬停 / 左键点击 → ring:select-req；
  *   双击 → ring:paste-req（由管理器统一隐藏全部环形窗口并模拟粘贴）。
  * - ring-hub（?mode=ring-hub）：环心控制盘，**持有系统焦点的唯一键盘入口**：
- *   ←↑/→↓ 切换选中（ring:nav）、PgUp/PgDn 翻页（ring:page-nav）、Enter 粘贴选中项
+ *   ←↑/→↓ 空间导航（ring:nav 按方向）、PgUp/PgDn 翻页（ring:page-nav）、Enter 粘贴选中项
  *   （ring:paste-req）、Esc 整体关闭（ring:close），状态由 ring:state 广播回显。
  *
  * 窗口的创建/定位/分页显隐/层级（选中置顶）全部由 BubbleToggleCommand 管理。
@@ -44,6 +44,16 @@ let pinCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 // ===== 环形气泡 =====
 const ringText = ref('');
 const ringSelected = ref(false);
+/** 选中一次性脉冲：金光在卡片上闪现渐隐（方向键/点击切换时目标气泡"亮一下"），配合双层辉光让选中态一眼可辨 */
+const selPulse = ref(false);
+let selPulseTimer: ReturnType<typeof setTimeout> | null = null;
+watch(ringSelected, (v) => {
+  if (selPulseTimer) { clearTimeout(selPulseTimer); selPulseTimer = null; }
+  if (!v) { selPulse.value = false; return; }
+  selPulse.value = false; // 复位后下一帧再点亮：连续切换时动画从头重播
+  requestAnimationFrame(() => { selPulse.value = true; });
+  selPulseTimer = setTimeout(() => { selPulse.value = false; }, 700);
+});
 
 // ===== 环心控制盘 =====
 const hubSelected = ref(0);
@@ -85,9 +95,9 @@ const islandDuration = ref(ISLAND_SHOW_MS);
 const islandOverflow = ref(false);        // 内容超出胶囊单行（下拉展开的必要条件）
 const islandExpanded = ref(false);        // 下拉面板展开中
 const islandPanelMaxH = ref(ISLAND_PANEL_MAX_H);
-/** kind → 默认标签 i18n 键（copy-image 与 copy 同标签；title 自定义标签优先） */
+/** kind → 默认标签 i18n 键（copy-image 与 copy 同标签；loading=解析过程提示；title 自定义标签优先） */
 const ISLAND_LABEL_KEYS: Record<IslandKind, string> = {
-  copy: 'copied', 'copy-image': 'copied', paste: 'pasted', info: 'info', success: 'success', error: 'error',
+  copy: 'copied', 'copy-image': 'copied', cut: 'cut', paste: 'pasted', info: 'info', success: 'success', error: 'error', loading: 'parsing',
 };
 const islandLabel = computed(() => islandTitle.value || t(`island.${ISLAND_LABEL_KEYS[islandKind.value]}`));
 
@@ -121,9 +131,11 @@ const islandPulse = ref(false);       // 新提示到达的一次性高亮脉冲
 let islandRepeatKey = '';             // 上一条提示的唯一键（kind|text）
 let islandRepeatAt = 0;               // 上一条提示到达时刻（ms）
 let islandPulseTimer: ReturnType<typeof setTimeout> | null = null;
+/** sticky 驻留岛兜底时长：结果岛丢失（进程异常）时防止过程岛永久残留 */
+const ISLAND_STICKY_MAX_MS = 20000;
 
 /** 展示灵动岛：窗口 show 后强制回流再切动画类，保证进出场动画可见且首帧即动（隐藏窗口里 transition 会瞬间跑完） */
-async function applyIsland(payload: { kind: IslandKind; text?: string; title?: string; durationMs?: number }): Promise<void> {
+async function applyIsland(payload: { kind: IslandKind; text?: string; title?: string; durationMs?: number; sticky?: boolean }): Promise<void> {
   islandKind.value = payload.kind;
   islandText.value = payload.text ?? '';
   islandTitle.value = payload.title ?? '';
@@ -147,12 +159,23 @@ async function applyIsland(payload: { kind: IslandKind; text?: string; title?: s
   // 会把刚要显示的窗口藏回去（间歇性"弹了又立刻消失/不显示"的竞态来源）
   if (islandOutTimer) { clearTimeout(islandOutTimer); islandOutTimer = null; }
   if (islandHideTimer) { clearTimeout(islandHideTimer); islandHideTimer = null; }
-  islandVisible.value = false;
   const win = getCurrentWindow();
-  // 复位窗口为收起尺寸（上次展开后可能残留大窗口），再显示
+  // 平滑替换：岛可见期间收到新岛（解析中 → 结果切换）不闪断窗口、不重播入场动画，
+  // 仅切换内容 + 金环脉冲；替换时重置悬停态，让结果岛从零开始走正常停留计时
+  const replacing = islandVisible.value;
+  if (replacing) {
+    islandDomHover = false;
+    islandProxHover = false;
+  } else {
+    islandVisible.value = false;
+    await nextTick();
+  }
+  // 复位窗口为收起尺寸（替换与首显都需：上次展开面板后可能残留大窗口），再显示
   await win.setSize(new LogicalSize(ISLAND_W, ISLAND_H)).catch(() => {});
-  await win.show().catch(() => {});
-  await nextTick();
+  if (!replacing) {
+    await win.show().catch(() => {});
+    await nextTick();
+  }
   // 强制回流让浏览器记录收起态（替代双 rAF，节省约 2 帧延迟）；回流后挂脉冲动画类才可靠重播
   void islandPillEl.value?.offsetHeight;
   islandPulse.value = true;
@@ -163,11 +186,19 @@ async function applyIsland(payload: { kind: IslandKind; text?: string; title?: s
   const el = islandTextEl.value;
   islandOverflow.value = !!el && el.scrollWidth > el.clientWidth + 1; // 1px 容差：略微溢出也可展开
   void refreshIslandRect();
-  // 悬停/邻近暂停态保持驻留（清掉上一轮倒计时）；否则按设置的时长启动自动隐藏
-  if (islandDomHover) {
+  if (payload.sticky) {
+    // 过程岛驻留：不按设置时长收回，持续显示直到结果岛替换；兜底计时防止结果岛丢失后残留
+    islandOutTimer = setTimeout(() => { islandVisible.value = false; }, ISLAND_STICKY_MAX_MS);
+    islandHideTimer = setTimeout(() => {
+      stopIslandProximity();
+      islandDomHover = false;
+      islandProxHover = false;
+      void getCurrentWindow().hide().catch(() => {});
+    }, ISLAND_STICKY_MAX_MS + ISLAND_OUT_MS);
+  } else if (!replacing && islandDomHover) {
     clearIslandTimers();
     scheduleIslandExpand(); // 新内容落下时正悬停：重新走悬停意图展开
-  } else if (islandProxHover) {
+  } else if (!replacing && islandProxHover) {
     clearIslandTimers();
   } else {
     scheduleIslandHide();
@@ -408,6 +439,10 @@ function ringClose(): void {
 function hubNav(delta: number): void {
   void emit('ring:nav', { delta });
 }
+/** 键盘方向键：按空间方向导航（管理器按 3×3 网格行/列带折算目标气泡） */
+function hubNavDir(dir: 'up' | 'down' | 'left' | 'right'): void {
+  void emit('ring:nav', { dir });
+}
 function hubPageNav(delta: number): void {
   void emit('ring:page-nav', { delta });
 }
@@ -420,7 +455,7 @@ onMounted(async () => {
   if (isIsland) {
     // 透明窗口：body 渐变背景与光晕必须去除，否则透出灰底（.island-body 规则见样式块）
     document.body.classList.add('island-body');
-    unlisteners.push(await listen<{ kind: IslandKind; text?: string; title?: string; durationMs?: number }>('island:show', (ev) => {
+    unlisteners.push(await listen<{ kind: IslandKind; text?: string; title?: string; durationMs?: number; sticky?: boolean }>('island:show', (ev) => {
       void applyIsland(ev.payload);
     }));
     // ready 握手：通知管理器本窗口已就绪（首次 show 前会等待此信号）
@@ -472,19 +507,33 @@ onMounted(async () => {
 
 /**
  * 控制盘键盘导航（控制盘持有系统焦点，是环形系统的唯一键盘入口）：
- * ←↑/→↓ 切换选中 · Enter 粘贴选中项 · PgUp/PgDn 翻页 · Esc 关闭整环
+ * ←↑/→↓ 空间导航（↑↓ 列内上下移动，←→ 行内左右移动，行首/行尾折转最近的上方/下方气泡）
+ * · Enter 粘贴选中项 · PgUp/PgDn 翻页 · Esc 关闭整环
  */
 function onHubKeydown(e: KeyboardEvent): void {
+  // Ctrl+B（局部快捷键的环内延伸）：环打开时焦点在本控制盘，主窗口收不到 keydown，
+  // 在此转发 ring:close 保持「Ctrl+B toggle 关环」行为一致
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b') {
+    e.preventDefault();
+    hubClose();
+    return;
+  }
   switch (e.key) {
     case 'ArrowLeft':
+      e.preventDefault();
+      hubNavDir('left');
+      break;
     case 'ArrowUp':
       e.preventDefault();
-      hubNav(-1);
+      hubNavDir('up');
       break;
     case 'ArrowRight':
+      e.preventDefault();
+      hubNavDir('right');
+      break;
     case 'ArrowDown':
       e.preventDefault();
-      hubNav(1);
+      hubNavDir('down');
       break;
     case 'Enter':
       e.preventDefault();
@@ -530,25 +579,37 @@ onBeforeUnmount(() => {
           class="island-pill bg-surface text-ink border-line shadow-float"
           :class="[islandVisible ? 'island-in' : '', islandPulse ? 'island-pill-new' : '']"
       >
-        <!-- 图标随 kind 变化：粘贴=剪贴板打勾 / 成功=对勾圈 / 失败=叹号圈 / 信息=i圈 / 复制=双层卡片 -->
+        <!-- 图标随 kind 变化并带语义色：粘贴=剪贴板打勾（中性）/ 成功=对勾圈（绿）/ 失败=叹号圈（红）/
+             信息=i圈（中性）/ 解析中=旋转圆弧（金，动画传达"进行中"）/ 复制=双层卡片（中性） -->
         <svg v-if="islandKind === 'paste'" class="island-icon text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="8" y="2" width="8" height="4" rx="1" />
           <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
           <path d="m9 14 2 2 4-4" />
         </svg>
-        <svg v-else-if="islandKind === 'success'" class="island-icon text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg v-else-if="islandKind === 'success'" class="island-icon text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10" />
           <path d="m8.5 12.5 2.5 2.5 5-5" />
         </svg>
-        <svg v-else-if="islandKind === 'error'" class="island-icon text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg v-else-if="islandKind === 'error'" class="island-icon text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10" />
           <path d="M12 8v4" />
           <path d="M12 16h.01" />
+        </svg>
+        <svg v-else-if="islandKind === 'loading'" class="island-icon animate-spin text-gold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M21 12a9 9 0 1 1-6.2-8.56" />
         </svg>
         <svg v-else-if="islandKind === 'info'" class="island-icon text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10" />
           <path d="M12 16v-4" />
           <path d="M12 8h.01" />
+        </svg>
+        <!-- 剪切=剪刀（与复制的双层卡片区分） -->
+        <svg v-else-if="islandKind === 'cut'" class="island-icon text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="6" cy="6" r="3" />
+          <circle cx="6" cy="18" r="3" />
+          <line x1="20" y1="4" x2="8.12" y2="15.88" />
+          <line x1="14.47" y1="14.48" x2="20" y2="20" />
+          <line x1="8.12" y1="8.12" x2="12" y2="12" />
         </svg>
         <svg v-else class="island-icon text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -618,9 +679,10 @@ onBeforeUnmount(() => {
        选中高亮（金边 + 外发光 + 序号徽章），Ctrl+悬停/点击选中，双击粘贴 -->
   <div v-else-if="isRingBubble"
        class="group relative h-screen cursor-pointer rounded-2xl border p-2 shadow-soft transition-all duration-200 ease-soft"
-       :class="ringSelected
-         ? 'border-gold bg-surface-field ring-2 ring-gold shadow-[0_0_14px_rgb(var(--c-gold)/0.45)]'
-         : 'border-line bg-surface-field/95 hover:border-accent'"
+       :class="[ringSelected
+         ? 'bubble-selected border-gold bg-surface-field ring-2 ring-gold shadow-[0_0_4px_rgb(var(--c-gold)/0.55),0_0_20px_rgb(var(--c-gold)/0.55)]'
+         : 'border-line bg-surface-field/95 hover:border-accent',
+         selPulse ? 'bubble-sel-pulse' : '']"
        @pointermove="ringPointerMove"
        @click="ringSelect"
        @dblclick="ringPaste">
@@ -630,7 +692,7 @@ onBeforeUnmount(() => {
             :title="t('bubble.pin')"
             @click.stop="pinCurrent">📌</button>
     <span v-if="ringSelected"
-          class="absolute bottom-1 right-2 text-[9px] tabular-nums text-gold">{{ ringIndex + 1 }}</span>
+          class="bubble-badge-in absolute bottom-1 right-2 text-[10px] font-semibold tabular-nums text-gold">{{ ringIndex + 1 }}</span>
   </div>
 
   <!-- 环心控制盘：箭头导航 + 翻页 + 关闭（透明窗口 + 圆润卡片，外层 p-1.5 为阴影留白） -->
@@ -860,5 +922,30 @@ body.island-body::after {
   line-height: 1.4;
   color: rgba(150, 120, 90, 0.85);
   user-select: none;
+}
+/* 选中气泡一次性脉冲：金光闪现渐隐（inset:0 不越窗口裁剪区，透明窗无需担心边缘）；
+   与静态双层辉光叠加：切换瞬间"亮一下"，静止时靠辉光与金边持续辨识 */
+.bubble-sel-pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgb(var(--c-gold) / 0.16);
+  border: 2px solid rgb(var(--c-gold) / 0.85);
+  pointer-events: none;
+  animation: bubble-sel-flash 0.6s ease-out forwards;
+}
+@keyframes bubble-sel-flash {
+  0% { opacity: 0; }
+  22% { opacity: 1; }
+  100% { opacity: 0; }
+}
+/* 选中序号徽章入场：随选中切换淡入上浮，与卡片 200ms 高亮过渡 + 金光脉冲衔接成连贯的焦点移动感 */
+.bubble-badge-in {
+  animation: bubble-badge-in 0.2s ease-out both;
+}
+@keyframes bubble-badge-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 </style>
