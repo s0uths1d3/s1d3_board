@@ -273,6 +273,8 @@ const updateNote = async (id: string, content: string) => {
     note.updated_at = String(Date.now())
     try {
       await clipboardService.updateNote(note)
+      // 保存成功灵动岛提示：Ctrl+Enter / 失焦 / 快捷键系统三条保存路径都汇聚于此，单点覆盖
+      showHint(t('note.saved'))
     } catch (e) {
       console.error('保存便签失败:', e)
       showHint(t('note.save_failed'), 'error')

@@ -128,7 +128,7 @@
                   </div>
 
                   <div class="flex items-center gap-2">
-                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.dueDate') }}</label>
+                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.due') }}</label>
                     <DueTimeSelect v-model="newTodo.dueDate" :placeholder="t('todo.due_time')" />
                   </div>
 
@@ -244,6 +244,7 @@ import ReminderPicker from '~/components/todo/ReminderPicker.vue'
 import PrioritySelect from '~/components/todo/PrioritySelect.vue'
 import { useSearchHighlight } from "~/composables/useSearchHighlight"
 import { useCategories } from "~/composables/useCategories"
+import { notifyIsland } from "~/composables/useCopyIsland"
 import { useTodoPriorities } from "~/composables/useTodoPriorities"
 import { useDueDateMemory } from "~/composables/useDueDateMemory"
 import reminderService from '~/src/todo/reminderService'
@@ -430,19 +431,25 @@ const toggleAddForm = () => {
 /**
  * 统一 DB 写入包装：失败时 console.error 并返回 false（不产生 unhandled rejection），
  * 写库期间 pendingWrites > 0 使轮询跳过，避免旧数据覆盖乐观更新。
+ * onFail：调用方可选的失败回调（收到原始 error，用于灵动岛等用户可见反馈）。
  */
-async function withDbWrite(fn: () => Promise<void>): Promise<boolean> {
+async function withDbWrite(fn: () => Promise<void>, onFail?: (error: unknown) => void): Promise<boolean> {
   pendingWrites++
   try {
     await fn()
     return true
   } catch (error) {
     console.error('[todo] 数据库写入失败:', error)
+    onFail?.(error)
     return false
   } finally {
     pendingWrites--
   }
 }
+
+/** 提取错误原因给灵动岛显示（Error message / 任意值字符串化，截断防溢出胶囊） */
+const islandErrText = (e: unknown): string =>
+  (e instanceof Error ? e.message : String(e)).slice(0, 100)
 
 const addTodo = async () => {
   if (!newTodo.value.title.trim()) return
@@ -462,7 +469,9 @@ const addTodo = async () => {
     updated_at: String(nowMs)
   }
 
-  const ok = await withDbWrite(() => clipboardService.insertTodo(todo))
+  const ok = await withDbWrite(() => clipboardService.insertTodo(todo), (error) => {
+    notifyIsland({ kind: 'error', text: t('todo.island_add_failed', { reason: islandErrText(error) }) })
+  })
   if (!ok) return
   prepend(todo)
   statsTodos.value.unshift(todo)
@@ -470,6 +479,7 @@ const addTodo = async () => {
   resetForm()
 
   showAddForm.value = false
+  notifyIsland({ kind: 'success', text: t('todo.island_added', { title: todo.title.slice(0, 100) }) })
 }
 
 const resetForm = () => {
