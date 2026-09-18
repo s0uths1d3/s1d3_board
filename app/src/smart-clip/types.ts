@@ -16,13 +16,14 @@ export interface Segment {
     extractorId?: string;
 }
 
-/** 处理模式（settings: smart_clip_mode）：off 关闭直通原文 / auto 智能切分 / scheme 按默认方案加工 */
-export type SmartClipMode = 'off' | 'auto' | 'scheme';
+/** 处理开关（settings: smart_clip_mode）：off 关闭直通原文 / on 开启单一管线
+ *  （有启用中的默认方案 → 执行方案并保留降级；无方案 = 纯智能切分） */
+export type SmartClipMode = 'off' | 'on';
 
 /** 一次复制事件解析所需的配置快照（由设置页变更时推送，避免每次解析都查库） */
 export interface ProcessContext {
     mode: SmartClipMode;
-    /** 默认方案（多个提取器的集成体）；ai 模式生效 */
+    /** 默认方案（多个提取器的集成体）；on 态的叠加加工层，null = 纯智能切分 */
     scheme: ClipScheme | null;
     /** 方案引用的提取器全集（按 id 解析成员） */
     extractors: ClipExtractor[];

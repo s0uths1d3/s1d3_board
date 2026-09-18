@@ -22,7 +22,7 @@ const COPY_EVENT = 'smart-clip:copy';
 
 const entries: SmartClipEntry[] = [];
 
-let mode: SmartClipMode = 'auto';
+let mode: SmartClipMode = 'on';
 let activeScheme: ClipScheme | null = null;
 let activeExtractors: ClipExtractor[] = [];
 let configReady = false;
@@ -43,29 +43,26 @@ export function updateSmartClipConfig(cfg: {
     configVersion += 1;
 }
 
-/** 处理管道统一入口：off 直通单段原文 / auto 智能切分 / scheme 按默认方案加工 */
+/** 处理管道统一入口：off 直通单段原文 / on 单一管线（默认方案叠加在智能切分之上） */
 async function processContent(content: string, ctx: ProcessContext, onSoftError?: (e: unknown) => void): Promise<Segment[]> {
     if (ctx.mode === 'off') return single(content, 'rule');
-    if (ctx.mode === 'auto') return autoSplit(content);
 
-    // 方案模式：执行方案（成员为空 = 全部提取器；非空 = 指定子集）+ 可选 body 排版；
-    // 未启用方案或零产出时降级为智能切分（不再是生硬的整段原文）。失败一律降级，保证数据不丢；
-    // 降级同时经 onSoftError 把错误暴露给调用方（Ctrl+B 弹岛提示失败原因），管道行为不变。
-    try {
-        if (ctx.scheme && ctx.scheme.enabled === 1) {
+    // 有启用中的默认方案 → 执行方案（成员为空 = 全部提取器；非空 = 指定子集）+ 可选 body 排版；
+    // 无方案 → 直接智能切分。方案零产出、仅产出「原文整段」（提取器实际没切分任何东西：
+    // 如单行内容过换行分隔提取器，split 后仍是整段）或执行失败时，一律降级为智能切分，
+    // 保证数据不丢；降级同时经 onSoftError 把错误暴露给调用方（Ctrl+B 弹岛提示失败原因）。
+    if (ctx.scheme && ctx.scheme.enabled === 1) {
+        try {
             const segs = await runScheme(ctx.scheme, ctx.extractors, content);
-            // 零产出，或仅产出「原文整段」（提取器实际没切分任何东西：如单行内容过
-            // 换行分隔提取器，split 后仍是整段）→ 同样降级为智能切分，保证中间有
-            // 空格/制表符等结构的内容仍被正确分词
             if (segs.length === 0 || isUnsplitPassThrough(segs, content)) return autoSplit(content);
             return renderSchemeBody(ctx.scheme, content, segs);
+        } catch (e) {
+            console.error('[smart-clip] 方案加工失败，降级为智能切分:', e);
+            onSoftError?.(e);
+            return autoSplit(content);
         }
-        return autoSplit(content);
-    } catch (e) {
-        console.error('[smart-clip] 方案加工失败，降级为智能切分:', e);
-        onSoftError?.(e);
-        return autoSplit(content);
     }
+    return autoSplit(content);
 }
 
 /** 方案产出是否只是「原文整段直通」：单段且与原文空白归一化后相同 = 无有效加工 */
@@ -89,8 +86,8 @@ async function resolveContext(): Promise<ProcessContext> {
             dbService.getKeyValue('smart_default_template_id'),
             dbService.fetchClipSchemes(),
         ]);
-        // 旧值 'ai' 按 'scheme' 处理；已移除的 'rule' 及未知值按「智能切分」（新默认）处理
-        mode = m === 'off' ? 'off' : (m === 'scheme' || m === 'ai') ? 'scheme' : 'auto';
+        // 旧值 'auto'/'scheme'/'ai' 及已移除的 'rule'、未知值统一归一为 'on'（单一管线）
+        mode = m === 'off' ? 'off' : 'on';
         const schemeIdStr = (typeof schemeId === 'string' && schemeId) ? schemeId : (typeof legacySchemeId === 'string' ? legacySchemeId : '');
         activeScheme = schemes.find((t) => t.id === schemeIdStr && t.enabled === 1) ?? null;
         activeExtractors = await readStoredExtractors();
@@ -128,7 +125,7 @@ async function handleCopyEvent(detail: CopyEventDetail): Promise<void> {
  * 按需解析指定剪贴板条目（Ctrl+B 气泡窗口对「当前选中项」调用）。
  *
  * - 命中缓存（同 id、同内容、且规则/模板配置未变）直接复用，避免重复调用 AI；
- * - 否则走与复制事件一致的处理管道（off 直通 / rule 规则 / ai 模板+AI），结果写入内存 store。
+ * - 否则走与复制事件一致的处理管道（off 直通 / on 单一管线：方案叠加在智能切分之上），结果写入内存 store。
  */
 export async function parseClipItem(
     id: number,

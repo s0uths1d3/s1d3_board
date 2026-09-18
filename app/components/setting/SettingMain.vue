@@ -336,10 +336,10 @@ async function testAiConnection(): Promise<void> {
 // 概念：提取器 = 单个内容的提取单元；方案 = 多个提取器的集成体（含独立标题与描述）。
 // 已移除：原「分词规则」（clip_rules）与「AI 加工默认指令」——拆分能力由提取器承担，
 // AI 指令写在 AI 提取器里，不再保留并列的全局规则/指令配置。
-// ===== 方案：多条可 CRUD；一条「默认方案」供方案加工模式使用 =====
+// ===== 方案：多条可 CRUD；一条「默认方案」作为开启态的叠加加工层 =====
 const DEFAULT_SCHEME_ID = 'scheme_default';
 
-const smartMode = ref<SmartClipMode>('auto');
+const smartMode = ref<SmartClipMode>('on');
 const schemes = ref<ClipScheme[]>([]);
 const extractors = ref<ClipExtractor[]>([]);
 const defaultSchemeId = ref('');
@@ -356,8 +356,7 @@ watch(aiCacheWindow, (val) => {
 
 const SMART_MODE_OPTIONS = computed(() => [
   { value: 'off' as const, label: t('smart.mode_off') },
-  { value: 'auto' as const, label: t('smart.mode_auto') },
-  { value: 'scheme' as const, label: t('smart.mode_scheme') },
+  { value: 'on' as const, label: t('smart.mode_on') },
 ]);
 function selectSmartMode(v: string) {
   smartMode.value = v as SmartClipMode;
@@ -398,11 +397,11 @@ function extractorName(id: string): string {
   return extractors.value.find((x) => x.id === id)?.name ?? t('smart.member_missing');
 }
 
-// ===== 方案：可自由 CRUD；一条「默认方案」供方案加工模式使用 =====
+// ===== 方案：可自由 CRUD；一条「默认方案」作为开启态的叠加加工层 =====
 /**
  * 方案对账（每次进入设置页执行）：
  * - 清理已下线的旧内置方案行（历史 seed 产物）；
- * - 一条方案都没有时自动创建「默认方案」（保证方案加工模式始终可用）；
+ * - 一条方案都没有时自动创建「默认方案」（保证叠加加工层始终可用）；
  * - 默认方案指向失效（被删）时回落到第一条。
  */
 const LEGACY_SCHEME_IDS = ['scheme_netdisk', 'scheme_url_email', 'scheme_ai_netdisk', 'scheme_ai_summarize'];
@@ -476,7 +475,7 @@ async function removeScheme(scheme: ClipScheme): Promise<void> {
   showHint(t('smart.scheme_deleted', { name: scheme.title }));
 }
 
-/** 设为/取消默认方案（默认方案 = 方案加工模式实际执行的方案） */
+/** 设为/取消默认方案（默认方案 = 开启态实际执行的叠加加工层） */
 function toggleDefaultScheme(s: ClipScheme): void {
   const next = defaultSchemeId.value === s.id ? '' : s.id;
   defaultSchemeId.value = next;
@@ -608,6 +607,7 @@ async function generateExtractorByAi(): Promise<void> {
     if (draft.method === 'separator') draftSeparator.value = draft.expression;
     else if (draft.method === 'ai') draftAi.value = draft.expression;
     else draftRegex.value = draft.expression;
+    aiExtractorDesc.value = '';
     addingExtractor.value = true;
     showHint(t('smart.ai_generate_done'));
   } catch (e) {
@@ -615,6 +615,16 @@ async function generateExtractorByAi(): Promise<void> {
   } finally {
     generatingExtractor.value = false;
   }
+}
+
+/** 清空新增面板全部草稿（提交成功 / 取消共用，防旧内容残留到下次打开） */
+function resetExtractorDrafts(): void {
+    newExtractorName.value = '';
+    newExtractorDesc.value = '';
+    aiExtractorDesc.value = '';
+    draftSeparator.value = '';
+    draftRegex.value = '';
+    draftAi.value = '';
 }
 
 function submitNewExtractor(): void {
@@ -634,12 +644,7 @@ function submitNewExtractor(): void {
     void persistExtractors(extractors.value);
     refreshSmartClipConfig();
     // 清空草稿、收起面板，并让新建项直接进入编辑态以便补描述/示例
-    newExtractorName.value = '';
-    newExtractorDesc.value = '';
-    aiExtractorDesc.value = '';
-    draftSeparator.value = '';
-    draftRegex.value = '';
-    draftAi.value = '';
+    resetExtractorDrafts();
     addingExtractor.value = false;
     editingExtractorId.value = x.id;
     showHint(t('smart.extractor_added', { name: x.name }));
@@ -698,7 +703,7 @@ watch(islandApiEnabled, (en) => {
   showHint(t(en ? 'island_api.on' : 'island_api.off'));
 });
 
-// 处理模式/默认方案变化：持久化 + 推送配置快照给处理层
+// 处理开关/默认方案变化：持久化 + 推送配置快照给处理层
 watch(smartMode, (val) => {
   void dbService.setKeyValue('smart_clip_mode', val);
   refreshSmartClipConfig();
@@ -1311,9 +1316,9 @@ onMounted(async () => {
   aiCustomConfig.value = (await dbService.getKeyValue('ai_custom_config')) || '';
   // 智能剪贴板配置恢复（设计文档 §4.3/§4.5）+ 推送处理层快照
   try {
-    // 'off' 尊重用户选择；'scheme'/'ai'（旧值）归一到 'scheme'；空值/未知值按「智能切分」（新默认）
+    // 'off' 尊重用户选择；'auto'/'scheme'/'ai'（旧值）及空值/未知值统一归一为 'on'（单一管线）
     const rawMode = await dbService.getKeyValue('smart_clip_mode');
-    smartMode.value = rawMode === 'off' ? 'off' : (rawMode === 'scheme' || rawMode === 'ai') ? 'scheme' : 'auto';
+    smartMode.value = rawMode === 'off' ? 'off' : 'on';
     // 默认方案指向：新键优先，兼容旧键 smart_default_template_id
     defaultSchemeId.value =
       (await dbService.getKeyValue('smart_default_scheme_id')) ||
@@ -1554,7 +1559,7 @@ onMounted(async () => {
             </p>
           </div>
 
-          <!-- 智能剪贴板：处理模式 / 默认规则与模板 / 规则与模板管理 / 开放 API（设计文档 §4/§5） -->
+          <!-- 智能剪贴板：处理开关 / 方案 / 提取器 / 开放 API（设计文档 §4/§5） -->
           <div v-else-if="activeSetting.type === 'smart'">
             <div class="glass-card rounded-2xl p-4 shadow-soft">
               <div class="mb-3 text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.mode') }}</div>
@@ -1567,7 +1572,7 @@ onMounted(async () => {
               />
             </div>
 
-            <!-- 方案：可自由 CRUD；默认方案供方案加工模式使用，AI 可生成专属方案 -->
+            <!-- 方案：可自由 CRUD；默认方案作为开启态的叠加加工层，AI 可生成专属方案 -->
             <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
               <div class="mb-3 flex items-center justify-between gap-2">
                 <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.schemes_section') }}</span>
@@ -1675,27 +1680,30 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <!-- 新增提取器：三种方式三合一，输入各自独立 -->
+              <!-- 新增提取器：AI 快捷生成（一句话回填表单）+ 手动配置；生成后确认再添加 -->
               <Transition name="edit-panel">
                 <div v-if="addingExtractor" class="mb-2 rounded-xl border border-gold/40 bg-surface-field/60 p-2">
                   <div class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.add_extractor') }}</div>
-                  <!-- 一句话描述 → AI 生成配置（回填下方表单，确认后再添加） -->
-                  <div class="mb-1.5 flex items-start gap-1">
-                    <textarea v-model="aiExtractorDesc" rows="3"
-                              class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                              :placeholder="t('smart.ai_desc_ph')"></textarea>
+                  <!-- AI 快捷生成：单行输入，回车即生成，产出回填下方表单 -->
+                  <div class="mb-1.5 flex items-center gap-1">
+                    <input v-model="aiExtractorDesc"
+                           class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                           :placeholder="t('smart.ai_desc_ph')"
+                           @keydown.enter.prevent="generateExtractorByAi" />
                     <button type="button" class="btn-soft shrink-0 px-2 py-0.5 text-xs"
-                            :disabled="generatingExtractor"
+                            :disabled="generatingExtractor || !aiExtractorDesc.trim()"
                             @click="generateExtractorByAi">
                       {{ generatingExtractor ? t('smart.ai_generating') : t('smart.ai_generate') }}
                     </button>
                   </div>
-                  <input v-model="newExtractorName"
-                         class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                         :placeholder="t('smart.extractor_name_ph')" />
-                  <input v-model="newExtractorDesc"
-                         class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-[10px] text-ink"
-                         :placeholder="t('smart.extractor_desc_ph')" />
+                  <div class="mb-1.5 grid grid-cols-2 gap-1.5">
+                    <input v-model="newExtractorName"
+                           class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                           :placeholder="t('smart.extractor_name_ph')" />
+                    <input v-model="newExtractorDesc"
+                           class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                           :placeholder="t('smart.extractor_desc_ph')" />
+                  </div>
                   <div class="mb-1.5">
                     <UiSegmented :model-value="newExtractorMethod" :options="EXTRACTOR_METHOD_OPTIONS"
                                  :label="t('smart.extractor_method')"
@@ -1712,7 +1720,7 @@ onMounted(async () => {
                             :placeholder="t('smart.extractor_ai_ph')"></textarea>
                   <div class="mt-1.5 flex justify-end gap-2">
                     <button type="button" class="btn-soft px-2 py-0.5 text-xs"
-                            @click="addingExtractor = false">{{ t('common.cancel') }}</button>
+                            @click="resetExtractorDrafts(); addingExtractor = false">{{ t('common.cancel') }}</button>
                     <button type="button" class="btn-gold px-2 py-0.5 text-xs"
                             @click="submitNewExtractor">{{ t('smart.add_extractor_submit') }}</button>
                   </div>
@@ -1723,8 +1731,8 @@ onMounted(async () => {
               <!-- 长按拖动排序（与导航配置同一套交互），TransitionGroup 提供平滑让位 -->
               <TransitionGroup name="reorder-list" tag="div" data-extractor-list>
                 <div v-for="(x, index) in extractors" :key="x.id"
-                     class="extractor-item mb-2 rounded-xl border border-line bg-surface-field/40 p-2 transition-all duration-200 ease-soft"
-                     :class="extractorDraggingKey === x.id ? 'opacity-50 scale-[0.98] shadow-float' : ''"
+                     class="extractor-item mb-2 cursor-pointer rounded-xl border border-line bg-surface-field/40 p-2 transition-all duration-200 ease-soft"
+                     :class="extractorDraggingKey === x.id ? 'cursor-grabbing opacity-50 scale-[0.98] shadow-float' : ''"
                      :data-reorder-key="x.id"
                      @pointerdown="onExtractorPointerDown(x, $event)">
                   <!-- 折叠态：手柄 + 名称/描述，点「编辑」展开；列表顺序 = 方案执行顺序 -->
@@ -2087,8 +2095,8 @@ onMounted(async () => {
                 <li
                     v-for="row in navRows"
                     :key="row.key"
-                    class="nav-config-item flex items-center justify-between gap-4 border-b border-accent/50 p-4 last:border-b-0 transition-all duration-200 ease-soft"
-                    :class="navDraggingKey === row.key ? 'bg-gold/10 opacity-50 scale-[0.98]' : ''"
+                    class="nav-config-item flex cursor-pointer items-center justify-between gap-4 border-b border-accent/50 p-4 last:border-b-0 transition-all duration-200 ease-soft"
+                    :class="navDraggingKey === row.key ? 'cursor-grabbing bg-gold/10 opacity-50 scale-[0.98]' : ''"
                     :data-reorder-key="row.key"
                     @pointerdown="navReorder.pressStart(row.key, $event)"
                 >
