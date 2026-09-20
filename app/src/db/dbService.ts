@@ -27,12 +27,20 @@ function stringifyRemindRules(rules?: ReminderRule[]): string {
 
 /**
  * DB 行 → Todo 的提醒规则映射：
- * 解析 remind_rules JSON（容错损坏数据）；旧数据无规则但有 remindAt（单一自定义时刻）
+ * 先做列名归一——SELECT * 返回行键为 DB 列名（remind_mode/remind_at/priority_level，snake_case），
+ * 与 Todo 类型字段（remindMode/remindAt/priorityLevel，camelCase）不一致，不归一则每次
+ * 轮询/翻页刷新后 remindMode 恒为 undefined，界面回退显示「智能」、自定义闹钟设置被冲掉。
+ * 再解析 remind_rules JSON（容错损坏数据）；旧数据无规则但有 remindAt（单一自定义时刻）
  * 时自动折算为一条 at 规则，保证老配置继续生效。
  */
 function mapTodoRemindRules(row: Todo): Todo {
-    const rules: ReminderRule[] = [];
     const raw = row.remind_rules;
+    // 行键可能来自 SELECT *（DB 列名，snake_case），经 unknown 中转读取兼容两种形态
+    const rawRow = row as unknown as Record<string, unknown>;
+    const remindMode = (rawRow.remind_mode ?? row.remindMode) as Todo['remindMode'];
+    const remindAt = (rawRow.remind_at ?? row.remindAt) as string;
+    const priorityLevel = (rawRow.priority_level ?? row.priorityLevel) as number | undefined;
+    const rules: ReminderRule[] = [];
     if (raw) {
         try {
             const parsed: unknown = JSON.parse(raw);
@@ -49,10 +57,10 @@ function mapTodoRemindRules(row: Todo): Todo {
             }
         } catch { /* JSON 损坏视为无规则 */ }
     }
-    if (rules.length === 0 && row.remindMode === 'custom' && row.remindAt) {
-        rules.push({ id: 'legacy', kind: 'at', value: row.remindAt });
+    if (rules.length === 0 && remindMode === 'custom' && remindAt) {
+        rules.push({ id: 'legacy', kind: 'at', value: remindAt });
     }
-    return { ...row, remindRules: rules };
+    return { ...row, remindMode, remindAt, priorityLevel, remindRules: rules };
 }
 
 
@@ -115,6 +123,20 @@ class DatabaseService {
     private async initDatabase() {
         const dbName = 'sqlite:s1d3_board.db';
         this.db = await Database.load(dbName);
+        // WAL 日志模式：持久写入 DB 文件头（一次设置，所有连接/窗口生效）。
+        // 读写不再互斥，显著缩短写锁等待——修复收藏/粘贴等高频写操作报
+        // "database is locked"(517) 与并发冲突。
+        await this.db.select('PRAGMA journal_mode=WAL').catch(() => {});
+        // 完整性自检（quick_check，轻量）：文件损坏（malformed, 267）无法由代码凭空修复，
+        // 启动时显式暴露，日志给出恢复指引，避免后续随机报错难以定位。
+        void this.db.select<{ quick_check: string }[]>('PRAGMA quick_check')
+            .then((rows) => {
+                const result = rows[0]?.quick_check ?? 'ok';
+                if (result !== 'ok') {
+                    console.error(`[db] 数据库完整性检查失败: ${result}。文件已损坏，请关闭应用后备份 %APPDATA%/S1d3Board/s1d3_board.db，并用 sqlite3 ".recover" 或 DB Browser for SQLite 导出重建。`);
+                }
+            })
+            .catch(() => {});
         await this.ensureFeatureColumns();
         // 上次会话遗留的清空备份：撤回窗口随进程结束已失效，直接丢弃（幂等）
         for (const { backup } of CLEAR_BACKUP_TABLES) {
