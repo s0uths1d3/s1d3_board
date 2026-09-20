@@ -9,9 +9,9 @@
 //!
 //! 安全边界：仅回环地址绑定 + 可选 Bearer token + CORS 允许任意来源（网页可订阅事件流/调用，
 //! token 为唯一防线）；设置页可开关/改端口。
-//! 数据流：POST 校验通过 → emit("island-api:show") 交前端灵动岛管理器；前端实际弹岛时
-//! emit("island:show") → attach_event_bridge 桥接 → SSE 广播。SSE 单点广播 = 实际显示事件，
-//! 应用自身与第三方事件天然去重（延迟合并/总开关拦截的事件不上 SSE）。
+//! 数据流：POST 校验通过 → emit("island-api:show") 交前端灵动岛管理器；前端实际处理时
+//! emit("island:show") → attach_event_bridge 桥接 → SSE 广播。SSE 单点广播 = 实际岛事件，
+//! 应用自身与第三方事件天然去重（延迟合并丢弃的事件不上 SSE；灵动岛总开关只关显示，不拦截广播）。
 //! history 查询：HTTP 线程挂起（HISTORY_PENDING 通道），emit island_history_request（含 requestId
 //! + query），主窗口前端查 tauri-plugin-sql 后 emit island_history_result，HTTP 线程唤醒并回包；
 //! 3s 未回即超时 504。应用未开主窗口/前端未挂监听时回 503。
@@ -28,7 +28,7 @@ use std::time::Duration;
 use tauri::{Emitter, Listener};
 
 /// API 版本（语义化版本；随 `.docs/island-api.md` 更新日志同步）
-pub const API_VERSION: &str = "1.2.0";
+pub const API_VERSION: &str = "1.3.0";
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
 const ACCEPT_POLL: Duration = Duration::from_millis(150);
@@ -251,24 +251,26 @@ fn handle_island_show(
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0),
     };
-    // 交前端灵动岛管理器弹岛；SSE 广播由 event bridge 在实际显示时单点发出（此处不直接广播，
-    // 保证应用自身与第三方事件同源、延迟合并/总开关拦截的事件不产生幽灵广播）
+    // 交前端灵动岛管理器弹岛；SSE 广播由 event bridge 在实际处理时单点发出（此处不直接广播，
+    // 保证应用自身与第三方事件同源、延迟合并丢弃的事件不产生幽灵广播）
     let _ = app.emit("island-api:show", &event);
     respond(stream, "204 No Content", "application/json", "");
 }
 
-/// 应用内岛事件 → SSE 出站桥：前端每次**实际弹岛**都会 emit("island:show")（应用自身复制/粘贴/
+/// 应用内岛事件 → SSE 出站桥：前端每次岛显示事件都会 emit("island:show")（应用自身复制/粘贴/
 /// 提醒/操作反馈与第三方 API 事件统一汇聚点），转成 island.show SSE 广播。
+/// 灵动岛总开关只控制岛窗口显示，事件照常广播（总开关关闭时 SSE/Webhook 出站仍可用）。
 /// 与 API 开关无关常驻（无订阅者时 broadcast 零开销）；API 停止时订阅表已清，同样无副作用。
 pub fn attach_event_bridge(app: &tauri::AppHandle) {
     app.listen("island:show", move |ev| {
         let Ok(p) = serde_json::from_str::<serde_json::Value>(ev.payload()) else {
             return;
         };
-        // 前端字段 durationMs → SSE 字段 duration；ts 为桥接时刻的服务端时间戳
+        // 前端字段 durationMs → SSE 字段 duration；image 为图片内容（data URL，图片事件携带）；ts 为桥接时刻的服务端时间戳
         let event = serde_json::json!({
             "text": p.get("text").cloned().unwrap_or(serde_json::Value::Null),
             "kind": p.get("kind").cloned().unwrap_or(serde_json::json!("info")),
+            "image": p.get("image").cloned().unwrap_or(serde_json::Value::Null),
             "title": p.get("title").cloned().unwrap_or(serde_json::Value::Null),
             "duration": p.get("durationMs").and_then(|v| v.as_u64()).unwrap_or(0),
             "ts": std::time::SystemTime::now()

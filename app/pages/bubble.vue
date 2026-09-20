@@ -120,6 +120,7 @@ const ISLAND_SHOW_MS = 1800;
 const ISLAND_OUT_MS = 240;
 const ISLAND_W = 360;
 const ISLAND_H = 56;
+const ISLAND_IMAGE_H = 192;        // 图片事件附加高度：图片区间距 8 + 大图 max 176 + 底部余量 8（窗口向下扩高，胶囊位置不变）
 const ISLAND_TOP_OFFSET = 8;       // 窗口顶部留白（与 .island-wrap padding-top 一致）
 const ISLAND_PILL_H = 40;          // 胶囊高度（与 .island-pill CSS 一致）
 const ISLAND_PANEL_GAP = 8;        // 胶囊与下拉面板间距
@@ -130,16 +131,17 @@ const ISLAND_HOVER_INTENT_MS = 150; // 悬停意图：光标停留在岛区域�
 const islandVisible = ref(false);
 const islandKind = ref<IslandKind>('copy');
 const islandText = ref('');
+const islandImage = ref('');             // 图片内容（data URL）：图片事件在胶囊下方中央展示大图（悬停可独立窗口放大预览）
 const islandTitle = ref('');             // 自定义标签（灵动岛 API 调用可指定；空则用 kind 默认标签）
 
 // 岛窗口隐藏/收起时同步关掉图片放大预览（预览是独立窗口，不随岛 DOM 隐藏）
 watch(islandVisible, (v) => { if (!v) dismissImagePreview(); });
 
-/** 岛内缩略图悬停：独立 tooltip 窗口放大预览原图（islandText 即完整 data URL） */
+/** 岛内缩略图悬停：独立 tooltip 窗口放大预览原图（islandImage 即完整 data URL） */
 function onIslandImageEnter(e: MouseEvent): void {
   const el = e.currentTarget as HTMLElement | null;
-  if (el && islandKind.value === 'copy-image' && islandText.value) {
-    void showImagePreview(islandText.value, el);
+  if (el && islandImage.value) {
+    void showImagePreview(islandImage.value, el);
   }
 }
 const islandPillEl = ref<HTMLElement | null>(null);
@@ -189,15 +191,17 @@ let islandPulseTimer: ReturnType<typeof setTimeout> | null = null;
 const ISLAND_STICKY_MAX_MS = 20000;
 
 /** 展示灵动岛：窗口 show 后强制回流再切动画类，保证进出场动画可见且首帧即动（隐藏窗口里 transition 会瞬间跑完） */
-async function applyIsland(payload: { kind: IslandKind; text?: string; title?: string; durationMs?: number; sticky?: boolean }): Promise<void> {
+async function applyIsland(payload: { kind: IslandKind; text?: string; image?: string; title?: string; durationMs?: number; sticky?: boolean }): Promise<void> {
   islandKind.value = payload.kind;
   islandText.value = payload.text ?? '';
+  // 图片内容：粘贴/剪切图片在 image 字段；复制图片兼容旧载荷（data URL 在 text）
+  islandImage.value = payload.image ?? (payload.kind === 'copy-image' ? (payload.text ?? '') : '');
   islandTitle.value = payload.title ?? '';
   islandDuration.value = payload.durationMs ?? ISLAND_SHOW_MS;
-  // 重复提示辨识：同内容（kind+text）短时间内再次弹出 → ×N 递增（胶囊显示徽标，用户可区分
+  // 重复提示辨识：同内容（kind+text+图片标记）短时间内再次弹出 → ×N 递增（胶囊显示徽标，用户可区分
   // "又来了一条新提示"与"正在显示的旧条目"）；窗口期过后视为新一轮，重新计数。
   // 每条新提示（无论是否重复）都触发一次金环脉冲，与入场动画叠加出"新鲜感"
-  const repeatKey = `${payload.kind}|${payload.text ?? ''}`;
+  const repeatKey = `${payload.kind}|${payload.text ?? ''}|${payload.image ? 'img' : ''}`;
   const now = Date.now();
   islandRepeat.value = repeatKey === islandRepeatKey && now - islandRepeatAt <= ISLAND_REPEAT_WINDOW_MS
     ? islandRepeat.value + 1
@@ -224,8 +228,9 @@ async function applyIsland(payload: { kind: IslandKind; text?: string; title?: s
     islandVisible.value = false;
     await nextTick();
   }
-  // 复位窗口为收起尺寸（替换与首显都需：上次展开面板后可能残留大窗口），再显示
-  await win.setSize(new LogicalSize(ISLAND_W, ISLAND_H)).catch(() => {});
+  // 复位窗口为收起尺寸（替换与首显都需：上次展开面板后可能残留大窗口），再显示；
+  // 图片事件向下扩高容纳胶囊下方的大图展示区（胶囊位置固定顶部，扩高不影响胶囊定位）
+  await win.setSize(new LogicalSize(ISLAND_W, islandImage.value ? ISLAND_H + ISLAND_IMAGE_H : ISLAND_H)).catch(() => {});
   if (!replacing) {
     await win.show().catch(() => {});
     await nextTick();
@@ -509,7 +514,7 @@ onMounted(async () => {
   if (isIsland) {
     // 透明窗口：body 渐变背景与光晕必须去除，否则透出灰底（.island-body 规则见样式块）
     document.body.classList.add('island-body');
-    unlisteners.push(await listen<{ kind: IslandKind; text?: string; title?: string; durationMs?: number; sticky?: boolean }>('island:show', (ev) => {
+    unlisteners.push(await listen<{ kind: IslandKind; text?: string; image?: string; title?: string; durationMs?: number; sticky?: boolean }>('island:show', (ev) => {
       void applyIsland(ev.payload);
     }));
     // ready 握手：通知管理器本窗口已就绪（首次 show 前会等待此信号）
@@ -670,21 +675,23 @@ onBeforeUnmount(() => {
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </svg>
         <span class="shrink-0 text-xs font-medium">{{ islandLabel }}</span>
-        <!-- 图片复制：缩略图预览（悬停弹出独立窗口放大预览原图，按原图比例适配+屏幕钳制）；文本复制：单行截断预览 -->
-        <img
-            v-if="islandKind === 'copy-image' && islandText"
-            :src="islandText"
-            alt=""
-            class="h-7 w-7 shrink-0 rounded-md object-cover"
-            @mouseenter="onIslandImageEnter"
-            @mouseleave="hideImagePreview"
-        />
-        <span v-else-if="islandText" ref="islandTextEl" class="min-w-0 flex-1 truncate text-xs text-ink-soft">{{ islandText }}</span>
+        <!-- 文本复制：单行截断预览（图片事件无文本，图片在胶囊下方中央展示） -->
+        <span v-if="islandText" ref="islandTextEl" class="min-w-0 flex-1 truncate text-xs text-ink-soft">{{ islandText }}</span>
         <!-- 重复提示计数徽标：同一时段相同内容再次弹出时递增（×2/×3…），用户可明确辨识是新提示 -->
         <span
             v-if="islandRepeat > 1"
             class="island-badge shrink-0 rounded-full bg-gold/15 px-1.5 text-[10px] font-semibold leading-4 tabular-nums text-gold"
         >×{{ islandRepeat }}</span>
+      </div>
+      <!-- 图片复制/粘贴/剪切：大图展示在胶囊下方中央（窗口随之扩高；悬停弹出独立窗口放大预览原图） -->
+      <div v-if="islandImage" class="island-image-wrap" :class="islandVisible ? 'island-image-in' : ''">
+        <img
+            :src="islandImage"
+            alt=""
+            class="island-image bg-surface border-line shadow-float"
+            @mouseenter="onIslandImageEnter"
+            @mouseleave="hideImagePreview"
+        />
       </div>
       <!-- 悬停展开的下拉面板：仅当内容溢出胶囊时渲染，逐行带行号展示完整内容（超高可滚动，样式与胶囊一致） -->
       <div
@@ -914,6 +921,29 @@ body.island-body::after {
   width: 1rem;
   flex-shrink: 0;
   opacity: 0.85;
+}
+/* 胶囊下方中央的大图展示区（图片复制/粘贴/剪切）：与胶囊同款进出场动画，随窗口扩高露出 */
+.island-image-wrap {
+  margin-top: 8px;
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  transform-origin: top center;
+  transition:
+    opacity 0.22s ease,
+    transform 0.26s cubic-bezier(0.34, 1.4, 0.4, 1);
+}
+.island-image-wrap.island-image-in {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.island-image {
+  display: block;
+  /* 大图按原图比例适配：只缩不放（小图按内在尺寸居中），上限 176px 高与窗口扩高预留一致 */
+  max-height: 176px;
+  max-width: 344px;
+  border-width: 1px;
+  border-radius: 0.875rem;
+  /* bg-surface 底衬 + 细边框（模板主题 token 类）：透明 PNG 在浅色/深色主题下都有完整轮廓 */
 }
 /* 悬停下拉面板：与胶囊同宽同配色 token（bg-surface/border-line/shadow-float），内容超高时滚动 */
 .island-panel {

@@ -2,7 +2,7 @@
 //! 应用内灵动岛显示事件（经 island_api::attach_event_bridge 桥接）实时 POST 到用户配置的外部 URL，
 //! 把 S1d3 Board 事件接入 n8n / 自建服务 / 飞书钉钉机器人等无法维持 SSE 长连接的接收端。
 //!
-//! 数据流：island:show（前端弹岛统一汇聚点）→ bridge → dispatch(event) → 对每个启用目标
+//! 数据流：island:show（前端岛事件统一汇聚点）→ bridge → dispatch(event) → 对每个启用目标
 //! spawn 异步交付任务（POST + HMAC 签名 + 指数退避重试），不阻塞 bridge/SSE 链路。
 //!
 //! 可靠性语义（按文档约定）：

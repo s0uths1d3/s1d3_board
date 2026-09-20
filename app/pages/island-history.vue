@@ -222,13 +222,14 @@ const filterLabel = computed(() =>
   filter.value === 'all' ? t('island_history.type_all') : t(kindMeta[filter.value].labelKey),
 );
 
-/** 列表内容渲染：copy-image 存的是缩略图 data URL → <img> 渲染；其他条目显示文本。
- * 缩略图生成失败回退空串 → 显示「[图片]」占位；其他空内容条目回退类型标签 */
+/** 列表内容渲染：图片类条目（复制/粘贴/剪切图片，DB 存的是降采样缩略图 data URL）→ <img> 渲染；
+ * 其他条目显示文本。缩略图生成失败回退空串 → 显示「[图片]」占位；其他空内容条目回退类型标签 */
+const IMAGE_KINDS: ReadonlySet<IslandKind> = new Set<IslandKind>(['copy-image', 'paste', 'cut']);
 function isThumb(item: IslandHistoryItem): boolean {
-  return item.kind === 'copy-image' && item.text.startsWith('data:');
+  return IMAGE_KINDS.has(item.kind) && item.text.startsWith('data:');
 }
 function fallbackText(item: IslandHistoryItem): string {
-  if (item.kind === 'copy-image') return t('island_history.image_placeholder');
+  if (IMAGE_KINDS.has(item.kind)) return t('island_history.image_placeholder');
   return t(kindMeta[item.kind].labelKey);
 }
 

@@ -2,7 +2,7 @@ import { ref, watch } from 'vue';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { availableMonitors, cursorPosition, getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window';
 import { emit, listen } from '@tauri-apps/api/event';
-import { readText } from 'tauri-plugin-clipboard-api';
+import { readImageBase64, readText } from 'tauri-plugin-clipboard-api';
 import dbService from '~/src/db/dbService';
 import statsService from '~/src/statistics/statsService';
 import { createBooleanSetting } from './useBooleanSetting';
@@ -14,7 +14,8 @@ import { isTauri } from '~/utils/env';
  *   派发的 'island:copy' 事件（驱动入库与图片复制），同内容短期去重不重复弹岛；
  * - 粘贴：pasteUtil 粘贴流程主动调用 notifyIslandPaste（写剪贴板前先 suppressIslandCopy，
  *   避免程序写入被剪贴板监听误报为"已复制"）；
- * - 开关：KV island_enabled（默认开）；关闭时本模块 watch 收起并关闭岛窗口。
+ * - 开关：KV island_enabled（默认开）；关闭时本模块 watch 收起并关闭岛窗口、停掉快速通道——
+ *   仅关闭显示，历史落库/剪切统计/出站推送（Webhook/SSE）不受开关影响照常工作。
  * - API：Rust 侧灵动岛 API（island_api.rs，接入文档 .docs/island-api.md）转发的第三方显示
  *   请求走 island-api:show → 同一 showIsland 链路（kind/title/durationMs 可由调用方指定）。
  * - 时机：出现延迟（KV island_delay_ms，默认 0 即显）与停留时长（KV island_duration_ms，
@@ -99,10 +100,12 @@ export async function setIslandDurationMs(v: number): Promise<void> {
 export type IslandKind = 'copy' | 'copy-image' | 'cut' | 'paste' | 'info' | 'success' | 'error' | 'loading';
 
 /** 弹岛载荷：kind 图标与默认标签 / title 自定义标签（API 调用） / durationMs 单次停留时长覆盖 /
- *  sticky 驻留（过程提示：不按时长收回，直到下一条岛替换；页面侧有兜底超时防残留） */
+ *  sticky 驻留（过程提示：不按时长收回，直到下一条岛替换；页面侧有兜底超时防残留） /
+ *  image 图片内容（data URL，粘贴/剪切图片事件携带，岛内胶囊下方中央展示大图，与复制图片一致） */
 export interface IslandShowPayload {
   kind: IslandKind;
   text?: string;
+  image?: string;
   title?: string;
   durationMs?: number;
   sticky?: boolean;
@@ -159,11 +162,18 @@ export function suppressIslandCopy(ms = 900): void {
   suppressUntil = Date.now() + ms;
 }
 
-/** 粘贴提示：显示"已粘贴"胶囊（pasteUtil 写剪贴板后调用） */
+/** base64/带前缀 data URL 归一为带 data: 前缀的 data URL（无前缀时浏览器会把它当相对路径请求 dev server） */
+function normalizeImageDataUrl(src: string): string {
+  return src.startsWith('data:') ? src : `data:image/png;base64,${src}`;
+}
+
+/** 粘贴提示：显示"已粘贴"胶囊（pasteUtil 写剪贴板后调用）。
+ *  图片粘贴携带 image（data URL），岛内在胶囊下方中央展示大图（与复制图片一致，悬停可放大预览） */
 export function notifyIslandPaste(content: string, type: 'text' | 'image'): void {
   void showIsland({
     kind: 'paste',
     text: type === 'image' ? '' : String(content).slice(0, PREVIEW_MAX),
+    image: type === 'image' ? normalizeImageDataUrl(String(content)) : undefined,
   });
 }
 
@@ -177,25 +187,33 @@ export function notifyIsland(payload: IslandShowPayload): void {
 }
 
 // ===== 全局粘贴感知（Rust 全局 Ctrl+V 钩子 → island:paste-detected）=====
-// 用户在任意应用按 Ctrl+V 粘贴时同步弹"已粘贴"（跟随灵动岛总开关）；
-// 内容预览取当前剪贴板文本（图片等非文本只弹标签）。应用自身粘贴流程由 Rust 侧
-// PASTE_INJECTING 抑制标志拦截（不 emit），不会重复弹岛
+// 用户在任意应用按 Ctrl+V 粘贴时：文本/图片内容随岛事件下发（与复制一致渲染缩略图/预览），
+// 并按文本精确匹配剪贴板历史 +1 使用次数（图片 base64 编码不稳定，无法可靠匹配，不计数）。
+// 不受灵动岛总开关门控：开关只关显示，使用计数与出站推送（Webhook/SSE）始终工作。
+// 应用自身粘贴流程由 Rust 侧 PASTE_INJECTING 抑制标志拦截（不 emit），不会重复计数/弹岛
 listen('island:paste-detected', () => {
   // 仅主窗口上下文响应：岛链路（检测/写入/窗口管理）为单上下文设计，
-  // 全局广播会被每个加载本模块的 webview 收到，不限制会重复弹岛、重复写历史
+  // 全局广播会被每个加载本模块的 webview 收到，不限制会重复弹岛、重复写历史、重复计数
   if (getCurrentWindow().label !== 'main') return;
-  if (!setting.enabled.value) return;
   void (async () => {
     let text = '';
-    try { text = (await readText()) ?? ''; } catch { /* 图片等非文本：仅弹标签 */ }
-    void showIsland({ kind: 'paste', text: text.slice(0, PREVIEW_MAX) });
+    let image: string | undefined;
+    try { text = (await readText()) ?? ''; } catch { /* 图片等非文本：转图片读取 */ }
+    if (!text) {
+      try {
+        const base64 = await readImageBase64();
+        if (base64) image = normalizeImageDataUrl(base64);
+      } catch { /* 图片读取失败：仅弹标签 */ }
+    }
+    if (text) void dbService.increaseUseCountByContent(text).catch(() => {});
+    void showIsland({ kind: 'paste', text: text.slice(0, PREVIEW_MAX), image });
   })();
 }).catch(() => {});
 
 // ===== 全局剪切感知（Rust 全局 Ctrl+X / Cmd+X 钩子 → island:cut-detected）=====
 // Ctrl+X 的剪贴板写入与复制无法区分：钩子事件只标记感知窗口（1.5s，一次性消费），
-// 窗口内剪贴板真实变化（快速通道 / 原生 island:copy）才弹"已剪切"——
-// 无选区剪切失败（剪贴板未变）不弹岛不误报
+// 窗口内剪贴板真实变化（快速通道 / 原生 island:copy，文本与图片均可）才弹"已剪切"——
+// 无选区剪切失败（剪贴板未变）不弹岛不误报。不受总开关门控（剪切统计/出站推送始终工作）
 const CUT_WINDOW_MS = 1500;
 let cutUntil = 0;
 /** 感知窗口内则消费一次剪切标记（一次性：一次 Ctrl+X 只对应一次剪贴板写入） */
@@ -206,7 +224,6 @@ function consumeCut(): boolean {
 }
 listen('island:cut-detected', () => {
   if (getCurrentWindow().label !== 'main') return;
-  if (!setting.enabled.value) return;
   cutUntil = Date.now() + CUT_WINDOW_MS;
 }).catch(() => {});
 
@@ -335,25 +352,31 @@ async function positionIsland(win: WebviewWindow): Promise<void> {
 
 /** 顶部居中（光标所在显示器）定位岛窗口并推送内容；窗口显隐与动画由页面控制 */
 async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
-  const win = await ensureIsland();
-  if (!win) return;
-  try {
-    await positionIsland(win);
-  } catch {
-    // 定位失败 = 窗口引用已失效（被外部关闭/系统回收）：重置状态让下次调用走重建，
-    // 并放弃本次推送（emit 打进死窗口必丢，等价于"不显示"）
-    if (islandWin === win) { islandWin = null; islandReady = false; }
-    return;
+  // 显示链路（总开关开启时）：确保窗口就绪并定位；关闭时跳过建窗——
+  // 总开关只关显示，下方历史/统计/出站事件（island:show → Rust 桥 → SSE/Webhook）始终工作
+  if (setting.enabled.value) {
+    const win = await ensureIsland();
+    if (win) {
+      try {
+        await positionIsland(win);
+      } catch {
+        // 定位失败 = 窗口引用已失效（被外部关闭/系统回收）：重置状态让下次调用走重建，
+        // 本次放弃显示（emit 打进死窗口必丢）；事件本身（历史/统计/出站）不受影响
+        if (islandWin === win) { islandWin = null; islandReady = false; }
+      }
+    }
   }
-  // 历史记录：真实推送前写入（全部来源汇聚点），失败静默（不影响弹岛）。
+  // 图片内容统一收敛：复制图片的 data URL 在 text 字段，粘贴/剪切图片在 image 字段——
+  // 出站事件统一走 image（文本字段保持 120 字符截断语义）
+  const imgData = payload.image ?? (payload.kind === 'copy-image' ? payload.text : undefined);
+  // 历史记录：事件发生即写入（全部来源汇聚点），失败静默（不影响弹岛）。
   // loading 过程岛（AI 解析中）不落历史——它只是瞬时过程态，结果岛才值得回溯；
-  // copy-image 的 text 是完整 base64 data URL（岛内渲染缩略图用），不直接落历史库——
-  // 先降采样为小缩略图（webp 高 56px，约 1-4KB）再写入，历史窗口直接显示图片；
-  // 生成失败写空串兜底，历史窗口按类型显示「[图片]」占位
+  // 图片事件的 data URL 不直接落历史库——先降采样为小缩略图（webp 高 56px，约 1-4KB）再写入，
+  // 历史窗口直接显示图片；生成失败写空串兜底，历史窗口按类型显示「[图片]」占位
   if (payload.kind !== 'loading') {
-    if (payload.kind === 'copy-image' && payload.text) {
+    if (imgData) {
       const kind = payload.kind;
-      void makeImageThumb(payload.text)
+      void makeImageThumb(imgData)
         .then((thumb) => dbService.insertIslandHistory({ kind, text: thumb }))
         .catch(() => dbService.insertIslandHistory({ kind, text: '' }))
         .catch(() => {});
@@ -364,14 +387,17 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
       }).catch(() => {});
     }
   }
-  // 统计埋点：剪切成功 1 次（daily_stat.clip_cut）——在真实推送时记，延迟排队中被
+  // 统计埋点：剪切成功 1 次（daily_stat.clip_cut）——在事件发生时记，延迟排队中被
   // 后续事件丢弃的 payload 不计（快速通道 / 原生事件双路径已由 consumeCut 一次性去重）
   if (payload.kind === 'cut') {
     void statsService.record({ clip_cut: 1 }).catch(() => {});
   }
+  // 出站事件（Rust 桥 → SSE/Webhook 广播）：文本截断版走 text，图片 data URL 走 image；
+  // 该 emit 同时驱动岛页面显示（总开关关闭时无窗口，广播仅剩出站意义）
   await emit('island:show', {
     kind: payload.kind,
-    text: payload.text,
+    text: payload.kind === 'copy-image' ? undefined : payload.text,
+    image: imgData,
     title: payload.title,
     durationMs: payload.durationMs ?? islandDurationMs.value,
     sticky: payload.sticky ?? false,
@@ -380,9 +406,10 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
 
 let pendingShowTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** 弹岛（按设置的出现延迟排队；连续事件以最后一次为准），并把停留时长一并下发 */
+/** 弹岛（按设置的出现延迟排队；连续事件以最后一次为准），并把停留时长一并下发。
+ *  不受灵动岛总开关门控：开关关闭时事件照常入历史/统计/出站推送，仅不建窗显示 */
 async function showIsland(payload: IslandShowPayload): Promise<void> {
-  if (!setting.enabled.value || !isTauri()) return;
+  if (!isTauri()) return;
   if (pendingShowTimer) { clearTimeout(pendingShowTimer); pendingShowTimer = null; }
   if (islandDelayMs.value <= 0) {
     await emitIslandShow(payload);
@@ -404,11 +431,15 @@ export function initCopyIsland(): void {
     const d = (ev as CustomEvent<{ content: string; type: 'text' | 'image' }>).detail;
     if (!d || Date.now() < suppressUntil) return;
     if (d.type === 'text' && lastShownCopy && lastShownCopy.content === d.content && Date.now() < lastShownCopy.until) return;
-    // Ctrl+X 感知窗口内的文本变化按"已剪切"提示（快速通道已显示的同一内容已被上方去重跳过）
-    const cut = d.type === 'text' && consumeCut();
+    // Ctrl+X 感知窗口内的剪贴板变化（文本与图片均可）按"已剪切"提示（快速通道已显示的同一文本内容已被上方去重跳过）
+    const cut = consumeCut();
     lastShownCopy = d.type === 'text' ? { content: d.content, until: Date.now() + 900 } : lastShownCopy;
     void showIsland(cut
-      ? { kind: 'cut', text: d.content.slice(0, PREVIEW_MAX) }
+      ? {
+          kind: 'cut',
+          text: d.type === 'text' ? d.content.slice(0, PREVIEW_MAX) : '',
+          image: d.type === 'image' ? d.content : undefined,
+        }
       : d.type === 'image'
         ? { kind: 'copy-image', text: d.content }
         : { kind: 'copy', text: d.content.slice(0, PREVIEW_MAX) });
