@@ -456,13 +456,14 @@ const openCustom = () => {
 /** DatePicker 选完确定 → customValue 更新 → 同步给父组件并记忆。
  *  注意：不要在回调里检查 customPickerOpen —— Vue 监听器异步刷新，
  *  点击「确定」时 close() 已同步把 customPickerOpen 置为 false，
- *  异步回调读到的是 false，会导致漏发。initializingCustom 已能挡住初始预填。 */
+ *  异步回调读到的是 false，会导致漏发。initializingCustom 已能挡住初始预填。
+ *  面板收起由 DatePicker 自管（datetime 模式选完日期保持展开调时分，
+ *  「确定」/外部点击/Esc 收起），这里不再强制关闭。 */
 watch(customValue, (v) => {
   if (initializingCustom) return
   if (!v) return
   emit('update:modelValue', v)
   void remember(v)
-  customPickerOpen.value = false
 })
 
 const onDocClick = (e: MouseEvent) => {

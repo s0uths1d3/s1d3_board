@@ -231,7 +231,8 @@ function selectDate(d: Date) {
   emit('update:modelValue', props.mode === 'datetime'
     ? `${fmtDate(d)}T${pad(hour.value)}:${pad(minute.value)}`
     : fmtDate(d));
-  close();
+  // datetime 模式不收面板：选完日期还要继续调时分，由「确定」/外部点击/Esc 收起
+  if (props.mode !== 'datetime') close();
 }
 
 function clearValue() {
@@ -301,6 +302,9 @@ function onDocClick(e: MouseEvent) {
   const t = e.target as Node;
   // 点击触发按钮或面板内部不关闭
   if (rootEl.value?.contains(t) || panelRef.value?.contains(t)) return;
+  // 嵌套面板（datetime 模式的时/分下拉为 Teleport 到 body 的兄弟节点，
+  // 带 .dd-keep-open-panel 标记）内的点击不关闭，否则选时分会连带收起整个面板
+  if ((t as Element | null)?.closest?.('.dd-keep-open-panel')) return;
   close();
 }
 
