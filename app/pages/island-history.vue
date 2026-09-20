@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
+import { writeText } from 'tauri-plugin-clipboard-api';
 import dbService from '~/src/db/dbService';
 import { useI18n } from '~/composables/useI18n';
 import { useFormatDate } from '~/composables/useFormatDate';
@@ -15,7 +16,8 @@ import type { IslandKind } from '~/composables/useCopyIsland';
 /**
  * 灵动岛历史窗口（单例 label island-history，标题栏时钟图标打开；无边框透明窗口，主窗口同款自绘标题栏）：
  * - 展示全部弹岛来源（复制/粘贴/AI/设置操作/第三方 API）的最近 500 条记录；
- * - 打开时全量查询；存活期间监听 island:show 实时把新消息插到列表头部（与岛同步收）；
+ * - 打开时全量查询（表 FIFO 上限 500）；存活期间监听 island:show 实时把新消息插到列表头部（与岛同步收）；
+ * - 流式渲染：首屏只渲染第一页（60 条），滚动到底 sentinel 触发渲染下一批（与待办列表同策略）；
  * - 类型筛选：按消息类型即时过滤（下拉选择，附计数）；
  * - 导出：CSV / TXT 两种格式，范围可选「当前筛选 / 全部」，save 对话框选保存路径，
  *   完成后经灵动岛提示结果（尊重灵动岛开关设置）。
@@ -28,7 +30,7 @@ interface IslandHistoryItem {
   createdAt: number;
 }
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const formatLocalized = useFormatDate();
 useColorScheme(); // 配色跟随：读持久化模式 + 监听 scheme:changed 广播（与主窗口实时同步）
 useIslandEnabled(); // 触发岛开关 KV 加载：导出结果提示尊重「灵动岛提示」开关
@@ -61,9 +63,150 @@ const kindCounts = computed(() => {
   return c;
 });
 
-const filteredItems = computed(() =>
+const filteredByKind = computed(() =>
   filter.value === 'all' ? items.value : items.value.filter((it) => it.kind === filter.value),
 );
+
+// ===== 日期筛选：全部时间 / 今天 / 昨天 / 近 7 天 / 指定日期（本地时区按日切界） =====
+type DateFilter = 'all' | 'today' | 'yesterday' | 'week' | 'date';
+const dateFilter = ref<DateFilter>('all');
+const pickedDate = ref(''); // YYYY-MM-DD（input[type=date] 值；仅 dateFilter==='date' 时参与过滤）
+
+const dateOptions = computed(() => [
+  { value: 'all' as DateFilter, label: t('island_history.date_all') },
+  { value: 'today' as DateFilter, label: t('island_history.today') },
+  { value: 'yesterday' as DateFilter, label: t('island_history.yesterday') },
+  { value: 'week' as DateFilter, label: t('island_history.date_week') },
+]);
+const dateFilterLabel = computed(() => {
+  if (dateFilter.value === 'date') return pickedDate.value || t('island_history.date_pick');
+  if (dateFilter.value === 'all') return t('island_history.date_all');
+  return dateOptions.value.find((o) => o.value === dateFilter.value)?.label ?? t('island_history.date_all');
+});
+
+/** 本地时区某天 00:00 的毫秒时间戳（'YYYY-MM-DD' 不能直接 new Date——那是 UTC 解析） */
+function localDayStart(y: number, m: number, d: number): number {
+  return new Date(y, m - 1, d).getTime();
+}
+const DAY_MS = 24 * 60 * 60 * 1000;
+const dateRange = computed<[number, number]>(() => {
+  const now = new Date();
+  if (dateFilter.value === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(pickedDate.value)) {
+    const [y = 0, m = 1, d = 1] = pickedDate.value.split('-').map(Number);
+    const start = localDayStart(y, m, d);
+    return [start, start + DAY_MS];
+  }
+  const todayStart = localDayStart(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  if (dateFilter.value === 'today') return [todayStart, todayStart + DAY_MS];
+  if (dateFilter.value === 'yesterday') return [todayStart - DAY_MS, todayStart];
+  if (dateFilter.value === 'week') return [todayStart - 6 * DAY_MS, todayStart + DAY_MS];
+  return [0, Number.MAX_SAFE_INTEGER];
+});
+
+watch(pickedDate, (v) => {
+  if (v) dateFilter.value = 'date'; // 选了具体日期即切到日期模式
+});
+
+const filteredItems = computed(() =>
+  filteredByKind.value.filter((it) => it.createdAt >= dateRange.value[0] && it.createdAt < dateRange.value[1]),
+);
+
+// ===== 流式渲染（与待办列表同策略）：首屏只渲染第一页，列表底部 sentinel 进入视口
+// （提前 200px）再渲染下一批；类型/日期筛选变化重置回第一页。数据仍一次性查库
+// （表 FIFO 上限 500 条），流式的是渲染量——大列表首屏不卡、滚动渐进上屏 =====
+const RENDER_PAGE = 60;
+const renderLimit = ref(RENDER_PAGE);
+const sentinel = ref<HTMLElement | null>(null);
+const visibleItems = computed(() => filteredItems.value.slice(0, renderLimit.value));
+const hasMoreToRender = computed(() => renderLimit.value < filteredItems.value.length);
+
+function renderMore(): void {
+  if (!hasMoreToRender.value) return;
+  renderLimit.value = Math.min(renderLimit.value + RENDER_PAGE, filteredItems.value.length);
+}
+
+/** sentinel 挂载/卸载后重建观察（v-if 随 loading/hasMoreToRender 切换） */
+let renderObserver: IntersectionObserver | null = null;
+function setupRenderObserver(): void {
+  renderObserver?.disconnect();
+  renderObserver = null;
+  const el = sentinel.value;
+  if (!el) return;
+  renderObserver = new IntersectionObserver((entries) => {
+    if (entries[0]?.isIntersecting) renderMore();
+  }, { rootMargin: '200px 0px' });
+  renderObserver.observe(el);
+}
+watch(sentinel, () => setupRenderObserver());
+// 筛选变化从头渲染（组折叠/条目展开状态保留，不受影响）
+watch([filter, dateFilter, pickedDate], () => { renderLimit.value = RENDER_PAGE; });
+onBeforeUnmount(() => {
+  renderObserver?.disconnect();
+  renderObserver = null;
+});
+
+// ===== 日期分组：今天/昨天/日期 吸顶分隔（扫视 500 条流水的锚点） =====
+interface HistoryGroup { key: string; label: string; items: IslandHistoryItem[] }
+
+function groupLabel(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const same = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const yd = new Date(now);
+  yd.setDate(now.getDate() - 1);
+  if (same(d, now)) return t('island_history.today');
+  if (same(d, yd)) return t('island_history.yesterday');
+  const zh = locale.value === 'zh-cn';
+  const base = zh ? `${d.getMonth() + 1}月${d.getDate()}日` : `${d.getMonth() + 1}/${d.getDate()}`;
+  if (d.getFullYear() === now.getFullYear()) return base;
+  return zh ? `${d.getFullYear()}年${base}` : `${d.getFullYear()}/${base}`;
+}
+
+const groupedItems = computed<HistoryGroup[]>(() => {
+  const groups: HistoryGroup[] = [];
+  const byKey = new Map<string, HistoryGroup>();
+  for (const it of visibleItems.value) {
+    const d = new Date(it.createdAt);
+    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    let g = byKey.get(key);
+    if (!g) {
+      g = { key, label: groupLabel(it.createdAt), items: [] };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    g.items.push(it);
+  }
+  return groups;
+});
+
+// ===== 长文本：默认收起 3 行，点击条目展开/收起（防 2000 字长内容撑爆列表） =====
+const expandedIds = ref(new Set<number>());
+function toggleExpand(id: number): void {
+  const s = new Set(expandedIds.value);
+  if (s.has(id)) s.delete(id);
+  else s.add(id);
+  expandedIds.value = s; // 重新赋值保证响应性
+}
+
+// ===== 日期组折叠：点击组头收起/展开该组 =====
+const collapsedGroups = ref(new Set<string>());
+function toggleGroup(key: string): void {
+  const s = new Set(collapsedGroups.value);
+  if (s.has(key)) s.delete(key);
+  else s.add(key);
+  collapsedGroups.value = s;
+}
+
+/** 点击复制条目文本到剪贴板（图片条目不提供；结果走灵动岛提示） */
+async function copyItem(item: IslandHistoryItem): Promise<void> {
+  try {
+    if (isTauri()) await writeText(item.text);
+    else await navigator.clipboard.writeText(item.text);
+    notifyIsland({ kind: 'success', text: t('island_history.copied') });
+  } catch {
+    notifyIsland({ kind: 'error', text: t('island_history.copy_failed') });
+  }
+}
 
 const filterOptions = computed(() => [
   { value: 'all' as FilterKind, label: t('island_history.type_all'), dot: '', count: items.value.length },
@@ -221,7 +364,9 @@ onBeforeUnmount(() => dismissImagePreview());
 </script>
 
 <template>
-  <div class="flex h-screen flex-col overflow-hidden rounded-2xl bg-surface text-ink">
+  <!-- 根容器不加背景：与主窗口同款——body 的三段渐变 + 双光晕氛围背景透出（main.css），
+       随配色主题联动；盖 bg-surface 实色会变成一块与主窗口风格割裂的纯色面板 -->
+  <div class="flex h-screen flex-col overflow-hidden rounded-2xl text-ink">
     <!-- 自绘标题栏：主窗口同款（拖拽区 + gold-bar 标题 + 窗口控制） -->
     <div class="drag-region flex h-10 shrink-0 items-center justify-between border-b border-line bg-surface px-3">
       <div class="gold-bar flex items-center gap-2 select-none">
@@ -286,6 +431,51 @@ onBeforeUnmount(() => dismissImagePreview());
               </span>
               <span class="text-[10px] tabular-nums text-ink-soft">{{ opt.count }}</span>
             </button>
+          </li>
+        </ul>
+      </UiDropdown>
+
+      <!-- 日期筛选：快捷范围 + 指定日期（input[type=date] 本地选择） -->
+      <UiDropdown
+          align="start"
+          panel-class="glass-card w-48 rounded-2xl p-1.5"
+          :aria-label="t('island_history.date_filter')"
+      >
+        <template #trigger="{ open }">
+          <button
+              type="button"
+              tabindex="-1"
+              class="flex h-7 items-center gap-1.5 rounded-lg px-2 text-xs text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:text-ink"
+          >
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <path d="M16 2v4M8 2v4M3 10h18" />
+            </svg>
+            <span :class="dateFilter === 'all' ? '' : 'text-ink'">{{ dateFilterLabel }}</span>
+            <svg class="h-3 w-3 opacity-60 transition-transform duration-200" :class="open ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </button>
+        </template>
+        <ul class="p-1">
+          <li v-for="opt in dateOptions" :key="opt.value">
+            <button
+                type="button"
+                class="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs transition-colors duration-200"
+                :class="dateFilter === opt.value ? 'bg-gold/15 text-gold' : 'text-ink hover:bg-secondary'"
+                @click="dateFilter = opt.value"
+            >
+              {{ opt.label }}
+              <span v-if="dateFilter === opt.value" class="text-gold">✓</span>
+            </button>
+          </li>
+          <li class="mt-1 border-t border-line/60 px-2.5 pt-2 pb-1">
+            <p class="mb-1 text-[10px] text-ink-faint">{{ t('island_history.date_pick') }}</p>
+            <input
+                v-model="pickedDate"
+                type="date"
+                class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+            />
           </li>
         </ul>
       </UiDropdown>
@@ -380,41 +570,102 @@ onBeforeUnmount(() => dismissImagePreview());
       </button>
     </div>
 
-    <!-- 列表：加载 / 空态（区分无数据与筛选无结果）/ 数据 -->
+    <!-- 列表：加载 / 空态（区分无数据与筛选无结果）/ 按日期分组的数据 -->
     <div v-if="loading" class="flex flex-1 items-center justify-center text-sm text-ink-soft">
       {{ t('island_history.loading') }}
     </div>
-    <div v-else-if="items.length === 0" class="flex flex-1 items-center justify-center text-sm text-ink-soft">
-      {{ t('island_history.empty') }}
+    <div v-else-if="items.length === 0" class="flex flex-1 flex-col items-center justify-center gap-3 text-ink-soft">
+      <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary/70">
+        <svg class="h-7 w-7 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="8" width="18" height="8" rx="4" />
+          <circle cx="9" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="13" cy="12" r="1" fill="currentColor" stroke="none" />
+          <circle cx="17" cy="12" r="1" fill="currentColor" stroke="none" />
+        </svg>
+      </div>
+      <p class="text-sm">{{ t('island_history.empty') }}</p>
     </div>
     <div v-else-if="filteredItems.length === 0" class="flex flex-1 items-center justify-center text-sm text-ink-soft">
       {{ t('island_history.filter_empty') }}
     </div>
-    <ul v-else class="flex-1 divide-y divide-line overflow-y-auto">
-      <li
-          v-for="item in filteredItems"
-          :key="item.id"
-          class="flex items-start gap-3 px-4 py-2.5 transition-colors duration-200 hover:bg-secondary/50"
-      >
-        <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full" :class="kindMeta[item.kind].dot" />
-        <div class="min-w-0 flex-1">
-          <!-- 图片条目：直接渲染缩略图（DB 存的是降采样 webp 小图），悬停弹出独立窗口放大预览原图 -->
-          <img
-              v-if="isThumb(item)"
-              :src="item.text"
-              alt=""
-              class="h-10 w-14 shrink-0 cursor-zoom-in rounded-md object-cover ring-1 ring-line"
-              @mouseenter="onThumbEnter(item, $event)"
-              @mouseleave="hideImagePreview"
-          />
-          <p v-else class="break-all text-xs leading-relaxed text-ink">{{ item.text || fallbackText(item) }}</p>
-          <p class="mt-0.5 flex items-center gap-1.5 text-[10px] text-ink-soft">
-            <span>{{ t(kindMeta[item.kind].labelKey) }}</span>
-            <span class="opacity-40">·</span>
-            <span>{{ formatLocalized(item.createdAt) }}</span>
-          </p>
+    <div v-else class="flex-1 overflow-y-auto">
+      <section v-for="group in groupedItems" :key="group.key">
+        <!-- 日期分组头：点击折叠/展开该组（整组可折叠；展开后吸顶） -->
+        <button
+            type="button"
+            class="sticky top-0 z-10 flex w-full items-center justify-between border-b border-line/60 bg-surface/70 px-4 py-1 text-left text-[10px] font-medium tracking-wider text-ink-soft backdrop-blur-md transition-colors duration-200 hover:text-ink"
+            @click="toggleGroup(group.key)"
+        >
+          <span class="flex items-center gap-1.5">
+            <svg class="h-2.5 w-2.5 transition-transform duration-200" :class="collapsedGroups.has(group.key) ? '' : 'rotate-90'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m9 6 6 6-6 6" />
+            </svg>
+            {{ group.label }}
+          </span>
+          <span class="tabular-nums">{{ group.items.length }}</span>
+        </button>
+        <!-- 折叠动画：grid-rows 0fr/1fr 过渡（高度自适应内容，无需 JS 测量；overflow-hidden 裁切内容） -->
+        <div
+            class="grid transition-[grid-template-rows] duration-200 ease-out"
+            :class="collapsedGroups.has(group.key) ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'"
+        >
+          <ul class="min-h-0 divide-y divide-line/60 overflow-hidden">
+          <li
+              v-for="item in group.items"
+              :key="item.id"
+              class="group/item flex items-start gap-3 px-4 py-2.5 transition-colors duration-200 hover:bg-secondary/50"
+          >
+            <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full" :class="kindMeta[item.kind].dot" />
+            <div class="min-w-0 flex-1">
+              <!-- 图片条目：直接渲染缩略图（DB 存的是降采样 webp 小图），悬停弹出独立窗口放大预览原图 -->
+              <img
+                  v-if="isThumb(item)"
+                  :src="item.text"
+                  alt=""
+                  class="h-10 w-14 shrink-0 cursor-zoom-in rounded-md object-cover ring-1 ring-line"
+                  @mouseenter="onThumbEnter(item, $event)"
+                  @mouseleave="hideImagePreview"
+              />
+              <!-- 文本条目：默认收起 3 行，点击展开/收起 -->
+              <p
+                  v-else
+                  class="break-all text-xs leading-relaxed text-ink transition-colors duration-200"
+                  :class="expandedIds.has(item.id) ? 'cursor-zoom-out' : 'cursor-pointer line-clamp-3'"
+                  @click="toggleExpand(item.id)"
+              >{{ item.text || fallbackText(item) }}</p>
+              <p class="mt-0.5 text-[10px] text-ink-soft">
+                <span class="rounded-full bg-secondary px-1.5 py-px">{{ t(kindMeta[item.kind].labelKey) }}</span>
+              </p>
+            </div>
+            <!-- 右侧：悬停出现复制按钮 + 相对时间 -->
+            <div class="flex shrink-0 items-center gap-1 self-start">
+              <button
+                  v-if="!isThumb(item) && item.text"
+                  type="button"
+                  tabindex="-1"
+                  class="flex h-5 w-5 items-center justify-center rounded-md text-ink-soft opacity-0 transition-all duration-200 hover:bg-secondary hover:text-ink focus-visible:opacity-100 group-hover/item:opacity-100"
+                  v-tip="t('island_history.type_copy')"
+                  @click.stop="copyItem(item)"
+              >
+                <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="12" height="12" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              </button>
+              <span class="text-[10px] tabular-nums text-ink-faint">{{ formatLocalized(item.createdAt) }}</span>
+            </div>
+          </li>
+          </ul>
         </div>
-      </li>
-    </ul>
+      </section>
+
+      <!-- 流式渲染：sentinel 进入视口时渲染下一批；全部渲染完显示「没有更多了」 -->
+      <div
+          v-if="hasMoreToRender && visibleItems.length"
+          ref="sentinel"
+          class="py-4 text-center text-xs text-ink-faint"
+      >{{ t('island_history.scroll_more') }}</div>
+      <div v-else-if="visibleItems.length" class="py-4 text-center text-xs text-ink-faint">{{ t('island_history.no_more') }}</div>
+    </div>
   </div>
 </template>
