@@ -2,6 +2,7 @@ mod ai;
 mod app_usage;
 mod commands;
 mod island_api;
+mod island_webhook;
 mod migrations;
 
 use tauri::Manager;
@@ -57,6 +58,8 @@ pub fn run() {
             ai::ai_complete,
             island_api::island_api_apply,
             island_api::island_history_result,
+            island_webhook::island_webhook_apply,
+            island_webhook::island_webhook_test,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

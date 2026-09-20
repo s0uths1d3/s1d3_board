@@ -18,6 +18,7 @@ import type { ClipExtractor, ClipScheme } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
 import { updateSmartClipConfig } from '~/src/smart-clip/smartClip';
 import { ISLAND_API_DEFAULT_PORT, applyIslandApi } from '~/src/island/islandApi';
+import { loadIslandWebhookConfig, saveIslandWebhookConfig, testIslandWebhook, validateWebhookUrl, type WebhookTarget } from '~/src/island/islandWebhook';
 import {
   loadExtractors, persistExtractors, missingBuiltinExtractors,
   type Translator,
@@ -685,12 +686,19 @@ async function restoreExtractors(): Promise<void> {
   showHint(t('smart.extractors_restored', { count: String(missing.length) }));
 }
 
-// ===== 灵动岛 API（第三方应用集成）：开关/端口/令牌任一变化即应用（非法端口不应用，避免打字过程误触发） =====
+// ===== 灵动岛 API（第三方应用集成）：开关/端口/令牌任一变化即持久化 + 应用（非法端口不应用，避免打字过程误触发） =====
 const islandApiEnabled = ref(false);
 const islandApiPort = ref(String(ISLAND_API_DEFAULT_PORT));
 const islandApiToken = ref('');
+// 恢复填充期间跳过 watch（否则加载赋值会以空值覆盖持久化并重复 apply；服务恢复由 app.vue 的 restoreIslandApiSetting 负责）
+const islandApiLoading = ref(true);
 watch([islandApiEnabled, islandApiPort, islandApiToken], async ([en, p, tk]) => {
+  if (islandApiLoading.value) return;
   const portNum = Number(p);
+  // 先持久化再应用：重启后 restoreIslandApiSetting 依此恢复服务
+  await dbService.setKeyValue('island_api_enabled', en ? '1' : '0');
+  if (portNum >= 1 && portNum <= 65535) await dbService.setKeyValue('island_api_port', String(portNum));
+  await dbService.setKeyValue('island_api_token', tk);
   if (!en) {
     await applyIslandApi(false, portNum || ISLAND_API_DEFAULT_PORT, tk);
     return;
@@ -698,10 +706,60 @@ watch([islandApiEnabled, islandApiPort, islandApiToken], async ([en, p, tk]) => 
   if (!portNum || portNum < 1 || portNum > 65535) return;
   await applyIslandApi(true, portNum, tk);
 });
-// 开关切换提示（端口/令牌输入过程不弹提示，避免干扰）
+// 开关切换提示（端口/令牌输入过程不弹提示，避免干扰）；恢复填充期间跳过——
+// 否则每次进入设置页都会把 ref 从初始 false 填到存储值，误触发「已开启」提示
 watch(islandApiEnabled, (en) => {
+  if (islandApiLoading.value) return;
   showHint(t(en ? 'island_api.on' : 'island_api.off'));
 });
+
+// ===== 灵动岛 Webhook 出站推送：URL 列表任一变化即持久化 + 下发 Rust（deep watch 覆盖行内编辑） =====
+const webhookEnabled = ref(false);
+const webhookTargets = ref<WebhookTarget[]>([]);
+const webhookTesting = ref(false);
+// 恢复填充门控：进入设置页时把 ref 填到存储值不应触发持久化下发与「已开启」提示
+const webhookLoading = ref(true);
+// 卡片折叠态（标题行点击切换，开关独立于折叠不受影响）
+const islandApiOpen = ref(true);
+const webhookOpen = ref(true);
+const editingWebhookTargets = computed(() =>
+  webhookTargets.value.filter((tg) => tg.url.trim() && validateWebhookUrl(tg.url.trim())),
+);
+watch([webhookEnabled, webhookTargets], async () => {
+  if (webhookLoading.value) return;
+  // 空 URL / 非法 URL 行视为编辑中，不参与持久化与下发（Rust 侧 validate_url 兜底）
+  await saveIslandWebhookConfig({ enabled: webhookEnabled.value, targets: editingWebhookTargets.value });
+}, { deep: true });
+watch(webhookEnabled, (en) => {
+  if (webhookLoading.value) return;
+  showHint(t(en ? 'island_webhook.on' : 'island_webhook.off'));
+});
+function addWebhookTarget() {
+  webhookTargets.value.push({
+    id: `wh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    url: '', secret: '', events: ['island.show'], enabled: true,
+  });
+}
+function removeWebhookTarget(id: string) {
+  webhookTargets.value = webhookTargets.value.filter((tg) => tg.id !== id);
+}
+async function testWebhook() {
+  if (webhookTesting.value) return;
+  webhookTesting.value = true;
+  try {
+    const results = await testIslandWebhook();
+    const failed = results.filter((r) => !r.ok);
+    if (!failed.length) {
+      showHint(t('island_webhook.test_ok'));
+    } else {
+      showHint(t('island_webhook.test_fail', { n: failed.length, error: failed[0]?.error ?? 'unknown' }), 'error');
+    }
+  } catch (e) {
+    showHint(String(e), 'error');
+  } finally {
+    webhookTesting.value = false;
+  }
+}
 
 // 处理开关/默认方案变化：持久化 + 推送配置快照给处理层
 watch(smartMode, (val) => {
@@ -1331,11 +1389,26 @@ onMounted(async () => {
     islandApiEnabled.value = (await dbService.getKeyValue('island_api_enabled')) === '1';
     islandApiPort.value = (await dbService.getKeyValue('island_api_port')) || String(ISLAND_API_DEFAULT_PORT);
     islandApiToken.value = await dbService.getKeyValue('island_api_token');
+    // Webhook 出站推送配置恢复（JSON 解析失败返回空配置，UI 显示空列表）
+    try {
+      const wh = await loadIslandWebhookConfig();
+      webhookEnabled.value = wh.enabled;
+      webhookTargets.value = wh.targets;
+    } catch (e) {
+      console.error('Webhook 配置恢复失败:', e);
+    }
+    // 门控必须在 nextTick 之后释放：上面赋值触发的 pre-flush watcher 在微任务里执行，
+    // 同步释放时门控已开 → 每次进入设置都误弹「已开启 Webhook 出站推送」提示并回写持久化
+    await nextTick();
+    webhookLoading.value = false; // 填充完毕（含异常路径），此后用户改动才走持久化与提示
     aiCacheWindow.value = (await dbService.getKeyValue('ai_result_window')) || '300';
     refreshSmartClipConfig();
   } catch (e) {
     console.error('智能剪贴板配置恢复失败:', e);
   }
+  // 同理：islandApiEnabled/Port/Token 恢复赋值触发的 watcher 也须等 flush 完再放行门控
+  await nextTick();
+  islandApiLoading.value = false; // 填充完毕（含异常路径），此后用户改动才走持久化 watch
   // 「关于」页版本号：与 tauri.conf.json 的 version 同源；纯 Web 环境保持回退常量
   if (isTauri()) {
     try {
@@ -2067,21 +2140,76 @@ onMounted(async () => {
             </ul>
 
             <!-- 灵动岛 API：第三方应用集成入口（本地 HTTP/SSE，接入文档 .docs/island-api.md）。
-                 仅通用标签渲染：本分支为 通用/API设置 共用，不守卫会两边重复出现 -->
+                 仅通用标签渲染：本分支为 通用/API设置 共用，不守卫会两边重复出现。
+                 标题行点击折叠/展开（chevron 指示），开关独立于折叠 -->
             <div v-if="activeSetting.type === 'general'" class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
               <div class="mb-3 flex items-center justify-between">
-                <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('island_api.section') }}</span>
+                <button type="button" class="flex select-none items-center gap-1.5 text-ink-faint transition-colors hover:text-ink"
+                        :aria-expanded="islandApiOpen" @click="islandApiOpen = !islandApiOpen">
+                  <svg class="h-3 w-3 transition-transform duration-200" :class="islandApiOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m9 6 6 6-6 6" />
+                  </svg>
+                  <span class="text-xs uppercase tracking-wide">{{ t('island_api.section') }}</span>
+                </button>
                 <UiToggleSwitch v-model="islandApiEnabled" :label="''" />
               </div>
-              <div class="flex items-center gap-2">
-                <input v-model="islandApiPort" class="w-28 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                       :placeholder="t('island_api.port')" @change="islandApiPort = String(Number(islandApiPort) || ISLAND_API_DEFAULT_PORT)" />
-                <input v-model="islandApiToken" class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                       :placeholder="t('island_api.token')" />
+              <div v-show="islandApiOpen">
+                <div class="flex items-center gap-2">
+                  <input v-model="islandApiPort" class="w-28 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                         :placeholder="t('island_api.port')" @change="islandApiPort = String(Number(islandApiPort) || ISLAND_API_DEFAULT_PORT)" />
+                  <input v-model="islandApiToken" class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                         :placeholder="t('island_api.token')" />
+                </div>
+                <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
+                  {{ t('island_api.hint', { port: islandApiPort }) }}
+                </p>
               </div>
-              <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
-                {{ t('island_api.hint', { port: islandApiPort }) }}
-              </p>
+            </div>
+
+            <!-- Webhook 出站推送：岛显示事件实时转发外部 URL（文档 §8）。
+                 与灵动岛 API 平级的独立折叠卡片：折叠互不影响 -->
+            <div v-if="activeSetting.type === 'general'" class="glass-card mt-3 rounded-2xl p-4 shadow-soft">
+              <div class="flex items-center justify-between">
+                <button type="button" class="flex select-none items-center gap-1.5 text-ink-faint transition-colors hover:text-ink"
+                        :aria-expanded="webhookOpen" @click="webhookOpen = !webhookOpen">
+                  <svg class="h-3 w-3 transition-transform duration-200" :class="webhookOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m9 6 6 6-6 6" />
+                  </svg>
+                  <span class="text-xs uppercase tracking-wide">{{ t('island_webhook.section') }}</span>
+                </button>
+                <UiToggleSwitch v-model="webhookEnabled" :label="''" />
+              </div>
+              <div v-show="webhookOpen">
+                <ul v-if="webhookTargets.length" class="mt-2 flex flex-col gap-2">
+                  <li v-for="tg in webhookTargets" :key="tg.id" class="flex items-center gap-2">
+                    <input v-model="tg.url" :placeholder="t('island_webhook.url')"
+                           class="min-w-0 flex-1 rounded-lg border bg-surface-field px-2 py-1 text-xs text-ink"
+                           :class="tg.url.trim() && !validateWebhookUrl(tg.url.trim()) ? 'border-danger' : 'border-line'" />
+                    <input v-model="tg.secret" :placeholder="t('island_webhook.secret')"
+                           class="w-24 shrink-0 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink" />
+                    <button class="shrink-0 rounded-lg p-1 text-ink-faint transition-colors hover:bg-danger/10 hover:text-danger"
+                            :title="t('island_webhook.remove')" @click="removeWebhookTarget(tg.id)">
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <path d="M18 6L6 18M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </li>
+                </ul>
+                <div class="mt-2 flex items-center gap-2">
+                  <button class="rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field"
+                          @click="addWebhookTarget">
+                    {{ t('island_webhook.add') }}
+                  </button>
+                  <button :disabled="webhookTesting || !editingWebhookTargets.length"
+                          class="rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field disabled:cursor-not-allowed disabled:opacity-50"
+                          @click="testWebhook">
+                    {{ t('island_webhook.test') }}
+                  </button>
+                </div>
+                <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
+                  {{ t('island_webhook.hint') }}
+                </p>
+              </div>
             </div>
           </div>
 

@@ -27,6 +27,13 @@ tauri = { version = "2.11.5", features = ["tray-icon", "image-png", "image-ico"]
 # stream + futures-util：自定义模式 SSE 流式响应解析（bytes_stream）
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# 灵动岛 Webhook 出站推送：X-S1d3-Signature 签名头（HMAC-SHA256，hex 编码手写无 hex 依赖）
+hmac = "0.12"
+sha2 = "0.10"
+# Webhook URL 白名单校验（https 任意 / http 仅回环）；reqwest 同源依赖
+url = "2"
+# Webhook 重试退避定时器（tauri 内部同为 tokio 1.x，版本一致零额外成本）
+tokio = { version = "1", features = ["time"] }
 tauri-plugin-log = "2"
 tauri-plugin-clipboard = "2.1.11"
 tauri-plugin-autostart = "2"
