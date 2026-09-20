@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { listen, emit, emitTo } from '@tauri-apps/api/event';
-import { getCurrentWindow, cursorPosition, LogicalSize } from '@tauri-apps/api/window';
+import { getCurrentWindow, cursorPosition, LogicalSize, PhysicalSize, PhysicalPosition } from '@tauri-apps/api/window';
 import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { isTauri } from '~/utils/env';
 import { useI18n } from '~/composables/useI18n';
@@ -61,6 +61,58 @@ const hubTotal = ref(0);
 const hubSource = ref('');
 /** 总页数（环上限 RING_LIMIT=8/页）：仅 1 页时翻页行整体隐藏 */
 const hubPages = computed(() => Math.ceil(hubTotal.value / 8));
+
+// 控制盘高度自适应：窗口创建时固定 240×192（BubbleToggleCommand HUB_W/HUB_H），
+// 原文内容少（一两行）时预览区大片空白。按内容实际高度收缩窗口（宽度不动），
+// 并保持垂直中心不变——环气泡围绕的是环中心点（与控制盘高度无关），收缩后环绕关系不变。
+const HUB_MAX_H = 192;   // 与创建尺寸一致（只缩不涨）
+const HUB_MIN_H = 112;   // 最小高度：约两行预览 + 导航行 + 内外留白
+let hubFitBusy = false;
+let hubFitPending = false;
+
+async function fitHubHeight(): Promise<void> {
+  if (!isTauri()) return;
+  if (hubFitBusy) { hubFitPending = true; return; }
+  hubFitBusy = true;
+  try {
+    do {
+      hubFitPending = false;
+      await nextTick();
+      const card = document.querySelector('.hub-card') as HTMLElement | null;
+      const source = card?.querySelector('.hub-source') as HTMLElement | null;
+      if (!card || !source) return;
+      // 内容自然高度：预览区不能直接用自身 scrollHeight——内容少时 flex-1 会把它撑大，
+      // 测出来永远是撑大值导致永不收缩；取内部 span 的高度（= 文本真实行数高）。
+      // 内容超长时 span 自身高度即完整内容高，同样正确。
+      const span = source.firstElementChild as HTMLElement | null;
+      const srcH = span ? span.scrollHeight : source.scrollHeight;
+      let contentH = srcH;
+      const rows = card.children;
+      for (let i = 1; i < rows.length; i++) {
+        const el = rows[i] as HTMLElement;
+        if (el instanceof HTMLElement) contentH += el.offsetHeight;
+      }
+      const gaps = 8 * Math.max(0, rows.length - 1);        // flex-col gap-2（行间）
+      const chrome = 20 + 2 + 12;                            // 卡片 py-2.5 + 上下边框 + 外层 p-1.5（×2）
+      const targetCss = Math.min(Math.max(contentH + gaps + chrome, HUB_MIN_H), HUB_MAX_H);
+      const win = getCurrentWindow();
+      const size = await win.outerSize();
+      const pos = await win.outerPosition();
+      const dpr = await win.scaleFactor();
+      const targetPhys = Math.round(targetCss * dpr);
+      if (Math.abs(targetPhys - size.height) < 2) continue;  // 已就位（含每次导航广播的重复触发）
+      await win.setSize(new PhysicalSize(size.width, targetPhys)).catch(() => {});
+      // 垂直中心不动：气泡排布以环中心为基准，中心偏移会破坏环绕视觉
+      const newY = Math.round(pos.y + (size.height - targetPhys) / 2);
+      await win.setPosition(new PhysicalPosition(pos.x, newY)).catch(() => {});
+    } while (hubFitPending);
+  } finally {
+    hubFitBusy = false;
+  }
+}
+
+// 仅内容/页数变化影响高度（选中等导航广播不触发）；AI 阶段二补片段跨页时翻页行出现/消失同样重算
+watch([hubSource, hubPages], () => { void fitHubHeight(); });
 
 // ===== 灵动岛提示胶囊（island 模式）=====
 // 停留时长由 useCopyIsland 按设置随 island:show 下发（durationMs），此处仅作兜底默认值
@@ -700,7 +752,7 @@ onBeforeUnmount(() => {
   <!-- 环心控制盘：极简布局——原文预览 + 片段导航，无标题栏/状态文本/操作提示；
        Esc 关环、PgUp/PgDn 翻页键盘始终可用（透明窗口 + 圆润卡片，外层 p-1.5 为阴影留白） -->
   <div v-else-if="isRingHub" class="h-screen p-1.5">
-    <div class="flex h-full flex-col justify-center gap-2 rounded-2xl border border-accent bg-surface/95 px-3.5 py-2.5 shadow-soft backdrop-blur">
+    <div class="hub-card flex h-full flex-col justify-center gap-2 rounded-2xl border border-accent bg-surface/95 px-3.5 py-2.5 shadow-soft backdrop-blur">
 
     <!-- 原文预览：环心展示本次拆分的原始 clip 内容（占满剩余空间，超长滚动查看） -->
     <div class="hub-source min-h-0 flex-1 overflow-y-auto rounded-lg bg-surface-muted/60 px-2 py-1">
