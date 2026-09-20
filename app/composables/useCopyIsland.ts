@@ -101,7 +101,7 @@ export type IslandKind = 'copy' | 'copy-image' | 'cut' | 'paste' | 'info' | 'suc
 
 /** 弹岛载荷：kind 图标与默认标签 / title 自定义标签（API 调用） / durationMs 单次停留时长覆盖 /
  *  sticky 驻留（过程提示：不按时长收回，直到下一条岛替换；页面侧有兜底超时防残留） /
- *  image 图片内容（data URL，粘贴/剪切图片事件携带，岛内胶囊下方中央展示大图，与复制图片一致） */
+ *  image 图片内容（data URL，粘贴/剪切图片事件携带，岛内胶囊渲染缩略图，与复制图片一致） */
 export interface IslandShowPayload {
   kind: IslandKind;
   text?: string;
@@ -168,7 +168,7 @@ function normalizeImageDataUrl(src: string): string {
 }
 
 /** 粘贴提示：显示"已粘贴"胶囊（pasteUtil 写剪贴板后调用）。
- *  图片粘贴携带 image（data URL），岛内在胶囊下方中央展示大图（与复制图片一致，悬停可放大预览） */
+ *  图片粘贴携带 image（data URL），岛内胶囊渲染缩略图（与复制图片一致，悬停可放大预览） */
 export function notifyIslandPaste(content: string, type: 'text' | 'image'): void {
   void showIsland({
     kind: 'paste',
