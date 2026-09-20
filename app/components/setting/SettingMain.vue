@@ -1997,7 +1997,7 @@ onMounted(async () => {
                   <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === 'setting.general.tooltip_window'"
                       v-model="tooltipEnabled"
-                      :tip-on="t('setting.shortcuts.click_disable')" :tip-off="t('setting.shortcuts.click_enable')"
+                      :tip-on="t('setting.general.tooltip_tip_on')" :tip-off="t('setting.general.tooltip_tip_off')"
                       :label="t('setting.general.tooltip_window')"
                       @change="showHint(tooltipEnabled ? t('setting.general.tooltip_on') : t('setting.general.tooltip_off'))"
                   />
@@ -2005,7 +2005,7 @@ onMounted(async () => {
                   <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === 'setting.general.island_hint'"
                       :model-value="islandEnabled"
-                      :tip-on="t('setting.shortcuts.click_disable')" :tip-off="t('setting.shortcuts.click_enable')"
+                      :tip-on="t('setting.general.island_tip_on')" :tip-off="t('setting.general.island_tip_off')"
                       :label="t('setting.general.island_hint')"
                       @change="onIslandToggle"
                   />
