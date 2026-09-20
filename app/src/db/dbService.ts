@@ -488,6 +488,19 @@ class DatabaseService {
         void statsService.record({ clip_use: 1 });
     }
 
+    /**
+     * 全局 Ctrl+V 粘贴感知计数：按内容精确匹配剪贴板条目并复用 increaseUseCount
+     * （count+1 + updated_at + clip_use 统计）。内容不在剪贴板历史中（应用未运行时复制、
+     * 已被上限裁剪）时不计数；图片 base64 编码不稳定，调用方仅对文本调用。
+     * 应用自身粘贴由 Rust PASTE_INJECTING 拦截不 emit，与此处无双计。
+     */
+    public async increaseUseCountByContent(content: string): Promise<void> {
+        await this.ensureDbInitialized();
+        const rows = await this.db!.select("SELECT id FROM clipboard WHERE content = $1 LIMIT 1", [content]) as { id: number }[];
+        if (rows.length === 0) return;
+        await this.increaseUseCount(rows[0].id);
+    }
+
     public async deleteClipboardData(id: number): Promise<void> {
         await this.ensureDbInitialized();
         await this.db!.execute("DELETE FROM clipboard WHERE id = $1", [id]);
