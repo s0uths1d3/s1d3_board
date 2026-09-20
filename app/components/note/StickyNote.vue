@@ -321,9 +321,11 @@ const changeNoteColor = async (id: string, color: string) => {
     note.updated_at = String(Date.now())
     try {
       await clipboardService.updateNote(note)
+      // 配色修改成功灵动岛提示（与其他便签操作反馈一致）
+      showHint(t('note.color_saved'))
     } catch (e) {
       console.error('保存便签配色失败:', e)
-      showHint(t('note.color_save_failed'))
+      showHint(t('note.color_save_failed'), 'error')
     }
   }
 }

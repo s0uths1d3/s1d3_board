@@ -19,6 +19,7 @@ import statsService, { type StatField } from '~/src/statistics/statsService';
 import { computeReminders, hasReminderKey, reminderText, type PlannedReminder, type ReminderStage } from '~/src/todo/reminderPolicy';
 import type { Todo } from '~/src/entities';
 import { isTodoSmartRemindEnabled, useTodoSmartRemind } from '~/composables/useTodoSmartRemind';
+import { notifyIsland } from '~/composables/useCopyIsland';
 
 /** 已发记录持久化 key（key → 发送时刻毫秒） */
 const FIRED_LOG_KEY = 'todo_remind_fired';
@@ -248,9 +249,12 @@ class ReminderService {
     void statsService.record({ todo_reminded: 1 } as Partial<Record<StatField, number>>);
   }
 
-  /** 发送：合成提示音 + 系统通知（纯 Web 环境仅提示音） */
+  /** 发送：合成提示音 + 系统通知 + 灵动岛提醒（纯 Web 环境仅提示音） */
   private send(title: string, body: string): void {
     playNotificationSound();
+    // 灵动岛同步提醒：标题作标签、正文作内容；showIsland 内部检查灵动岛总开关
+    //（设置关闭自动跳过），与系统通知并存互不影响
+    notifyIsland({ kind: 'info', title, text: body });
     if (!isTauri()) return;
     void (async () => {
       try {

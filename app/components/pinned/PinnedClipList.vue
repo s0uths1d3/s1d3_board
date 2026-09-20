@@ -98,11 +98,12 @@ function cancelEdit() {
   editingId.value = null;
 }
 
-/** 置顶/取消置顶 */
+/** 置顶/取消置顶（item.pinned_at 为操作前的状态）：成功灵动岛反馈，失败 error 提示 */
 async function togglePin(item: PinnedClip) {
   try {
     await clipboardService.pinPinnedClip(item.id, !item.pinned_at);
     await load();
+    showHint(item.pinned_at ? t('clip.unpinned_now') : t('clip.pinned_now'));
   } catch (e) {
     console.error('置顶操作失败:', e);
     showHint(t('clip.pin_operation_failed'), 'error');

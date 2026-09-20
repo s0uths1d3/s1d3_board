@@ -502,13 +502,17 @@ const toggleTodo = async (id: string) => {
     const completing = todo.completed === 0
     todo.completed = completing ? 1 : 0
     todo.updated_at = String(Date.now())
-    const ok = await withDbWrite(() => clipboardService.updateTodo(todo))
+    const ok = await withDbWrite(() => clipboardService.updateTodo(todo), () => {
+      notifyIsland({ kind: 'error', text: t('todo.update_failed') })
+    })
     if (!ok) {
       // 写库失败：回滚乐观更新，保证 UI 与数据库一致
       todo.completed = prevCompleted
       todo.updated_at = prevUpdatedAt
       return
     }
+    // 灵动岛反馈：完成（success）/ 取消完成（info）
+    notifyIsland({ kind: completing ? 'success' : 'info', text: t(completing ? 'todo.island_completed' : 'todo.island_uncompleted', { title: todo.title.slice(0, 100) }) })
     // 完成状态变化影响提醒计划，同步给调度服务（完成 → 撤销其全部提醒）
     applyToStats(todo)
     void reminderService.sync(statsTodos.value)
