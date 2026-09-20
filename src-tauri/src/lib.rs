@@ -43,6 +43,8 @@ pub fn run() {
             app_usage::start(app.handle().clone());
             // 全局粘贴感知：系统级 Ctrl+V → 灵动岛"已粘贴" + 转发粘贴按键（失败仅降级）
             commands::register_global_paste_hotkey(app.handle());
+            // 灵动岛 API 出站桥：应用内岛事件统一转 SSE 广播（常驻，与 API 开关无关，无订阅时零开销）
+            island_api::attach_event_bridge(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -54,6 +56,7 @@ pub fn run() {
             ai::ai_test_connection,
             ai::ai_complete,
             island_api::island_api_apply,
+            island_api::island_history_result,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

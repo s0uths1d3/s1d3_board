@@ -21,7 +21,7 @@ import reminderService from "~/src/todo/reminderService";
 import { restoreAppUsageSetting } from "~/composables/useAppUsage";
 import { savePopupLastPosition } from "~/composables/usePopupPosition";
 import { initSmartClipListener } from "~/src/smart-clip/smartClip";
-import { restoreIslandApiSetting } from "~/src/island/islandApi";
+import { restoreIslandApiSetting, setupIslandHistoryBridge } from "~/src/island/islandApi";
 import { initCopyIsland } from "~/composables/useCopyIsland";
 
 /** 剪贴板监听与全局快捷键只需在主窗口注册一次；
@@ -184,6 +184,8 @@ onMounted(async () => {
   void reminderService.start();
   // ===== 灵动岛 API（第三方应用集成；按持久化开关恢复）=====
   void restoreIslandApiSetting();
+  // ===== 灵动岛历史查询桥：GET /api/history 的 HTTP 线程挂起请求由主窗口查库回传（常驻，与 API 开关无关）=====
+  void setupIslandHistoryBridge();
   // 退出前强制落库 pending（防崩溃/强制退出丢失当日未落库数据，§14.1.1）
   window.addEventListener('beforeunload', flushStatsOnExit);
   if (isTauri()) {
