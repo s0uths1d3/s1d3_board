@@ -108,6 +108,11 @@ let net_wm_pid_atom = conn
     .atom;
 active_window_sample(&conn, root, net_active_atom, net_wm_pid_atom)
 }
+/// 前台应用名（仅名称、不取图标，轻量查询；供剪贴板来源标记使用）。
+/// X11 路径复用采样（图标提取内部有缓存/失败兜底，名称优先级高）。
+pub fn foreground_name(app: &tauri::AppHandle) -> Option<String> {
+foreground_sample(app).map(|s| s.name)
+}
 pub fn idle_secs() -> u64 {
 // XScreenSaver 扩展：ms_since_user_input 为距上次输入的毫秒数；
 // 扩展不可用（Wayland 等）时按 0 处理（全算活跃）

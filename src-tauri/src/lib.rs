@@ -54,6 +54,7 @@ pub fn run() {
             commands::quit_app,
             app_usage::set_app_usage_enabled,
             app_usage::pull_app_usage,
+            app_usage::foreground_app_name,
             ai::ai_test_connection,
             ai::ai_complete,
             island_api::island_api_apply,

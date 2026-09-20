@@ -231,6 +231,13 @@ pub fn pull_app_usage() -> Result<PullResult, String> {
     Ok(state().pull())
 }
 
+/// 当前前台应用名（仅名称、不取图标，轻量查询）：供剪贴板来源标记（clip.source_app）使用。
+/// 采样失败返回 None（调用方不标记，宁缺勿错）。
+#[tauri::command]
+pub fn foreground_app_name(app: tauri::AppHandle) -> Option<String> {
+    platform::foreground_name(&app)
+}
+
 // ===================== 平台实现（按编译目标选择） =====================
 #[cfg(target_os = "windows")]
 mod windows;

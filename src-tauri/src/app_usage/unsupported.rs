@@ -5,6 +5,9 @@ pub fn start() {}
 pub fn foreground_sample(_app: &tauri::AppHandle) -> Option<super::Sample> {
 None
 }
+pub fn foreground_name(_app: &tauri::AppHandle) -> Option<String> {
+None
+}
 pub fn idle_secs() -> u64 {
 0
 }

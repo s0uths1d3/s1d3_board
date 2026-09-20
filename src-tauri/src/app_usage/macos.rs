@@ -56,6 +56,13 @@ unsafe {
 pub fn foreground_sample(_app: &tauri::AppHandle) -> Option<Sample> {
 sample_frontmost()
 }
+/// 前台应用名（仅名称、不取图标，轻量查询；供剪贴板来源标记使用）
+pub fn foreground_name(_app: &tauri::AppHandle) -> Option<String> {
+unsafe {
+    let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+    app.localizedName().map(|n| n.to_string())
+}
+}
 pub fn idle_secs() -> u64 {
 // CoreGraphics 手动绑定：kCGEventSourceStateHIDSystemState = 1，kCGAnyInputEventType = u64::MAX
 unsafe { CGEventSourceSecondsSinceLastEventType(1, u64::MAX) as u64 }

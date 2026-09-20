@@ -78,6 +78,7 @@ paste = "粘贴"
 delete = "删除"
 meta = "创建 {created} · 使用 {count} 次 · 最后使用 {updated}"
 created_at = "创建时间"
+source_app = "来源"
 use_count = "使用次数:"
 last_used_at = "最后使用:"
 

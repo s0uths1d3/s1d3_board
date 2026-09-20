@@ -78,6 +78,7 @@ paste = "Paste"
 delete = "Delete"
 meta = "Created {created} · Used {count}× · Last used {updated}"
 created_at = "Created "
+source_app = "Source"
 use_count = "Used: "
 last_used_at = "Last used: "
 

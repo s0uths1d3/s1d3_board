@@ -348,11 +348,13 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
   // 用 item.type 判定而非 DOM 内是否含 <img>：图片懒渲染下未进入视口的项是占位骨架，
   // 此时 DOM 无 <img>，但 hover 到该项时应按图片项展示（content 已在内存中）。
   const isImageItem = (item.type ?? 'text') === 'image';
-  const meta = t('clip.meta', {
-    created: formatDateLocalized(parseInt(item.created_at)),
-    count: item.count,
-    updated: formatDateLocalized(parseInt(item.updated_at)),
-  });
+  // 元信息首段为来源应用（旧数据/查询失败为空，不显示该段）
+  const meta = (item.source_app ? `${t('clip.source_app')} ${item.source_app} · ` : '')
+    + t('clip.meta', {
+      created: formatDateLocalized(parseInt(item.created_at)),
+      count: item.count,
+      updated: formatDateLocalized(parseInt(item.updated_at)),
+    });
   let payload: { text?: string; image?: string; meta?: string; x: number; y: number; top: number; bottom: number };
   if (isImageItem) {
     payload = {
@@ -1004,6 +1006,7 @@ async function openImageViewer(item: ClipboardData) {
                       </span>
                       <span class="opacity-60">{{ t(item.type === 'image' ? 'common.image' : 'common.text') }}
                       {{ t('clip.created_at') }}{{ formatDateLocalized(parseInt(item.created_at)) }}</span>
+                      <span v-if="item.source_app" class="opacity-60">{{ t('clip.source_app') }} {{ item.source_app }}</span>
                       <span class="opacity-60">{{ t('clip.use_count') }}{{ item.count }}</span>
                       <span class="opacity-60">{{ t('clip.last_used_at') }}{{ formatDateLocalized(parseInt(item.updated_at)) }}</span>
                     </div>

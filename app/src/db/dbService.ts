@@ -1,4 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
+import { invoke } from "@tauri-apps/api/core";
 import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from 'tauri-plugin-clipboard-api';
 import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip,ClipScheme } from "../entities";
 import statsService from "~/src/statistics/statsService";
@@ -232,6 +233,8 @@ class DatabaseService {
             { table: 'clip_templates', column: 'title', ddl: 'ALTER TABLE clip_templates ADD COLUMN title TEXT' },
             { table: 'clip_templates', column: 'description', ddl: 'ALTER TABLE clip_templates ADD COLUMN description TEXT' },
             { table: 'clip_templates', column: 'members', ddl: 'ALTER TABLE clip_templates ADD COLUMN members TEXT' },
+            // 剪贴条目来源应用（复制瞬间的前台进程名；存量数据为 NULL，UI 空值不显示）
+            { table: 'clipboard', column: 'source_app', ddl: 'ALTER TABLE clipboard ADD COLUMN source_app TEXT' },
         ];
         let addedPriorityLevel = false;
         for (const { table, column, ddl } of wanted) {
@@ -272,10 +275,18 @@ class DatabaseService {
     public async startClipboardListener() {
         await this.ensureDbInitialized();
 
+        // 复制瞬间的来源应用：查询当前前台进程名（复制不切换焦点，监听回调触发时前台仍是复制方）。
+        // 查询失败不阻断入库（来源留空，UI 不显示）。
+        const queryForegroundApp = async (): Promise<string | null> => {
+            try {
+                return (await invoke<string | null>('foreground_app_name')) ?? null;
+            } catch { return null; }
+        };
+
         // 文本更新
         await onTextUpdate(async (newText) => {
             try {
-                await this.saveClipboard(newText, 'text');
+                await this.saveClipboard(newText, 'text', await queryForegroundApp());
                 // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
                 window.dispatchEvent(new CustomEvent('clipboard:changed'));
             } catch (err) {
@@ -294,7 +305,7 @@ class DatabaseService {
                 const dataUrl = base64.startsWith('data:')
                     ? base64
                     : `data:image/png;base64,${base64}`;
-                await this.saveClipboard(dataUrl, 'image');
+                await this.saveClipboard(dataUrl, 'image', await queryForegroundApp());
                 // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
                 window.dispatchEvent(new CustomEvent('clipboard:changed'));
             } catch (err) {
@@ -324,7 +335,13 @@ class DatabaseService {
         this.useCountSuppressUntil = Date.now() + ms;
     }
 
-    private async saveClipboard(content: string, type: 'text' | 'image'): Promise<void> {
+    /** 写入一条剪贴板记录（文本或图片；sourceApp = 复制瞬间的前台进程名，可空）。
+     * - 使用 INSERT ... ON CONFLICT(content) 单语句 upsert：并发监听回调同时到达时
+     *   不会撞 content UNIQUE 约束（此前的"先查后插"存在竞态，第二条会抛错丢事件）；
+     * - 新插入时额外做统计埋点与按上限裁剪；
+     * - source_app 仅在新插入时写入：应用自身粘贴也会写剪贴板（触发本函数），
+     *   冲突时若更新来源会把历史条目的原始来源覆盖为 S1d3 Board。 */
+    private async saveClipboard(content: string, type: 'text' | 'image', sourceApp?: string | null): Promise<void> {
         const now = Math.floor(Date.now());
         // 先查一次用于区分"新插入 / 计数递增"（统计与裁剪只应发生在新插入时）；
         // 写入本身用 ON CONFLICT 单语句 upsert，即使并发事件在查询后插入也不会撞 UNIQUE 丢事件。
@@ -337,9 +354,9 @@ class DatabaseService {
         const bump = Date.now() >= this.useCountSuppressUntil ? 1 : 0;
 
         const result = await this.db!.execute(
-            "INSERT INTO clipboard (content, category, type, created_at, updated_at) VALUES ($1, $2, $3, $4, $5) " +
+            "INSERT INTO clipboard (content, category, type, created_at, updated_at, source_app) VALUES ($1, $2, $3, $4, $5, $7) " +
             "ON CONFLICT(content) DO UPDATE SET count = count + $6, updated_at = $5",
-            [content, 'T', type, now, now, bump]
+            [content, 'T', type, now, now, bump, sourceApp ?? null]
         );
         console.log(`Clipboard ${type} saved (upsert):`, result);
         // 灵动岛：复制行为反馈（文本/图片、重复复制同一内容同样提示；

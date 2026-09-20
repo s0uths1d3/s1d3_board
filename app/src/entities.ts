@@ -9,6 +9,8 @@ export interface ClipboardData {
     type: 'text' | 'image';
     count: number;
     updated_at: string;
+    /** 来源应用：复制瞬间的前台进程名（小写、去 .exe）；存量数据/查询失败为空，UI 空值不显示 */
+    source_app?: string | null;
 }
 
 export interface PinnedClip {

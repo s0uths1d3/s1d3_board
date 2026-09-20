@@ -255,6 +255,36 @@ unsafe {
     sample_of_hwnd(hwnd)
 }
 }
+/// 前台应用名（仅名称、不取图标，轻量查询；命名与 sample_of_hwnd 一致，可与 app_usage/app_icons 数据互通）。
+/// 与采样不同：取不到进程名时返回 None（不归入 "system" 桶），调用方宁缺勿错。
+pub fn foreground_name(_app: &tauri::AppHandle) -> Option<String> {
+unsafe {
+    let hwnd = GetForegroundWindow();
+    if hwnd.is_null() {
+        return None;
+    }
+    let mut pid: u32 = 0;
+    GetWindowThreadProcessId(hwnd, &mut pid);
+    if pid == 0 {
+        return None;
+    }
+    let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+    if handle.is_null() {
+        return None;
+    }
+    let mut buf = [0u16; 1024];
+    let mut len = buf.len() as u32;
+    let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len);
+    CloseHandle(handle);
+    if ok == 0 || len == 0 {
+        return None;
+    }
+    let path = String::from_utf16_lossy(&buf[..len as usize]);
+    let name = path.rsplit(['\\', '/']).next().unwrap_or(&path);
+    let name = name.strip_suffix(".exe").unwrap_or(name).to_lowercase();
+    if name.is_empty() { None } else { Some(name) }
+}
+}
 pub fn idle_secs() -> u64 {
 unsafe {
     let mut li = LASTINPUTINFO {
