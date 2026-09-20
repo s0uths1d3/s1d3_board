@@ -591,6 +591,9 @@ async function favorite(id: number, value: number) {
   value = value === 0 ? 1 : 0;
   try {
     await clipboardService.updateFavorite(id, value)
+    // 实时同步本地行数据：星标/金边/徽标立即切换，不等下一次列表刷新
+    const target = data.value.find((it: ClipboardData) => it.id === id);
+    if (target) target.is_favorite = value;
     showPinnedHint(value === 1 ? t('clip.favorited') : t('clip.unfavorited'), value === 1 ? 'success' : 'info');
   } catch (e) {
     // DB 失败时星标 UI 不会因此错位（列表刷新后以数据库为准），给出可见反馈
