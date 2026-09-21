@@ -443,14 +443,24 @@ const todayStr = () => {
 let initializingCustom = false
 
 /** 点「选择具体日期…」：关闭当前下拉，预填（当前已有值优先，否则使用当前时间），编程打开 DatePicker 面板。
- *  时间部分默认取当前时分，避免每次都带上上次选择的历史时间。 */
+ *  时间部分默认取当前时分，避免每次都带上上次选择的历史时间。
+ *  先复位再打开：customPickerOpen 残留 true（HMR 热重载后父状态保留、或面板被外部关闭
+ *  未同步）时直接赋 true 值无变化，DatePicker 的 open watcher 不触发，面板无法弹出。 */
 const openCustom = () => {
   open.value = false
   initializingCustom = true
   const base = props.modelValue || toISO(new Date())
   customValue.value = base
-  customPickerOpen.value = true
-  nextTick(() => { initializingCustom = false })
+  if (customPickerOpen.value) {
+    customPickerOpen.value = false
+    nextTick(() => {
+      customPickerOpen.value = true
+      nextTick(() => { initializingCustom = false })
+    })
+  } else {
+    customPickerOpen.value = true
+    nextTick(() => { initializingCustom = false })
+  }
 }
 
 /** DatePicker 选完确定 → customValue 更新 → 同步给父组件并记忆。

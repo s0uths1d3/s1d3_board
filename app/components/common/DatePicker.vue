@@ -200,15 +200,25 @@ const minuteOptions = Array.from({ length: 60 }, (_, i) => pad(i));
 const hourListEl = ref<HTMLUListElement | null>(null);
 const minuteListEl = ref<HTMLUListElement | null>(null);
 
-/** 当下拉展开时，把当前选中的时间项滚动到可视区域中央，避免从 00 开始显示 */
-function scrollToActive(listEl: HTMLUListElement | null, value: number) {
-  if (!listEl) return;
-  nextTick(() => {
-    const activeBtn = listEl.querySelector(`button[data-value="${value}"]`) as HTMLElement | null;
-    if (activeBtn) {
-      activeBtn.scrollIntoView({ block: 'center', behavior: 'auto' });
-    }
-  });
+/** 当下拉展开时，把当前选中的时间项滚动到可视区域中央，避免从 00 开始显示。
+ *  入参用 'hour'/'minute' 标识而非 ref 实参：UiDropdown 的 emit('open') 同步于 open 状态变化，
+ *  此刻面板 v-if 尚未渲染、模板 ref 未赋值——且模板表达式会自动解包 setup ref，
+ *  传 ref 实参永远收到 null；改为在滚动闭包内读 ref 本体（nextTick 后 ref 已就绪）。
+ *  直接计算并设置列表自身 scrollTop——scrollIntoView 在 fixed 定位面板下会连带尝试
+ *  滚动页面级祖先（行为不定且可能没滚列表）；双帧执行覆盖首帧过渡/字体测量偏差。 */
+function scrollToActive(which: 'hour' | 'minute', value: number) {
+  const scroll = () => {
+    const el = (which === 'hour' ? hourListEl : minuteListEl).value;
+    if (!el) return;
+    const activeBtn = el.querySelector(`button[data-value="${value}"]`) as HTMLElement | null;
+    if (!activeBtn) return;
+    const listRect = el.getBoundingClientRect();
+    const btnRect = activeBtn.getBoundingClientRect();
+    const target = el.scrollTop + btnRect.top - listRect.top - el.clientHeight / 2 + btnRect.height / 2;
+    el.scrollTop = Math.max(0, target);
+  };
+  nextTick(scroll);
+  requestAnimationFrame(() => requestAnimationFrame(scroll));
 }
 
 function emitValue() {
@@ -277,6 +287,8 @@ function positionPanel() {
     left: `${left}px`,
     top: `${top}px`,
     width: `${Math.max(rect.width, PANEL_WIDTH)}px`,
+    // 横向溢出一律裁掉（overflow-y:auto 会把 overflow-x 计算为 auto，底部多出横向滚动条）
+    overflowX: 'hidden',
     ...(renderH < contentH ? { maxHeight: `${Math.floor(renderH)}px`, overflowY: 'auto' } : {}),
     // 弹出动画的原点：从按钮方向展开（向下弹出 top 原点，向上弹出 bottom 原点）
     '--picker-origin': `${up ? 'bottom' : 'top'} ${rightAligned ? 'right' : 'left'}`,
@@ -455,7 +467,7 @@ const clearable = computed(() => hasValue.value);
             <span class="text-xs text-ink-faint">{{ t('date.time') }}</span>
 
             <!-- 小时选择（0-23）：面板靠近视口底部，向上展开避免被屏幕裁切 -->
-            <UiDropdown align="end" direction="up" :close-on-select="false" :aria-label="t('date.hour')" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive(hourListEl, hour)">
+            <UiDropdown align="end" direction="up" :close-on-select="false" :aria-label="t('date.hour')" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive('hour', hour)">
               <template #trigger>
                 <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none">
                   <span>{{ pad(hour) }}</span>
@@ -464,7 +476,7 @@ const clearable = computed(() => hasValue.value);
                   </svg>
                 </label>
               </template>
-              <ul ref="hourListEl" class="menu max-h-60 w-16 overflow-y-auto p-1">
+              <ul ref="hourListEl" class="menu scrollbar-none max-h-60 w-16 overflow-y-auto p-1">
                 <li v-for="h in hourOptions" :key="h">
                   <button
                     type="button"
@@ -482,7 +494,7 @@ const clearable = computed(() => hasValue.value);
             <span class="text-ink-faint">:</span>
 
             <!-- 分钟选择（0-59） -->
-            <UiDropdown align="end" direction="up" :close-on-select="false" :aria-label="t('date.minute')" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive(minuteListEl, minute)">
+            <UiDropdown align="end" direction="up" :close-on-select="false" :aria-label="t('date.minute')" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive('minute', minute)">
               <template #trigger>
                 <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none">
                   <span>{{ pad(minute) }}</span>
@@ -491,7 +503,7 @@ const clearable = computed(() => hasValue.value);
                   </svg>
                 </label>
               </template>
-              <ul ref="minuteListEl" class="menu max-h-60 w-16 overflow-y-auto p-1">
+              <ul ref="minuteListEl" class="menu scrollbar-none max-h-60 w-16 overflow-y-auto p-1">
                 <li v-for="m in minuteOptions" :key="m">
                   <button
                     type="button"

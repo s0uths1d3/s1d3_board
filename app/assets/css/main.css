@@ -281,6 +281,14 @@ body::after {
   background: transparent;
 }
 
+/* 隐藏滚动条但保留滚动能力（时间下拉等窄列表，滚动条视觉上多余） */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* ===== 便签保存动画 ===== */
 
 /* Ctrl+Enter 保存成功：金色光晕向外扩散脉冲 */
