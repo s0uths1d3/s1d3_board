@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { listen, emit, emitTo } from '@tauri-apps/api/event';
-import { getCurrentWindow, cursorPosition, LogicalSize, PhysicalSize, PhysicalPosition } from '@tauri-apps/api/window';
+import { currentMonitor, getCurrentWindow, cursorPosition, LogicalSize, PhysicalSize, PhysicalPosition } from '@tauri-apps/api/window';
 import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { isTauri } from '~/utils/env';
 import { useI18n } from '~/composables/useI18n';
@@ -15,7 +15,8 @@ import type { IslandKind } from '~/composables/useCopyIsland';
  * - pin（?mode=pin）：单片段常驻钉住卡片，点击复制，不模拟粘贴、不自我隐藏。
  * - island（?mode=island）：灵动岛提示胶囊（复制/粘贴反馈）。创建与定位由
  *   useCopyIsland 管理；窗口显隐、进出场动画与超时自动隐藏由本页控制，
- *   事件流：island:ready 握手 → island:show 推送 → 显示动画 → SHOW_MS 后收起并隐藏窗口。
+ *   事件流：island:ready 握手 → island:show-ui（主窗口路径，小缩略图载荷）/
+ *   island:show（第三方 API 路径兜底，原图）推送 → 显示动画 → SHOW_MS 后收起并隐藏窗口。
  * - ring（?mode=ring&index=N）：环形布局中的一只独立气泡窗口。文本由管理器
  *   ready 握手后 emitTo('bubble:ring:data') 投递（窗口级 listen 定向接收，防串台）；
  *   选中高亮来自 ring:state 广播；Ctrl+悬停 / 左键点击 → ring:select-req；
@@ -190,11 +191,12 @@ let islandPulseTimer: ReturnType<typeof setTimeout> | null = null;
 const ISLAND_STICKY_MAX_MS = 20000;
 
 /** 展示灵动岛：窗口 show 后强制回流再切动画类，保证进出场动画可见且首帧即动（隐藏窗口里 transition 会瞬间跑完） */
-async function applyIsland(payload: { kind: IslandKind; text?: string; image?: string; title?: string; durationMs?: number; sticky?: boolean }): Promise<void> {
+async function applyIsland(payload: { kind: IslandKind; text?: string; image?: string; thumb?: string; title?: string; durationMs?: number; sticky?: boolean }): Promise<void> {
   islandKind.value = payload.kind;
   islandText.value = payload.text ?? '';
-  // 图片内容：粘贴/剪切图片在 image 字段；复制图片兼容旧载荷（data URL 在 text）
-  islandImage.value = payload.image ?? (payload.kind === 'copy-image' ? (payload.text ?? '') : '');
+  // 图片内容：优先渲染显示级缩略图（几十 KB，复杂图片秒弹），缺省回退 image 原图；
+  // 复制图片兼容旧载荷（data URL 在 text）
+  islandImage.value = payload.thumb || payload.image || (payload.kind === 'copy-image' ? (payload.text ?? '') : '');
   islandTitle.value = payload.title ?? '';
   islandDuration.value = payload.durationMs ?? ISLAND_SHOW_MS;
   // 重复提示辨识：同内容（kind+text+图片标记）短时间内再次弹出 → ×N 递增（胶囊显示徽标，用户可区分
@@ -362,7 +364,7 @@ async function expandIsland(): Promise<void> {
   let maxPanel = ISLAND_PANEL_MAX_H;
   try {
     const [mon, pos, scale] = await Promise.all([
-      win.currentMonitor().catch(() => null),
+      currentMonitor().catch(() => null),
       win.outerPosition().catch(() => null),
       win.scaleFactor().catch(() => 1),
     ]);
@@ -512,7 +514,13 @@ onMounted(async () => {
   if (isIsland) {
     // 透明窗口：body 渐变背景与光晕必须去除，否则透出灰底（.island-body 规则见样式块）
     document.body.classList.add('island-body');
-    unlisteners.push(await listen<{ kind: IslandKind; text?: string; image?: string; title?: string; durationMs?: number; sticky?: boolean }>('island:show', (ev) => {
+    unlisteners.push(await listen<{ kind: IslandKind; text?: string; image?: string; thumb?: string; title?: string; durationMs?: number; sticky?: boolean }>('island:show-ui', (ev) => {
+      void applyIsland(ev.payload);
+    }));
+    // island:show 兜底：仅第三方 island-api 路径（Rust handle_island_show 直接 emit，无 uiHandled
+    // 标记）由此显示——主窗口路径的 island:show 携带数 MB 原图且已由 show-ui 驱动显示，按标记跳过
+    unlisteners.push(await listen<{ kind: IslandKind; text?: string; image?: string; thumb?: string; title?: string; durationMs?: number; sticky?: boolean; uiHandled?: boolean }>('island:show', (ev) => {
+      if (ev.payload?.uiHandled) return;
       void applyIsland(ev.payload);
     }));
     // ready 握手：通知管理器本窗口已就绪（首次 show 前会等待此信号）

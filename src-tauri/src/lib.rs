@@ -1,5 +1,6 @@
 mod ai;
 mod app_usage;
+mod clipboard_thumb;
 mod commands;
 mod island_api;
 mod island_webhook;
@@ -55,6 +56,7 @@ pub fn run() {
             app_usage::set_app_usage_enabled,
             app_usage::pull_app_usage,
             app_usage::foreground_app_name,
+            clipboard_thumb::clipboard_image_thumb,
             ai::ai_test_connection,
             ai::ai_complete,
             island_api::island_api_apply,

@@ -2,6 +2,7 @@ import { ref, watch } from 'vue';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { availableMonitors, cursorPosition, getCurrentWindow, PhysicalPosition } from '@tauri-apps/api/window';
 import { emit, listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import { readImageBase64, readText } from 'tauri-plugin-clipboard-api';
 import dbService from '~/src/db/dbService';
 import statsService from '~/src/statistics/statsService';
@@ -106,6 +107,9 @@ export interface IslandShowPayload {
   kind: IslandKind;
   text?: string;
   image?: string;
+  /** 岛显示级缩略图（Rust 侧剪贴板位图直接 resize，几十 KB）：岛 UI 优先渲染它提速，
+   *  出站事件（SSE/Webhook）仍发 image 原图；缺省回退 image 原图渐进渲染 */
+  thumb?: string;
   title?: string;
   durationMs?: number;
   sticky?: boolean;
@@ -130,8 +134,9 @@ let inited = false;
 const ISLAND_POLL_MS = 80;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastPollText: string | null = null;
-/** 最近一次由快速通道显示的复制内容（短期内同内容的原生事件不再重复弹岛） */
-let lastShownCopy: { content: string; until: number } | null = null;
+/** 最近一次由快速通道显示的复制内容（短期内同内容的原生事件不再重复弹岛；文本与图片均生效——
+ *  图片路径监听回调先行派发带缩略图的岛事件，saveClipboard 写库后的二次派发据此去重） */
+let lastShownCopy: { type: 'text' | 'image'; content: string; until: number } | null = null;
 
 function startIslandPoller(): void {
   if (pollTimer || !isTauri()) return;
@@ -143,7 +148,7 @@ function startIslandPoller(): void {
       const changed = text !== lastPollText;
       lastPollText = text;
       if (!changed || !text || Date.now() < suppressUntil) return;
-      lastShownCopy = { content: text, until: Date.now() + 900 };
+      lastShownCopy = { type: 'text', content: text, until: Date.now() + 900 };
       // Ctrl+X 感知窗口内的剪贴板变化按"已剪切"提示（一次性消费，避免窗口内后续复制误标）
       void showIsland({ kind: consumeCut() ? 'cut' : 'copy', text: text.slice(0, PREVIEW_MAX) });
     }).catch(() => { /* 非文本内容（图片等）读取失败：交给原生路径 */ });
@@ -198,15 +203,27 @@ listen('island:paste-detected', () => {
   void (async () => {
     let text = '';
     let image: string | undefined;
+    let thumb: string | undefined;
     try { text = (await readText()) ?? ''; } catch { /* 图片等非文本：转图片读取 */ }
     if (!text) {
       try {
         const base64 = await readImageBase64();
-        if (base64) image = normalizeImageDataUrl(base64);
-      } catch { /* 图片读取失败：仅弹标签 */ }
+        if (base64) {
+          image = normalizeImageDataUrl(base64);
+          // 显示级缩略图（Rust 侧剪贴板位图直接 resize）：粘贴图片岛显示与大图解码解耦
+          try {
+            thumb = (await invoke<string | null>('clipboard_image_thumb', { maxH: 384 })) ?? undefined;
+          } catch { /* 非 Windows/命令失败：回退原图渲染 */ }
+        }
+      } catch { /* 无图片或读取失败：image 保持空 */ }
     }
+    // 有效性判定（三平台统一）：文本与图片都为空 = 剪贴板无内容可贴，粘贴必然无效——
+    // 不计数、不弹岛（Windows/macOS/Linux 检测事件均汇聚于此；Linux 拦截路径的按键
+    // 转发在 Rust 侧独立执行，不受此处 return 影响）。剪贴板非空但目标应用无可粘贴
+    // 目标（如焦点在桌面）属系统层不可判定，维持按下即提示的语义
+    if (!text && !image) return;
     if (text) void dbService.increaseUseCountByContent(text).catch(() => {});
-    void showIsland({ kind: 'paste', text: text.slice(0, PREVIEW_MAX), image });
+    void showIsland({ kind: 'paste', text: text.slice(0, PREVIEW_MAX), image, thumb });
   })();
 }).catch(() => {});
 
@@ -249,8 +266,9 @@ function closeIsland(): void {
 }
 
 /**
- * 图片缩略图生成（灵动岛历史记录用）：data URL 原图 → 高 maxH 像素的 webp 小图（保透明、体积小，约 1-4KB）。
- * 仅用于历史链路降采样，岛窗口缩略图仍用原始 data URL；解码/绘制失败时 reject，由调用方兜底。
+ * 图片缩略图生成：data URL 原图 → 高 maxH 像素的 webp 小图（保透明、体积小）。
+ * 两处消费：岛显示/历史落库（默认 56px 历史档）与岛显示级缩略图（384px，跨窗口广播提速）。
+ * 解码/绘制失败时 reject，由调用方兜底。
  */
 export function makeImageThumb(dataUrl: string, maxH = 56, quality = 0.7): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -369,15 +387,19 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
   // 图片内容统一收敛：复制图片的 data URL 在 text 字段，粘贴/剪切图片在 image 字段——
   // 出站事件统一走 image（文本字段保持 120 字符截断语义）
   const imgData = payload.image ?? (payload.kind === 'copy-image' ? payload.text : undefined);
+  // 岛显示用缩略图（Rust 侧剪贴板位图直接 resize 产出，几十 KB）；复制/剪切路径由
+  // 剪贴板监听附带，缺失时回退原图（数 MB 整包广播是复杂图片慢的根因，但保证能显示）。
+  // 生成缩略图不在此处 await——对大 PNG 前端解码+编码要数百 ms，反拖慢显示
+  const displayImage = payload.thumb ?? imgData;
   // 历史记录：事件发生即写入（全部来源汇聚点），失败静默（不影响弹岛）。
   // loading 过程岛（AI 解析中）不落历史——它只是瞬时过程态，结果岛才值得回溯；
-  // 图片事件的 data URL 不直接落历史库——先降采样为小缩略图（webp 高 56px，约 1-4KB）再写入，
-  // 历史窗口直接显示图片；生成失败写空串兜底，历史窗口按类型显示「[图片]」占位
+  // 图片事件的 data URL 不直接落历史库——后台降采样为小缩略图（webp 高 56px）再写入，
+  // 生成失败写空串兜底，历史窗口按类型显示「[图片]」占位（不阻塞岛显示）
   if (payload.kind !== 'loading') {
     if (imgData) {
       const kind = payload.kind;
       void makeImageThumb(imgData)
-        .then((thumb) => dbService.insertIslandHistory({ kind, text: thumb }))
+        .then((t) => dbService.insertIslandHistory({ kind, text: t }))
         .catch(() => dbService.insertIslandHistory({ kind, text: '' }))
         .catch(() => {});
     } else {
@@ -392,8 +414,18 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
   if (payload.kind === 'cut') {
     void statsService.record({ clip_cut: 1 }).catch(() => {});
   }
-  // 出站事件（Rust 桥 → SSE/Webhook 广播）：文本截断版走 text，图片 data URL 走 image；
-  // 该 emit 同时驱动岛页面显示（总开关关闭时无窗口，广播仅剩出站意义）
+  // 岛显示事件（小 payload：缩略图）：先发显示再发出站，出站大图序列化不拖慢岛弹出
+  await emit('island:show-ui', {
+    kind: payload.kind,
+    text: payload.kind === 'copy-image' ? undefined : payload.text,
+    image: displayImage,
+    title: payload.title,
+    durationMs: payload.durationMs ?? islandDurationMs.value,
+    sticky: payload.sticky ?? false,
+  }).catch(() => {});
+  // 出站事件（Rust 桥 → SSE/Webhook 广播，image 保持原图语义）：uiHandled 标记岛窗口跳过
+  // 本次显示（显示已由 show-ui 负责，否则岛要重复接收并解码数 MB 原图）；
+  // Rust 桥 json! 白名单构造天然剥离该标记，出站载荷不含实现细节
   await emit('island:show', {
     kind: payload.kind,
     text: payload.kind === 'copy-image' ? undefined : payload.text,
@@ -401,6 +433,7 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
     title: payload.title,
     durationMs: payload.durationMs ?? islandDurationMs.value,
     sticky: payload.sticky ?? false,
+    uiHandled: true,
   }).catch(() => {});
 }
 
@@ -425,23 +458,25 @@ async function showIsland(payload: IslandShowPayload): Promise<void> {
 export function initCopyIsland(): void {
   if (inited || !isTauri()) return;
   inited = true;
-  // 复制文本 / 复制图片：任何应用里 Ctrl+C 都会走到这里（saveClipboard 派发）。
-  // 快速通道已显示的同一内容（900ms 内）不重复弹岛。
+  // 复制文本 / 复制图片：任何应用里 Ctrl+C 都会走到这里（saveClipboard 派发；
+  // 图片路径监听回调先行派发带缩略图的版本，写库后 saveClipboard 的二次派发按内容去重跳过）。
+  // 快速通道已显示的同一内容（900ms 内）不重复弹岛（文本与图片均去重）
   window.addEventListener('island:copy', (ev) => {
-    const d = (ev as CustomEvent<{ content: string; type: 'text' | 'image' }>).detail;
+    const d = (ev as CustomEvent<{ content: string; type: 'text' | 'image'; thumb?: string | null }>).detail;
     if (!d || Date.now() < suppressUntil) return;
-    if (d.type === 'text' && lastShownCopy && lastShownCopy.content === d.content && Date.now() < lastShownCopy.until) return;
+    if (lastShownCopy && lastShownCopy.type === d.type && lastShownCopy.content === d.content && Date.now() < lastShownCopy.until) return;
     // Ctrl+X 感知窗口内的剪贴板变化（文本与图片均可）按"已剪切"提示（快速通道已显示的同一文本内容已被上方去重跳过）
     const cut = consumeCut();
-    lastShownCopy = d.type === 'text' ? { content: d.content, until: Date.now() + 900 } : lastShownCopy;
+    lastShownCopy = { type: d.type, content: d.content, until: Date.now() + 900 };
     void showIsland(cut
       ? {
           kind: 'cut',
           text: d.type === 'text' ? d.content.slice(0, PREVIEW_MAX) : '',
           image: d.type === 'image' ? d.content : undefined,
+          thumb: d.type === 'image' && d.thumb ? d.thumb : undefined,
         }
       : d.type === 'image'
-        ? { kind: 'copy-image', text: d.content }
+        ? { kind: 'copy-image', text: d.content, thumb: d.thumb ?? undefined }
         : { kind: 'copy', text: d.content.slice(0, PREVIEW_MAX) });
   });
   // 灵动岛 API：Rust 侧 HTTP 服务（island_api.rs）转发的第三方显示请求。

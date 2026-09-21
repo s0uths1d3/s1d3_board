@@ -305,6 +305,15 @@ class DatabaseService {
                 const dataUrl = base64.startsWith('data:')
                     ? base64
                     : `data:image/png;base64,${base64}`;
+                // 岛显示级缩略图：Rust 侧从剪贴板位图（解码好的像素）直接 resize+编码（毫秒级，几十 KB）——
+                // 原图（数 MB）整包广播给岛窗口 + 全图解码是复杂图片岛显示慢的根因。
+                // 非 Windows/读取失败返回 null：岛回退原图渲染（行为不劣化）
+                let thumb: string | null = null;
+                try {
+                    thumb = await invoke<string | null>('clipboard_image_thumb', { maxH: 384 });
+                } catch { /* 命令不可用：回退 */ }
+                // 先派发岛事件（带缩略图，弹岛不等写库），saveClipboard 写库后的二次派发由内容去重跳过
+                window.dispatchEvent(new CustomEvent('island:copy', { detail: { content: dataUrl, type: 'image', thumb } }));
                 await this.saveClipboard(dataUrl, 'image', await queryForegroundApp());
                 // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
                 window.dispatchEvent(new CustomEvent('clipboard:changed'));
