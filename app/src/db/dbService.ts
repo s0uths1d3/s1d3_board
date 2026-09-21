@@ -128,6 +128,9 @@ class DatabaseService {
         // 读写不再互斥，显著缩短写锁等待——修复收藏/粘贴等高频写操作报
         // "database is locked"(517) 与并发冲突。
         await this.db.select('PRAGMA journal_mode=WAL').catch(() => {});
+        // 写锁等待（busy_timeout，连接级非持久）：本连接的写操作遇短时锁竞争时由 SQLite
+        // 内部等待重试而非立即报错；池内其他按需新建的连接不继承，由 execWithRetry 兜底
+        await this.db.select('PRAGMA busy_timeout=5000').catch(() => {});
         // 完整性自检（quick_check，轻量）：文件损坏（malformed, 267）无法由代码凭空修复，
         // 启动时显式暴露，日志给出恢复指引，避免后续随机报错难以定位。
         void this.db.select<{ quick_check: string }[]>('PRAGMA quick_check')
@@ -344,6 +347,23 @@ class DatabaseService {
         this.useCountSuppressUntil = Date.now() + ms;
     }
 
+    /** SQLITE_BUSY 写锁竞争重试：tauri-plugin-sql 每窗口一个连接池（多窗口 = 多池并发写同一文件），
+     *  短时撞锁报 "database is locked"(517)；busy_timeout 是连接级 PRAGMA，池内按需新建的连接
+     *  不继承设置，无法统一覆盖——应用层对锁错误指数退避重试兜底（80/160/320ms）。
+     *  仅锁错误重试：损坏(267 malformed)/语法等错误立即抛出，不掩盖真问题。
+     *  泛型返回 execute 的原始结果（含 lastInsertId），调用方按需指定类型。 */
+    private async execWithRetry<T>(sql: string, params: unknown[], retries = 3): Promise<T> {
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return (await this.db!.execute(sql, params)) as T;
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                if (attempt >= retries || !msg.includes('database is locked')) throw e;
+                await new Promise((r) => setTimeout(r, 80 * 2 ** attempt));
+            }
+        }
+    }
+
     /** 写入一条剪贴板记录（文本或图片；sourceApp = 复制瞬间的前台进程名，可空）。
      * - 使用 INSERT ... ON CONFLICT(content) 单语句 upsert：并发监听回调同时到达时
      *   不会撞 content UNIQUE 约束（此前的"先查后插"存在竞态，第二条会抛错丢事件）；
@@ -362,7 +382,7 @@ class DatabaseService {
         // 本应用粘贴流程的写入：命令层已显式计数，重复复制 bump 抑制为 +0，防双计
         const bump = Date.now() >= this.useCountSuppressUntil ? 1 : 0;
 
-        const result = await this.db!.execute(
+        const result = await this.execWithRetry<{ lastInsertId?: number | bigint }>(
             "INSERT INTO clipboard (content, category, type, created_at, updated_at, source_app) VALUES ($1, $2, $3, $4, $5, $7) " +
             "ON CONFLICT(content) DO UPDATE SET count = count + $6, updated_at = $5",
             [content, 'T', type, now, now, bump, sourceApp ?? null]
@@ -385,7 +405,7 @@ class DatabaseService {
         // 智能剪贴板：新文本入库 → 广播复制事件（处理层 smartClip 解析进内存 store；
         // 设计文档 §4.1 触发点）。仅文本参与解析管道。
         if (type === 'text') {
-            const insertedId = Number((result as { lastInsertId?: number | bigint }).lastInsertId);
+            const insertedId = Number(result.lastInsertId);
             window.dispatchEvent(new CustomEvent('smart-clip:copy', {
                 detail: { id: insertedId, content, ts: Date.now() },
             }));
@@ -484,7 +504,7 @@ class DatabaseService {
 
     public async updateFavorite(id: number, value: number): Promise<void> {
         await this.ensureDbInitialized();
-        await this.db!.execute("UPDATE clipboard SET is_favorite = $2 WHERE id = $1", [id, value]);
+        await this.execWithRetry("UPDATE clipboard SET is_favorite = $2 WHERE id = $1", [id, value]);
         // 统计埋点（fire-and-forget）：收藏/取消收藏切换 +1
         void statsService.record({ favorite_toggle: 1 });
     }
@@ -492,7 +512,7 @@ class DatabaseService {
     public async increaseUseCount(id: number): Promise<void> {
         await this.ensureDbInitialized();
         const now = Math.floor(Date.now());
-        await this.db!.execute("UPDATE clipboard SET count = count + 1, updated_at = $2 WHERE id = $1", [id, now]);
+        await this.execWithRetry("UPDATE clipboard SET count = count + 1, updated_at = $2 WHERE id = $1", [id, now]);
         // 统计埋点（fire-and-forget）：粘贴使用 +1
         void statsService.record({ clip_use: 1 });
     }
@@ -788,12 +808,13 @@ class DatabaseService {
     /** 灵动岛历史：全部弹岛来源（复制/粘贴/AI/设置操作/第三方 API）汇聚写入，FIFO 保留最近 500 条 */
     public async insertIslandHistory(h: { kind: string; text: string }): Promise<void> {
         await this.ensureDbInitialized();
-        await this.db!.execute(
+        await this.execWithRetry(
             'INSERT INTO island_history (kind, text, created_at) VALUES ($1, $2, $3)',
             [h.kind, h.text, Date.now()],
         );
-        await this.db!.execute(
+        await this.execWithRetry(
             'DELETE FROM island_history WHERE id NOT IN (SELECT id FROM island_history ORDER BY id DESC LIMIT 500)',
+            [],
         );
     }
 
