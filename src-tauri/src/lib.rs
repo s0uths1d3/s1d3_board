@@ -34,6 +34,11 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            // 主窗口冷启动居中：按所在显示器实际尺寸/DPR 居中（跨分辨率自适应）；
+            // 仅建窗时执行一次，后续 Ctrl+I 唤出位置由前端 applyPopupPosition（弹出位置模式）接管
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.center();
+            }
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
