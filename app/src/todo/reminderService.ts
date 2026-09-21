@@ -19,6 +19,7 @@ import statsService, { type StatField } from '~/src/statistics/statsService';
 import { computeReminders, hasReminderKey, reminderText, type PlannedReminder, type ReminderStage } from '~/src/todo/reminderPolicy';
 import type { Todo } from '~/src/entities';
 import { isTodoSmartRemindEnabled, useTodoSmartRemind } from '~/composables/useTodoSmartRemind';
+import { ensureTodoSystemNotifyLoaded, isTodoSystemNotifyEnabled } from '~/composables/useTodoSystemNotify';
 import { notifyIsland } from '~/composables/useCopyIsland';
 
 /** 已发记录持久化 key（key → 发送时刻毫秒） */
@@ -89,8 +90,10 @@ class ReminderService {
         this.firedLog = parsed;
       }
     } catch { /* 记录损坏则从空开始，最多重复提醒一次 */ }
-    // 预请求系统通知权限（沿用 TodoList 原有行为）
-    if (isTauri()) {
+    // 先等系统通知开关持久化状态落定，再决定是否预请求系统通知权限（沿用 TodoList
+    // 原有行为）——开关关闭时跳过请求，避免无谓的权限弹窗
+    await ensureTodoSystemNotifyLoaded();
+    if (isTauri() && isTodoSystemNotifyEnabled()) {
       try {
         this.permissionGranted = await isPermissionGranted();
         if (!this.permissionGranted) {
@@ -249,13 +252,14 @@ class ReminderService {
     void statsService.record({ todo_reminded: 1 } as Partial<Record<StatField, number>>);
   }
 
-  /** 发送：合成提示音 + 系统通知 + 灵动岛提醒（纯 Web 环境仅提示音） */
+  /** 发送：合成提示音 + 系统通知 + 灵动岛提醒（纯 Web 环境仅提示音）。
+   *  系统通知受「待办系统通知」开关门控（关闭时跳过权限请求与发送，提示音/灵动岛不受影响） */
   private send(title: string, body: string): void {
     playNotificationSound();
     // 灵动岛同步提醒：标题作标签、正文作内容；showIsland 内部检查灵动岛总开关
     //（设置关闭自动跳过），与系统通知并存互不影响
     notifyIsland({ kind: 'info', title, text: body });
-    if (!isTauri()) return;
+    if (!isTauri() || !isTodoSystemNotifyEnabled()) return;
     void (async () => {
       try {
         if (!this.permissionGranted) {

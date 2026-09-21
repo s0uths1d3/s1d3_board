@@ -35,6 +35,7 @@ import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER
 import { useI18n, setLocaleMode, LOCALES, type LocaleMode } from '~/composables/useI18n';
 import { briefAiError, parseAiError } from '~/utils/aiError';
 import { useTodoSmartRemind, setTodoSmartRemindEnabled } from '~/composables/useTodoSmartRemind';
+import { useTodoSystemNotify, setTodoSystemNotifyEnabled } from '~/composables/useTodoSystemNotify';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
 import { appUsageEnabled, setAppUsageEnabled } from '~/composables/useAppUsage';
 import { navRows, reorderTab, persistNavConfig, setTabEnabled } from '~/composables/useTabs';
@@ -157,6 +158,14 @@ const { smartRemindEnabled } = useTodoSmartRemind();
 async function onSmartRemindToggle(val: boolean) {
   await setTodoSmartRemindEnabled(val);
   showHint(val ? t('setting.general.smart_remind_on') : t('setting.general.smart_remind_off'));
+}
+
+/** 待办系统通知开关：仅控制提醒是否弹 OS 级系统通知（提示音/灵动岛不受影响）。
+ *  必须走 setTodoSystemNotifyEnabled 持久化：直接改共享 ref 不会写库，重启后设置回滚。 */
+const { todoSystemNotifyEnabled } = useTodoSystemNotify();
+async function onTodoSystemNotifyToggle(val: boolean) {
+  await setTodoSystemNotifyEnabled(val);
+  showHint(val ? t('setting.general.todo_notify_on') : t('setting.general.todo_notify_off'));
 }
 
 /** 应用使用时长记录开关：默认关闭（隐私）；切换失败时 composable 已回滚 UI，这里提示重试 */
@@ -991,6 +1000,11 @@ const settings: SettingGroup[] = [
       },
       {
         label: 'setting.general.smart_reminder',
+        value: '',
+        type: 'checkbox'
+      },
+      {
+        label: 'setting.general.todo_system_notify',
         value: '',
         type: 'checkbox'
       },
@@ -2022,6 +2036,14 @@ onMounted(async () => {
                       :tip-on="t('setting.general.smart_remind_tip_on')" :tip-off="t('setting.general.smart_remind_tip_off')"
                       :label="t('setting.general.smart_reminder')"
                       @change="onSmartRemindToggle"
+                  />
+                  <!-- 待办系统通知：仅控制提醒是否弹 OS 级系统通知弹窗，提示音与灵动岛提醒不受影响 -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.todo_system_notify'"
+                      :model-value="todoSystemNotifyEnabled"
+                      :tip-on="t('setting.general.todo_notify_tip_on')" :tip-off="t('setting.general.todo_notify_tip_off')"
+                      :label="t('setting.general.todo_system_notify')"
+                      @change="onTodoSystemNotifyToggle"
                   />
                   <!-- 应用使用时长记录：默认关闭（隐私），开启后 Rust 侧监听前台应用并按天累计 -->
                   <UiToggleSwitch
