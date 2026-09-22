@@ -25,6 +25,7 @@ import ContextMenu from "~/components/mainpage/ContextMenu.vue";
 import PinnedClipList from "~/components/pinned/PinnedClipList.vue";
 import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
 import { activeTab } from "~/composables/useTabs";
+import { bus } from "~/src/core/events";
 import { SwitchTabCommand } from "~/src/commands/local/SwitchTabCommand";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
 import { useSearchHighlight } from "~/composables/useSearchHighlight";
@@ -184,8 +185,8 @@ const onFocusSearch = () => {
   nextTick(() => searchInput.value?.focus());
   setTimeout(() => searchInput.value?.focus(), 400);
 };
-onMounted(() => window.addEventListener('focus-search', onFocusSearch));
-onBeforeUnmount(() => window.removeEventListener('focus-search', onFocusSearch));
+onMounted(() => bus.on('focus-search', onFocusSearch));
+onBeforeUnmount(() => bus.off('focus-search', onFocusSearch));
 
 /** tooltip 独立窗口单例 label */
 let tooltipLabel: string | null = null;
@@ -458,7 +459,7 @@ onMounted(async () => {
   // 全局快捷键已在 app.vue 统一注册；列表项的本地 keydown 仍绑定在 <ul> 上
   // 剪贴板列表更新改为事件驱动：dbService 剪贴板监听写库成功后派发
   // clipboard:changed，这里去抖后立即刷新（不再每秒轮询；Web 端无该事件无影响）
-  window.addEventListener('clipboard:changed', onClipboardChanged);
+  bus.on('clipboard:changed', onClipboardChanged);
   if (searchInput.value) {
     searchInput.value.focus();
   }
@@ -471,7 +472,7 @@ onMounted(async () => {
     nextTick(setupClipObserver);
   }
   // 窗口被 Ctrl+I 唤出后，自动聚焦搜索框：直接输入字符即可搜索，无需点击
-  window.addEventListener('window-shown', onMainWindowShown);
+  bus.on('window-shown', onMainWindowShown);
   // tooltip 弹层悬停：进入保持显示，离开后允许隐藏（独立窗口通过 Tauri 事件通信）
   if (isTauri()) {
     const u1 = await listen('tooltip:hover-enter', onTooltipHoverEnter);
@@ -493,7 +494,7 @@ onMounted(async () => {
     unlistenCommandResults = [u4, u5, u6];
   }
   // Delete 键请求删除：弹出内联删除确认框（DeleteConfirm 组件，与便签一致）
-  window.addEventListener('delete-request', onDeleteRequest);
+  bus.on('delete-request', onDeleteRequest);
 });
 
 /** 命令结果事件的监听取消函数（onBeforeUnmount 统一清理） */
@@ -583,13 +584,13 @@ function onMainWindowShown() {
 onBeforeUnmount(async () => {
   console.log('unmounting outside...')
   window.removeEventListener('mousedown', onMouseSideButton);
-  window.removeEventListener('window-shown', onMainWindowShown);
+  bus.off('window-shown', onMainWindowShown);
   unlistenTooltipHover.forEach((u) => u());
   unlistenTooltipHover = [];
   unlistenCommandResults.forEach((u) => u());
   unlistenCommandResults = [];
-  window.removeEventListener('delete-request', onDeleteRequest);
-  window.removeEventListener('clipboard:changed', onClipboardChanged);
+  bus.off('delete-request', onDeleteRequest);
+  bus.off('clipboard:changed', onClipboardChanged);
   if (clipChangeEventTimer) {
     clearTimeout(clipChangeEventTimer);
     clipChangeEventTimer = null;
@@ -794,7 +795,7 @@ function refocusList() {
       }
       window.focus();
       if (await getCurrentWindow().isVisible().catch(() => false)) {
-        window.dispatchEvent(new CustomEvent('window-shown'));
+        bus.emit('window-shown');
         searchInput.value?.focus();
       }
     };

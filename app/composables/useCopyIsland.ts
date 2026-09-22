@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { readImageBase64, readText } from 'tauri-plugin-clipboard-api';
 import dbService from '~/src/db/dbService';
 import statsService from '~/src/statistics/statsService';
+import { bus } from '~/src/core/events';
 import { createBooleanSetting } from './useBooleanSetting';
 import { isTauri } from '~/utils/env';
 
@@ -475,8 +476,7 @@ export function initCopyIsland(): void {
   // 复制文本 / 复制图片：任何应用里 Ctrl+C 都会走到这里（saveClipboard 派发；
   // 图片路径监听回调先行派发带缩略图的版本，写库后 saveClipboard 的二次派发按内容去重跳过）。
   // 快速通道已显示的同一内容（900ms 内）不重复弹岛（文本与图片均去重）
-  window.addEventListener('island:copy', (ev) => {
-    const d = (ev as CustomEvent<{ content: string; type: 'text' | 'image'; thumb?: string | null; qrText?: string | null }>).detail;
+  bus.on('island:copy', (d) => {
     if (!d || Date.now() < suppressUntil) return;
     if (lastShownCopy && lastShownCopy.type === d.type && lastShownCopy.content === d.content && Date.now() < lastShownCopy.until) return;
     // Ctrl+X 感知窗口内的剪贴板变化（文本与图片均可）按"已剪切"提示（快速通道已显示的同一文本内容已被上方去重跳过）

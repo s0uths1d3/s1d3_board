@@ -1,5 +1,6 @@
 import type { Command } from '../Command';
 import { activeTab } from '~/composables/useTabs';
+import { bus } from '../../core/events';
 
 /**
  * Ctrl+N：新建便签（便签页局部快捷键）
@@ -10,6 +11,6 @@ export class CreateNoteCommand implements Command {
         if (event?.state !== 'Pressed') return;
         // 仅在便签页生效；其他标签页无便签新建语义，忽略
         if (activeTab.value !== 'note') return;
-        window.dispatchEvent(new CustomEvent('create-note'));
+        bus.emit('create-note');
     }
 }

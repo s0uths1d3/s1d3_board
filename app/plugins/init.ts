@@ -7,6 +7,7 @@ import {WebviewWindow} from '@tauri-apps/api/webviewWindow';
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import {isTauri} from "~/utils/env";
 import statsService from "~/src/statistics/statsService";
+import {bus} from "~/src/core/events";
 
 /** 托盘菜单创建（独立函数）：Windows 原生菜单窗口在创建时快照进程主题
  *  （SetPreferredAppMode 对已存在的菜单不生效），因此切换配色后需要整体
@@ -81,7 +82,7 @@ export default defineNuxtPlugin(async (nuxtApp) => {
 
     // 先挂监听再创建托盘：useColorScheme 的 watch immediate 可能在托盘创建完成前触发，
     // 事件不能丢（trayIconRef 未就绪时 rebuild 会跳过，创建完成后的主动重建会兜底）
-    window.addEventListener('resolved-scheme-changed', () => {
+    bus.on('resolved-scheme-changed', () => {
         void rebuildTrayMenu();
     });
 

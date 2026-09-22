@@ -108,6 +108,7 @@ import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
 import type { Note } from "~/src/entities";
+import { bus } from '~/src/core/events';
 import {isTauri} from "~/utils/env";
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { matchesKeyId } from "~/utils/shortcutFormat";
@@ -478,9 +479,9 @@ onMounted(() => {
   }
   window.addEventListener('keydown', onKeydown, true)
   // Ctrl+N 新建便签（CreateNoteCommand 派发）
-  window.addEventListener('create-note', onCreateNote)
+  bus.on('create-note', onCreateNote)
   // Ctrl+F：聚焦便签搜索框（FocusSearchCommand 派发）
-  window.addEventListener('focus-search', onFocusSearch)
+  bus.on('focus-search', onFocusSearch)
 });
 
 onBeforeUnmount(() => {
@@ -490,8 +491,8 @@ onBeforeUnmount(() => {
   }
   if (searchFetchTimer) clearTimeout(searchFetchTimer)
   window.removeEventListener('keydown', onKeydown, true);
-  window.removeEventListener('create-note', onCreateNote);
-  window.removeEventListener('focus-search', onFocusSearch);
+  bus.off('create-note', onCreateNote);
+  bus.off('focus-search', onFocusSearch);
 });
 
 /** Ctrl+F 聚焦便签搜索框 */

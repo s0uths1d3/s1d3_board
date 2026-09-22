@@ -1,5 +1,6 @@
 import type { Command } from '../Command';
 import { activeTab } from '~/composables/useTabs';
+import { bus } from '../../core/events';
 
 /**
  * Ctrl+Enter：上下文快捷键
@@ -11,9 +12,9 @@ export class ContextEditCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {
         if (event?.state !== 'Pressed') return;
         if (activeTab.value === 'note') {
-            window.dispatchEvent(new CustomEvent('save-note'));
+            bus.emit('save-note');
         } else if (activeTab.value === 'todo') {
-            window.dispatchEvent(new CustomEvent('todo:edit-request'));
+            bus.emit('todo:edit-request');
         }
     }
 }

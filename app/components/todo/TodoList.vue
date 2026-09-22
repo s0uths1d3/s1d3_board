@@ -236,6 +236,7 @@ import TodoItem from './Todoitem.vue'
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
 import type {Todo, ReminderRule} from '~/src/entities'
+import { bus } from '~/src/core/events'
 import {isTauri} from "~/utils/env"
 import statsService from "~/src/statistics/statsService"
 import DueTimeSelect from '~/components/todo/DueTimeSelect.vue'
@@ -735,13 +736,13 @@ onMounted(async () => {
   setTodoLoadMoreHook(() => { if (hasMore.value) void loadMore() })
 
   // Ctrl+F：聚焦待办搜索框
-  window.addEventListener('focus-search', onFocusSearch)
+  bus.on('focus-search', onFocusSearch)
 
   // Ctrl+Enter：进入选中待办的编辑态
-  window.addEventListener('todo:edit-request', onEditRequest)
+  bus.on('todo:edit-request', onEditRequest)
 
   // Del：删除当前选中的待办
-  window.addEventListener('todo:delete-request', onDeleteRequest)
+  bus.on('todo:delete-request', onDeleteRequest)
 
   // 仅在 Tauri 桌面容器内定时从数据库刷新列表（数据同步用；提醒由调度服务的精确定时器负责）。
   // 3s 粒度 + in-flight 去重 + 签名跳过 + 写库期间挂起；窗口隐藏（托盘驻留）时暂停轮询。
@@ -768,9 +769,9 @@ onBeforeUnmount(() => {
   // 提醒定时器由主窗口的 reminderService 持有，切 Tab 卸载本组件不影响提醒
   setTodoLoadMoreHook(null)
   if (searchTimer) clearTimeout(searchTimer)
-  window.removeEventListener('focus-search', onFocusSearch)
-  window.removeEventListener('todo:edit-request', onEditRequest)
-  window.removeEventListener('todo:delete-request', onDeleteRequest)
+  bus.off('focus-search', onFocusSearch)
+  bus.off('todo:edit-request', onEditRequest)
+  bus.off('todo:delete-request', onDeleteRequest)
 })
 
 /** 列表同步：过滤排序结果 → todoStore（供方向键选择/编辑使用），并修正越界选中 */

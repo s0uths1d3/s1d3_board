@@ -1,5 +1,6 @@
 import type { ClipExtractor, ClipScheme } from '../entities';
 import type { CopyEventDetail, ProcessContext, Segment, SmartClipEntry, SmartClipMode } from './types';
+import { bus } from '../core/events';
 import { runScheme, renderSchemeBody } from './template';
 import { autoSplit } from './autoSplit';
 import { readStoredExtractors } from './extractors';
@@ -17,8 +18,6 @@ import dbService from '../db/dbService';
 
 /** 内存 store 容量上限（气泡窗口只消费最近 N 条） */
 const MAX_ENTRIES = 30;
-/** 事件名：与 dbService.saveClipboard 的广播约定一致 */
-const COPY_EVENT = 'smart-clip:copy';
 
 const entries: SmartClipEntry[] = [];
 
@@ -151,8 +150,7 @@ export async function parseClipItem(
 
 /** 初始化：挂载复制事件监听（同一窗口上下文投递；仅主窗口调用，见 app.vue） */
 export function initSmartClipListener(): void {
-    window.addEventListener(COPY_EVENT, (ev) => {
-        const detail = (ev as CustomEvent<CopyEventDetail>).detail;
+    bus.on('smart-clip:copy', (detail) => {
         if (!detail || typeof detail.content !== 'string' || detail.content.length === 0) return;
         void handleCopyEvent(detail);
     });

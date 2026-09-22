@@ -1,5 +1,6 @@
 import type { Command } from '../Command';
 import { activeTab } from '~/composables/useTabs';
+import { bus } from '../../core/events';
 
 /**
  * Ctrl+F：聚焦当前标签页的搜索框（聚焦查找）。
@@ -10,6 +11,6 @@ export class FocusSearchCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {
         if (event?.state !== 'Pressed') return;
         if (!activeTab.value) return;
-        window.dispatchEvent(new CustomEvent('focus-search', { detail: { tab: activeTab.value } }));
+        bus.emit('focus-search', { tab: activeTab.value });
     }
 }

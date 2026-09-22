@@ -2,6 +2,7 @@ import { ref, computed, watch } from 'vue';
 import { listen, emit } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import dbService from '~/src/db/dbService';
+import { bus } from '~/src/core/events';
 import { isTauri } from '~/utils/env';
 
 /**
@@ -94,7 +95,7 @@ export function useColorScheme() {
       watch(resolvedScheme, (s) => {
         invoke('set_menu_theme', { theme: s === 'dark' ? 'dark' : 'light' }).catch(() => { /* 菜单主题跟随失败不影响应用 */ });
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('resolved-scheme-changed'));
+          bus.emit('resolved-scheme-changed');
         }
       }, { immediate: true });
     }

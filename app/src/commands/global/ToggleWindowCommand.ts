@@ -1,6 +1,7 @@
 import {getCurrentWindow} from '@tauri-apps/api/window';
 import {getCurrentWebview} from '@tauri-apps/api/webview';
 import type {Command} from '../Command';
+import {bus} from '../../core/events';
 import {applyPopupPosition, savePopupLastPosition} from '~/composables/usePopupPosition';
 
 export class ToggleWindowCommand implements Command {
@@ -49,7 +50,7 @@ export class ToggleWindowCommand implements Command {
                 // 延迟派发事件，等窗口完成显示后让列表元素聚焦（双重保险）
                 setTimeout(() => {
                     window.focus();
-                    window.dispatchEvent(new CustomEvent('window-shown'));
+                    bus.emit('window-shown');
                 }, 80);
             }
         } catch (error) {

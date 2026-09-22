@@ -1,8 +1,10 @@
-import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "~/utils/env";
 import { toDateString } from "~/utils/datetime";
+import { appConnection } from "../core/db/appConnection";
+import type { SqlDatabase } from "../core/db/connection";
+import { createStatsRepository, type StatsRepository } from "../core/db/repositories/statsRepository";
 
 /**
  * 统计服务（单例）
@@ -10,6 +12,9 @@ import { toDateString } from "~/utils/datetime";
  * 职责边界（设计文档 §4）：只负责 `daily_stat` 的读写与聚合查询
  * （record / getDaily / getStatsRange / getDailySeries / 使用时长累计），
  * **不包含任何用户标签 / 趣味换算逻辑**（标签逻辑独立在 userTags.ts）。
+ * SQL 下沉至 core/db/repositories/statsRepository（本服务委托调用），
+ * 连接共享 core/db/appConnection 单例；内存累加、节流落库、pending 合并等
+ * 服务逻辑保留在此，行为不变。
  *
  * 性能约束（设计文档 §14）：
  * - §14.1 写入合并：`record()` 只写内存累加器 pending，2s 节流后 `flush()` 批量 UPSERT；
@@ -71,7 +76,7 @@ export function daySpan(from: string, to: string): number {
 
 class StatsService {
   private static instance: StatsService;
-  private db: Database | undefined;
+  private readonly repo: StatsRepository;
 
   /** 内存累加器：按日期暂存未落库增量，周期批量写库（§14.1） */
   private pending = new Map<string, Partial<Record<StatField, number>>>();
@@ -93,7 +98,9 @@ class StatsService {
   private usageInterval: ReturnType<typeof setInterval> | null = null;
   private usageLastTick = 0;
 
-  private constructor() {}
+  private constructor() {
+    this.repo = createStatsRepository({ conn: appConnection });
+  }
 
   public static getInstance(): StatsService {
     if (!StatsService.instance) {
@@ -102,20 +109,14 @@ class StatsService {
     return StatsService.instance;
   }
 
-  private async initDatabase(): Promise<void> {
-    this.db = await Database.load('sqlite:s1d3_board.db');
-  }
-
   public async ensureDbInitialized(): Promise<void> {
-    if (!this.db) {
-      await this.initDatabase();
-    }
+    await appConnection.ready();
   }
 
   /** 供统计相关模块复用同一数据库连接，避免各模块重复 Database.load（多持连接） */
-  public async getRawDb(): Promise<Database> {
+  public async getRawDb(): Promise<SqlDatabase> {
     await this.ensureDbInitialized();
-    return this.db!;
+    return appConnection.ready();
   }
 
   /** 本地时区今天（YYYY-MM-DD） */
@@ -176,13 +177,7 @@ class StatsService {
       for (const [date, acc] of this.pending) {
         const cols = Object.keys(acc);
         const vals = cols.map(c => acc[c as StatField] ?? 0);
-        const setClause = cols.map(k => `${k} = ${k} + excluded.${k}`).join(', ');
-        await this.db!.execute(
-          `INSERT INTO daily_stat (stat_date, ${cols.join(', ')})
-           VALUES ($1, ${vals.map((_, i) => `$${i + 2}`).join(', ')})
-           ON CONFLICT(stat_date) DO UPDATE SET ${setClause}`,
-          [date, ...vals]
-        );
+        await this.repo.upsertDailyStat(date, cols, vals);
       }
       this.pending.clear();
       await this.flushAppUsage();
@@ -209,9 +204,7 @@ class StatsService {
     this.pending.clear();
     this.appPending.clear();
     await this.ensureDbInitialized();
-    await this.db!.execute("DELETE FROM daily_stat");
-    await this.db!.execute("DELETE FROM app_usage");
-    await this.db!.execute("DELETE FROM app_icons");
+    await this.repo.clearStatsTables();
   }
 
   // ===== 桌面应用使用时长（app_usage 表，Rust 事件监听 → 30s 拉取）=====
@@ -247,14 +240,7 @@ class StatsService {
       await this.ensureDbInitialized();
       for (const [date, bucket] of this.appPending) {
         for (const [app, v] of bucket) {
-          await this.db!.execute(
-            `INSERT INTO app_usage (stat_date, app_name, usage_seconds, active_seconds)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT(stat_date, app_name) DO UPDATE SET
-               usage_seconds = usage_seconds + excluded.usage_seconds,
-               active_seconds = active_seconds + excluded.active_seconds`,
-            [date, app, v.total, v.active],
-          );
+          await this.repo.upsertAppUsage(date, app, v.total, v.active);
         }
       }
       this.appPending.clear();
@@ -310,11 +296,7 @@ private async recordAppIcons(icons: { app: string; icon: string }[]): Promise<vo
     try {
       await this.ensureDbInitialized();
       for (const e of icons) {
-        await this.db!.execute(
-          `INSERT INTO app_icons (app_name, icon) VALUES ($1, $2)
-           ON CONFLICT(app_name) DO UPDATE SET icon = excluded.icon`,
-          [e.app, e.icon],
-        );
+        await this.repo.upsertAppIcon(e.app, e.icon);
       }
     } catch (e) {
       // 图标持久化失败不影响时长统计
@@ -328,20 +310,7 @@ from: string,
 to: string,
 ): Promise<{ app: string; total: number; active: number; icon: string | null }[]> {
 await this.ensureDbInitialized();
-  const rows = await this.db!.select<{
-    app_name: string; total: number; active: number; icon: string | null;
-  }[]>(
-    `SELECT u.app_name AS app_name,
-            SUM(u.usage_seconds) AS total,
-            SUM(u.active_seconds) AS active,
-            i.icon AS icon
-     FROM app_usage u
-     LEFT JOIN app_icons i ON i.app_name = u.app_name
-     WHERE u.stat_date BETWEEN $1 AND $2
-     GROUP BY u.app_name, i.icon
-     ORDER BY SUM(u.usage_seconds) DESC`,
-    [from, to],
-  );
+  const rows = await this.repo.fetchAppUsageRange(from, to);
   const out = new Map<string, { app: string; total: number; active: number; icon: string | null }>();
   for (const r of rows ?? []) {
     out.set(r.app_name, {
@@ -377,11 +346,7 @@ await this.ensureDbInitialized();
   /** 3) 查询单日聚合 */
   public async getDaily(date: string): Promise<StatsSummary> {
     await this.ensureDbInitialized();
-    const fields = DEFAULT_RANGE_FIELDS.map(f => `COALESCE(${f}, 0) AS ${f}`).join(', ');
-    const rows: any[] = await this.db!.select(
-      `SELECT ${fields} FROM daily_stat WHERE stat_date = $1`,
-      [date]
-    );
+    const rows: any[] = await this.repo.fetchDaily(date, DEFAULT_RANGE_FIELDS);
     const sum: StatsSummary = { ...(rows?.[0] ?? {}) };
     // §14.7：合并未落库的当日累加
     this.mergePending(sum, date, date);
@@ -391,13 +356,7 @@ await this.ensureDbInitialized();
   /** 4) 查询区间聚合（日/周/月/年/自定义统一走这里，仅 SELECT 所需列，§14.3） */
   public async getStatsRange(from: string, to: string, fields?: StatField[]): Promise<StatsSummary> {
     await this.ensureDbInitialized();
-    const sumCols = (fields ?? DEFAULT_RANGE_FIELDS)
-      .map(f => `COALESCE(SUM(${f}), 0) AS ${f}`)
-      .join(', ');
-    const rows: any[] = await this.db!.select(
-      `SELECT ${sumCols} FROM daily_stat WHERE stat_date BETWEEN $1 AND $2`,
-      [from, to]
-    );
+    const rows: any[] = await this.repo.fetchStatsRange(from, to, fields ?? DEFAULT_RANGE_FIELDS);
     const sum: StatsSummary = { ...(rows?.[0] ?? {}) };
     this.mergePending(sum, from, to);
     return sum;
@@ -416,24 +375,16 @@ await this.ensureDbInitialized();
     await this.ensureDbInitialized();
     if (fields.length === 0) return [];
     const downsample = daySpan(from, to) > TREND_DOWNSAMPLE_DAYS;
-    const sumExpr = fields.map(f => `COALESCE(${f}, 0)`).join(' + ');
     // §14.7：pending 中本字段增量
     const pendingAdd = (acc: Partial<Record<StatField, number>>): number =>
       fields.reduce((sum, f) => sum + (acc[f] ?? 0), 0);
 
-    let rows: any[];
+    const rows = await this.repo.fetchDailySeries(from, to, fields, downsample);
+    const map = new Map<string, { stat_date: string; value: number }>(
+      rows.map(r => [r.stat_date, { stat_date: r.stat_date, value: Number(r.value ?? 0) }])
+    );
     if (downsample) {
-      // §14.4 按月降采样：服务端 strftime GROUP BY，不把上千行灌入前端
-      rows = await this.db!.select(
-        `SELECT strftime('%Y-%m', stat_date) AS stat_date, ${sumExpr} AS value
-         FROM daily_stat WHERE stat_date BETWEEN $1 AND $2
-         GROUP BY strftime('%Y-%m', stat_date) ORDER BY stat_date`,
-        [from, to]
-      );
       // §14.7：pending 按所属月份合并进降采样结果
-      const map = new Map<string, { stat_date: string; value: number }>(
-        rows.map(r => [r.stat_date, { stat_date: r.stat_date, value: Number(r.value ?? 0) }])
-      );
       for (const [date, acc] of this.pending) {
         if (date < from || date > to) continue;
         const add = pendingAdd(acc);
@@ -446,13 +397,6 @@ await this.ensureDbInitialized();
       return [...map.values()].sort((a, b) => (a.stat_date < b.stat_date ? -1 : 1));
     }
 
-    rows = await this.db!.select(
-      `SELECT stat_date, ${sumExpr} AS value FROM daily_stat WHERE stat_date BETWEEN $1 AND $2 ORDER BY stat_date`,
-      [from, to]
-    );
-    const map = new Map<string, { stat_date: string; value: number }>(
-      rows.map(r => [r.stat_date, { stat_date: r.stat_date, value: Number(r.value ?? 0) }])
-    );
     // §14.7：逐日合并 pending（含跨日边界新行）
     for (const [date, acc] of this.pending) {
       if (date < from || date > to) continue;
@@ -468,33 +412,28 @@ await this.ensureDbInitialized();
   /** 最常复制的文本项（趣味数据"复制之王"，§7.5） */
   public async getTopClipboard(): Promise<{ content: string; count: number } | null> {
     await this.ensureDbInitialized();
-    const rows: any[] = await this.db!.select(
-      `SELECT content, count FROM clipboard WHERE type = 'text' ORDER BY count DESC LIMIT 1`
-    );
+    const rows: any[] = await this.repo.fetchTopClipboardRow();
     return rows?.[0] ?? null;
   }
 
   /** 区间内活跃天数（有统计记录的天数，供标签/粘性计算） */
   public async getActiveDays(from: string, to: string): Promise<number> {
     await this.ensureDbInitialized();
-    const rows: any[] = await this.db!.select(
-      `SELECT COUNT(DISTINCT stat_date) AS days FROM daily_stat WHERE stat_date BETWEEN $1 AND $2`,
-      [from, to]
-    );
+    const rows: any[] = await this.repo.fetchActiveDaysRow(from, to);
     return (rows?.[0]?.days ?? 0);
   }
 
   /** 最早一条统计日期（YYYY-MM-DD），无数据返回 null */
   public async getEarliestDate(): Promise<string | null> {
     await this.ensureDbInitialized();
-    const rows: any[] = await this.db!.select(`SELECT MIN(stat_date) AS d FROM daily_stat`);
+    const rows: any[] = await this.repo.fetchEarliestDateRow();
     return rows?.[0]?.d ?? null;
   }
 
   /** 统计表是否已有任何数据（用于判断是否需要生成演示数据） */
   public async hasAnyData(): Promise<boolean> {
     await this.ensureDbInitialized();
-    const rows: any[] = await this.db!.select(`SELECT COUNT(*) AS cnt FROM daily_stat`);
+    const rows: any[] = await this.repo.fetchCountRow();
     return (rows?.[0]?.cnt ?? 0) > 0;
   }
 

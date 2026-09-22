@@ -152,6 +152,7 @@ import { useI18n } from '~/composables/useI18n';
 import { notifyIsland } from '~/composables/useCopyIsland';
 import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
 import type { Note } from '~/src/entities';
+import { bus } from '~/src/core/events';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import { useFormatDate } from "~/composables/useFormatDate";
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
@@ -219,13 +220,13 @@ const onSaveNote = () => {
 }
 watch(() => props.editing, (editing) => {
   if (editing) {
-    window.addEventListener('save-note', onSaveNote)
+    bus.on('save-note', onSaveNote)
   } else {
-    window.removeEventListener('save-note', onSaveNote)
+    bus.off('save-note', onSaveNote)
   }
 }, { immediate: true })
 onBeforeUnmount(() => {
-  window.removeEventListener('save-note', onSaveNote)
+  bus.off('save-note', onSaveNote)
   if (saveAnimTimer) clearTimeout(saveAnimTimer)
 })
 

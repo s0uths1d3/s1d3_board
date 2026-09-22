@@ -12,18 +12,11 @@
 <script setup lang="ts">
 
 import TitleBar from "~/components/mainpage/TitleBar.vue";
-import {initShortcuts, unregisterAllShortcuts} from "~/src/commands/shortcuts/InitShortcuts";
-import clipboardService from "~/src/db/dbService";
 import {isTauri} from "~/utils/env";
 import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
 import statsService from "~/src/statistics/statsService";
-import reminderService from "~/src/todo/reminderService";
-import { restoreAppUsageSetting } from "~/composables/useAppUsage";
 import { savePopupLastPosition } from "~/composables/usePopupPosition";
-import { initSmartClipListener } from "~/src/smart-clip/smartClip";
-import { restoreIslandApiSetting, setupIslandHistoryBridge } from "~/src/island/islandApi";
-import { restoreIslandWebhookSetting } from "~/src/island/islandWebhook";
-import { initCopyIsland } from "~/composables/useCopyIsland";
+import { createAppRegistry, appContext } from "~/src/modules";
 
 // Tauri 2.11 注入脚本缺陷补丁：unregisterListener 读本地表不判空
 // （listeners[eventId].handlerId）——listen 返回后立即解绑（注册脚本经 webview eval
@@ -171,49 +164,23 @@ async function setupAutoHideOnBlur() {
 
 const route = useRoute();
 
+/** 应用模块注册表（组合根装配；boot 按依赖拓扑序 init→start，shutdown 反序 stop→dispose） */
+const registry = createAppRegistry();
+
 onMounted(async () => {
   if (!isMainWindow()) return;
 
-  // 剪贴板监听依赖 Tauri 插件，纯 Web 环境跳过（否则 onTextUpdate 每次启动报错）
+  // 模块引导（依赖声明固化原启动顺序硬约束）：
+  // smart-clip 挂处理层监听 → clipboard 启动剪贴板监听器（不遗漏最早复制事件）→
+  // island（消费 island:copy）→ statistics → todo-reminder → shortcuts。
+  // 模块依赖 Tauri 插件，纯 Web 环境跳过引导。
   if (isTauri()) {
-    // 智能剪贴板处理层：先挂复制事件监听，再启动剪贴板监听器（不遗漏最早的复制事件）
-    initSmartClipListener();
-    try {
-      await clipboardService.startClipboardListener();
-      console.log('✅ 数据库初始化完成，剪贴板监听已启动');
-    } catch (error) {
-      console.error('❌ 初始化失败:', error);
-    }
-    // 灵动岛提示：复制/粘贴顶部胶囊反馈（设置可开关；依赖剪贴板监听的 island:copy 事件）
-    initCopyIsland();
+    await registry.boot(appContext);
   }
 
-  // 全局快捷键依赖 Tauri 全局快捷键插件，仅在主窗口注册（子窗口如 tooltip 跳过，避免重复注册冲突）
-  if (isTauri() && isMainWindow()) {
-    try {
-      await initShortcuts();
-    } catch (error) {
-      console.error('❌ 快捷键注册失败:', error);
-    }
-  }
-
-  // 失焦自动隐藏（后台驻留模式）
+  // 失焦自动隐藏（后台驻留模式）——窗口生命周期行为，保留在 app.vue
   await setupAutoHideOnBlur();
 
-  // ===== 统计模块（§7.9 / §14.8）=====
-  // 使用时长跟踪（30s 结算一次，增量进入 pending 累加器，§4.5）
-  statsService.startUsageTracking();
-  // ===== 应用使用时长（独立导航 Tab；默认关闭，此处恢复持久化的开关状态）=====
-  void restoreAppUsageSetting();
-  // ===== 待办智能提醒 =====
-  // 调度服务挂主窗口：切 Tab（TodoList 卸载）不丢定时器；内部幂等，TodoList 侧会兜底再调
-  void reminderService.start();
-  // ===== 灵动岛 API（第三方应用集成；按持久化开关恢复）=====
-  void restoreIslandApiSetting();
-  // ===== 灵动岛历史查询桥：GET /api/history 的 HTTP 线程挂起请求由主窗口查库回传（常驻，与 API 开关无关）=====
-  void setupIslandHistoryBridge();
-  // ===== 灵动岛 Webhook 出站推送（事件转发外部 URL；按持久化配置恢复）=====
-  void restoreIslandWebhookSetting();
   // 退出前强制落库 pending（防崩溃/强制退出丢失当日未落库数据，§14.1.1）
   window.addEventListener('beforeunload', flushStatsOnExit);
   if (isTauri()) {
@@ -222,6 +189,7 @@ onMounted(async () => {
       // 不复用 tryHideMainWindow：它带 viewer/置顶/tooltip 等豁免分支，
       // 显式点击 x 应无条件隐藏（含关闭查看器等子窗口）。
       // 统计先落库再隐藏（fire-and-forget 的 flush 会被窗口销毁中断，丢失当日数据）。
+      // 注意此处不可 registry.shutdown()：窗口仅隐藏到托盘，模块须保持运行。
       event.preventDefault();
       try {
         await statsService.flush();
@@ -252,11 +220,8 @@ async function flushStatsOnExit() {
 
 onBeforeUnmount(async () => {
   if (!isMainWindow()) return;
-  await unregisterAllShortcuts();
-  // 停止使用时长跟踪（内部执行最后一次结算 + 落库）
-  statsService.stopUsageTracking();
-  // 应用使用时长：最后拉取一次并落库
-  statsService.stopAppUsageTracking();
+  // 模块收尾：反拓扑序 stop（shortcuts 注销 → statistics 停跟踪落库 → clipboard 反挂监听）
+  await registry.shutdown();
   window.removeEventListener('beforeunload', flushStatsOnExit);
 });
 </script>
