@@ -1,6 +1,6 @@
 # S1d3 Board 开放 API · 灵动岛
 
-> API v1.4.0 · 适用 S1d3 Board ≥ v0.4.0 · 本文档与实现严格同步，以代码为准（实现：`src-tauri/src/island_api.rs`）
+> API v1.4.0 · 适用 S1d3 Board ≥ v0.4.0 · 本文档与实现严格同步，以代码为准（实现：`src-tauri/src/island/api.rs`）
 
 S1d3 Board 通过回环 HTTP 服务对外开放**双向**能力：
 

@@ -1,3 +1,21 @@
+## Unreleased（模块化重构）
+
+> 行为与 0.4.0 完全一致的架构重构；架构文档见 `.docs/architecture.md`。
+
+### ♻️ 重构（前端）
+
+- **core 层**：新增 `core/events.ts` 类型化事件总线（模块间通信唯一通道）、`core/registry.ts` 模块注册表（拓扑排序启动、反向序收尾、单模块故障隔离）、`core/context.ts` 模块能力抽象、`core/db/` 连接层（PRAGMA + execWithRetry）与 9 个领域仓储
+- **插件化模块**：7 个功能域模块（settings / smart-clip / clipboard / island / statistics / todo-reminder / shortcuts）经 `ModuleRegistry` 统一注册，`app.vue` 改为 `registry.boot()` 引导；依赖声明化（smart-clip 先于 clipboard 的启动硬约束固化进拓扑序）
+- **门面兼容**：`dbService` / `statsService` 公共 API 不变，内部委托仓储；剪贴板监听管道平移至 `clipboard/clipboardListener.ts`（单例装配，防双计语义保留）
+- **测试基建**：vitest + happy-dom 全量单测 108 个（仓储 / 注册表 / 事件 / 连接 / 启动顺序）
+
+### ♻️ 重构（Rust）
+
+- **依赖抽象**：`core/traits.rs` 三抽象——`ImageStore`（图片文件存取）/ `ForegroundSource`（前台查询）/ `IslandSink`（岛事件出站），`lib.rs` setup 装配 managed state 注入，命令层只依赖接口（State 不进 invoke 载荷，前端签名不变）
+- **目录分域**（对齐前端 core/ + 域目录 + 装配根）：`core/`（events + traits）、`clipboard/`（image_store + thumb）、`island/`（api + webhook）、`ai/`（engine）、`db/`（migrations）；命令域 `commands/{paste,menu,lifecycle}`，事件名常量集中 `core/events.rs`
+- **实现改造**：image_store 核心逻辑抽目录级函数 + `FsImageStore`；app_usage 平台前台源；island/api 出站桥改 `Arc<dyn IslandSink>` 捕获
+- **测试**：`cargo test` 42+9 全绿——图片消毒/穿越/回环/超限、qrcode QR 扫描回环、CF_DIB 解析、迁移链不变式、Webhook URL 白名单等
+
 ## 0.4.0 (2026-09-21)
 
 本次更新带来两大全新模块——**智能剪贴板**（提取器分词、方案重组与 AI 分析）与**灵动岛**（屏幕顶部胶囊式反馈 + 开放 API / Webhook），为 AI 能力引入自定义提供商与流式响应，并将各窗口的操作反馈统一收敛到灵动岛。

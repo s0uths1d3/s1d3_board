@@ -1,7 +1,7 @@
 # S1d3 Board 数据库设计
 
 > SQLite · 数据库文件 `s1d3_board.db` · 本文档与实现严格同步，以代码为准
-> 迁移定义：`src-tauri/src/migrations.rs` · 服务层：`app/src/db/dbService.ts` · 图片落盘：`src-tauri/src/image_store.rs`
+> 迁移定义：`src-tauri/src/db/migrations.rs` · 服务层：`app/src/db/dbService.ts`（门面）· 仓储层：`app/src/core/db/`（连接 / 迁移 / 领域仓储）· 图片落盘：`src-tauri/src/clipboard/image_store.rs`
 
 ## 1. 总览
 
@@ -24,18 +24,24 @@
 ```mermaid
 flowchart TB
     subgraph FE["前端（每窗口一个 webview）"]
-        DBS["DatabaseService 单例 dbService.ts"]
+        DBS["DatabaseService 单例 dbService.ts<br/>（门面：公共 API 不变）"]
+        REPO["core/db 领域仓储<br/>clipboard / pinned / todo / note /<br/>stat / app_icon / backup / kv / island_history"]
+        CONN["core/db/connection.ts<br/>load + PRAGMA + execWithRetry"]
+        MIG["core/db/migrator.ts<br/>迁移链平移 + ensureFeatureColumns"]
         SS["statsService 统计埋点"]
     end
     subgraph CMD["Tauri 插件 / 命令层"]
         SQL["tauri-plugin-sql 连接池<br/>（每窗口一池，sqlx 多连接）"]
-        IMGCMD["image_store.rs 三件套<br/>save / read / delete"]
+        IMGCMD["clipboard/image_store.rs 三件套<br/>save / read / delete（State 注入 ImageStore trait）"]
     end
     subgraph STORE["存储层 %APPDATA%/S1d3Board/"]
         DBF[("s1d3_board.db<br/>journal_mode=WAL")]
         IMGF[("images 目录<br/>sha256 内容寻址 PNG")]
     end
-    DBS -- "参数化 SQL + execWithRetry" --> SQL
+    DBS --> REPO
+    REPO --> CONN
+    REPO -. "建表兜底" .-> MIG
+    CONN -- "参数化 SQL + execWithRetry" --> SQL
     SQL --> DBF
     DBS -- "invoke" --> IMGCMD
     IMGCMD --> IMGF
@@ -413,7 +419,7 @@ flowchart TB
 | 文件名消毒 | 只允许纯文件名，拒绝任何路径成分（防 `../`、绝对路径穿越） |
 | 路径双保险 | 文件名已消毒，再确认父目录确为 `images` 目录（防符号链接绕过） |
 
-**Rust 命令三件套**（`src-tauri/src/image_store.rs`）：
+**Rust 命令三件套**（`src-tauri/src/clipboard/image_store.rs`）：
 
 | 命令 | 语义 |
 |---|---|
@@ -516,7 +522,8 @@ sequenceDiagram
 
 ## 9. 数据库服务方法清单
 
-`DatabaseService` 单例（`app/src/db/dbService.ts`），按业务分组：
+`DatabaseService` 单例（`app/src/db/dbService.ts`）为对外门面：模块化重构后各方法委托
+`app/src/core/db/repositories/` 领域仓储执行（公共 API 与语义不变），按业务分组：
 
 ### 9.1 剪贴板
 
