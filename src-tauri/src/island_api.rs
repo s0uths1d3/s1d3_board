@@ -28,7 +28,7 @@ use std::time::Duration;
 use tauri::{Emitter, Listener};
 
 /// API 版本（语义化版本；随 `.docs/island-api.md` 更新日志同步）
-pub const API_VERSION: &str = "1.3.0";
+pub const API_VERSION: &str = "1.4.0";
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
 const ACCEPT_POLL: Duration = Duration::from_millis(150);
@@ -266,11 +266,13 @@ pub fn attach_event_bridge(app: &tauri::AppHandle) {
         let Ok(p) = serde_json::from_str::<serde_json::Value>(ev.payload()) else {
             return;
         };
-        // 前端字段 durationMs → SSE 字段 duration；image 为图片内容（data URL，图片事件携带）；ts 为桥接时刻的服务端时间戳
+        // 前端字段 durationMs → SSE 字段 duration；image 为图片内容（data URL，图片事件携带）；
+        // qr_text 为图片事件解码出的二维码文本（v1.4.0）；ts 为桥接时刻的服务端时间戳
         let event = serde_json::json!({
             "text": p.get("text").cloned().unwrap_or(serde_json::Value::Null),
             "kind": p.get("kind").cloned().unwrap_or(serde_json::json!("info")),
             "image": p.get("image").cloned().unwrap_or(serde_json::Value::Null),
+            "qr_text": p.get("qr_text").cloned().unwrap_or(serde_json::Value::Null),
             "title": p.get("title").cloned().unwrap_or(serde_json::Value::Null),
             "duration": p.get("durationMs").and_then(|v| v.as_u64()).unwrap_or(0),
             "ts": std::time::SystemTime::now()
