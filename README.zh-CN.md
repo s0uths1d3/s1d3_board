@@ -174,6 +174,7 @@ S1d3 Board 想做的不是"再来一个效率应用"，而是把这些高频琐�
 | 开放 API | 回环 HTTP/SSE 服务 + Webhook 出站推送（Rust 实现，仅监听 `127.0.0.1`） |
 | 数据采集 | Rust 前台应用监听（Windows / macOS / Linux 分平台实现，30s 分段结算） |
 | 国际化 | 自研轻量 i18n + TOML 语言包（无第三方 i18n 依赖） |
+| 测试 | [Vitest](https://vitest.dev)——仓储层、核心基础设施、模块启动顺序、切分规则 |
 | 语言 | TypeScript（前端）+ Rust（Tauri 壳） |
 
 ## 🚀 快速开始
@@ -211,6 +212,14 @@ npm run tauri:dev
 | Tauri devUrl（指向前端） | `http://localhost:12321` | `src-tauri/tauri.conf.json` |
 
 前端端口由 dev script 显式指定（Nuxt 4 CLI 端口由命令行层管理），并与 `devUrl` 保持一致，否则 dev 模式无法连通。
+
+### 运行测试
+
+```bash
+npm run test          # Vitest 单次运行
+```
+
+覆盖仓储层（剪贴板 / 便签 / 待办 / 常用剪贴 / 方案 / 设置 / 统计 / 岛历史 / 备份）、核心基础设施（事件总线、注册表、数据库连接、列补齐、门面）、模块启动顺序与智能切分规则。
 
 ### 构建生产包
 
@@ -251,7 +260,16 @@ npm run tauri:build
 │   │   │   ├── global/      # 全局快捷键命令
 │   │   │   ├── local/       # 局部快捷键命令
 │   │   │   └── shortcuts/   # 快捷键注册 / 冲突检测 / 持久化
-│   │   ├── db/              # SQLite 数据访问（dbService）
+│   │   ├── core/            # 核心基础设施
+│   │   │   ├── context.ts   # 应用上下文
+│   │   │   ├── events.ts    # 事件总线契约
+│   │   │   ├── registry.ts  # 注册表
+│   │   │   └── db/          # 连接 / 迁移 / 参数化 SQL / 图片引用
+│   │   │       └── repositories/  # 按实体拆分的仓储（剪贴板、便签、待办等）
+│   │   ├── modules/         # 组合根（index.ts）+ 业务模块
+│   │   │                    # （剪贴板 / 灵动岛 / 设置 / 快捷键 / 智能剪贴 / 统计 / 待办提醒）
+│   │   ├── clipboard/       # 剪贴板监听
+│   │   ├── db/              # dbService 门面（保持对外 API 不变）
 │   │   ├── island/          # 灵动岛业务（弹岛服务 / API 桥 / 历史数据源）
 │   │   ├── smart-clip/      # 智能剪贴板管线（切分 / 预判 / 分析 / 方案执行）
 │   │   ├── statistics/      # 统计服务（statsService / userTags）
@@ -262,10 +280,15 @@ npm run tauri:build
 ├── server/                  # Nuxt server
 ├── src-tauri/               # Tauri 壳（Rust）
 │   └── src/
-│       ├── app_usage/       # 前台应用时长采集（windows / macos / linux / unsupported）
-│       ├── ai.rs            # AI 提供商代理（OpenAI 兼容 / Anthropic / 自定义 JSON，SSE 流式）
-│       ├── island_api.rs    # 灵动岛开放 API（回环 HTTP/SSE + 历史查询）
-│       └── island_webhook.rs # 岛事件 Webhook 出站推送（HMAC 签名 + 重试）
+│       ├── lib.rs           # 装配根：注册插件、注入 traits 实现、登记命令清单
+│       ├── core/            # 核心契约（事件、平台 traits：ForegroundSource / ImageStore）
+│       ├── db/              # 迁移清单与执行
+│       ├── clipboard/       # thumb（缩略图 + 二维码扫描）、image_store（内容寻址落盘）
+│       ├── island/          # api（回环 HTTP/SSE + 历史查询）、webhook（HMAC 推送 + 重试）
+│       ├── ai/              # AI 提供商代理（OpenAI 兼容 / Anthropic / 自定义 JSON，SSE 流式）
+│       ├── commands/        # lifecycle / menu / paste
+│       └── app_usage/       # 前台应用时长采集（windows / macos / linux / unsupported）
+├── .docs/                   # 设计文档（架构 / 数据库 / 灵动岛 API / 智能剪贴 AI 分析）
 ├── nuxt.config.ts
 ├── tailwind.config.js
 └── tsconfig.json
@@ -273,6 +296,8 @@ npm run tauri:build
 
 ## ⚙️ 架构说明
 
+- **分层结构**：前端拆为 `core/`（基础设施：上下文、事件、注册表、数据库连接与迁移）+ `core/db/repositories/`（按实体的数据访问）+ `modules/`（组合根与业务模块），`dbService` 保留为门面，下游无感知；Rust 侧同构为域模块（`core` / `db` / `clipboard` / `island` / `ai` / `commands`），`lib.rs` 作为装配根
+- **平台能力 traits 化**：Rust 在装配时注入具体实现（`FsImageStore` / `PlatformForegroundSource`），域逻辑不依赖平台细节，测试可替换实现
 - **命令模式**：快捷键统一映射到 `Command`，全局/局部作用域区分，避免冲突
 - **事件解耦**：快捷键命令通过 `window.dispatchEvent` 派发业务事件，页面监听处理
 - **几何最近邻导航**：方向键选中基于元素视觉坐标计算最近项，适配网格/瀑布流

@@ -173,6 +173,7 @@ Copied content flows through an "**extractor → scheme → smart segmentation**
 | Open API | loopback HTTP/SSE server + outbound webhooks (Rust side, listens on `127.0.0.1` only) |
 | Data collection | Rust foreground-app watcher (per-platform for Windows / macOS / Linux, 30s segments) |
 | Internationalization | lightweight in-house i18n + TOML catalogues (no third-party i18n dependency) |
+| Testing | [Vitest](https://vitest.dev) — repositories, core infrastructure, module boot order, segmentation rules |
 | Languages | TypeScript (frontend) + Rust (Tauri shell) |
 
 ## 🚀 Getting started
@@ -211,6 +212,14 @@ npm run tauri:dev
 | Tauri devUrl (points at frontend) | `http://localhost:12321` | `src-tauri/tauri.conf.json` |
 
 The frontend port is set explicitly by the dev script (Nuxt 4's CLI owns the port) and must match `devUrl`, otherwise dev mode can't connect.
+
+### Run tests
+
+```bash
+npm run test          # Vitest, single run
+```
+
+Covers the repository layer (clipboard / note / todo / pinned / scheme / settings / stats / island history / backup), core infrastructure (events, registry, db connection, migrator, facade), module boot order and smart-clip segmentation rules.
 
 ### Build for production
 
@@ -251,7 +260,16 @@ For a build with debug symbols (troubleshooting): `npm run tauri build -- --debu
 │   │   │   ├── global/      # Global shortcut commands
 │   │   │   ├── local/       # Local shortcut commands
 │   │   │   └── shortcuts/   # Registration / conflict detection / persistence
-│   │   ├── db/              # SQLite data access (dbService)
+│   │   ├── core/            # Core infrastructure
+│   │   │   ├── context.ts   # Application context
+│   │   │   ├── events.ts    # Event bus contract
+│   │   │   ├── registry.ts  # Registry
+│   │   │   └── db/          # connection / appConnection / migrator / sql / imageRef
+│   │   │       └── repositories/  # Per-entity repositories (clipboard, note, todo, ...)
+│   │   ├── modules/         # Composition root (index.ts) + business modules
+│   │   │                    # (clipboard / island / settings / shortcuts / smartClip / statistics / todoReminder)
+│   │   ├── clipboard/       # Clipboard listener
+│   │   ├── db/              # dbService facade (keeps the public API)
 │   │   ├── island/          # Dynamic island domain (show service / API bridge / history source)
 │   │   ├── smart-clip/      # Smart clipboard pipeline (segmentation / pre-judgment / analysis / schemes)
 │   │   ├── statistics/      # Statistics service (statsService / userTags)
@@ -262,10 +280,15 @@ For a build with debug symbols (troubleshooting): `npm run tauri build -- --debu
 ├── server/                  # Nuxt server
 ├── src-tauri/               # Tauri shell (Rust)
 │   └── src/
-│       ├── app_usage/       # Foreground app tracking (windows / macos / linux / unsupported)
-│       ├── ai.rs            # AI provider proxy (OpenAI-compatible / Anthropic / custom JSON, SSE streaming)
-│       ├── island_api.rs    # Dynamic island open API (loopback HTTP/SSE + history query)
-│       └── island_webhook.rs # Island event webhook push (HMAC signature + retry)
+│       ├── lib.rs           # Composition root: registers plugins, injects trait impls, lists commands
+│       ├── core/            # Core contracts (events, platform traits: ForegroundSource / ImageStore)
+│       ├── db/              # Migrations
+│       ├── clipboard/       # thumb (resize + QR scan), image_store (content-addressed file storage)
+│       ├── island/          # api (loopback HTTP/SSE + history query), webhook (HMAC push + retry)
+│       ├── ai/              # AI provider proxy (OpenAI-compatible / Anthropic / custom JSON, SSE)
+│       ├── commands/        # lifecycle / menu / paste
+│       └── app_usage/       # Foreground app tracking (windows / macos / linux / unsupported)
+├── .docs/                   # Design docs (architecture / database / island-api / smart-clip AI analysis)
 ├── nuxt.config.ts
 ├── tailwind.config.js
 └── tsconfig.json
@@ -273,6 +296,8 @@ For a build with debug symbols (troubleshooting): `npm run tauri build -- --debu
 
 ## ⚙️ Architecture
 
+- **Layered structure**: the frontend splits into `core/` (infrastructure: context, events, registry, db connection/migrator) + `core/db/repositories/` (per-entity data access) + `modules/` (composition root and business modules); `dbService` stays as a facade so downstream code is unaffected. The Rust side mirrors it with domain modules (`core` / `db` / `clipboard` / `island` / `ai` / `commands`) and `lib.rs` as the composition root
+- **Traits for platform capabilities**: Rust injects concrete implementations (`FsImageStore`, `PlatformForegroundSource`) at assembly time, so domains don't depend on platform specifics — and tests can swap them
 - **Command pattern**: shortcuts map to `Command` objects with global / local scopes to avoid collisions
 - **Event decoupling**: shortcut commands dispatch business events via `window.dispatchEvent`; pages listen and react
 - **Geometric nearest-neighbor navigation**: arrow keys pick the visually nearest item, working for grids and masonry layouts
