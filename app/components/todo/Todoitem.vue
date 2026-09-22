@@ -8,7 +8,7 @@
       <div class="flex items-start gap-3">
         <div class="pt-1">
           <label
-              class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border transition-all duration-300 ease-soft hover:shadow-sm"
+              class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border transition-all duration-300 ease-soft hover:shadow-xs"
               :class="visualCompleted ? 'border-gold bg-gold hover:bg-gold-soft' : 'border-line bg-surface-field hover:border-gold hover:bg-secondary'"
               v-tip="t('common.mark_complete')"
           >
@@ -192,7 +192,7 @@
                           type="text"
                           :placeholder="t('todo.new_category_placeholder')"
                           maxlength="10"
-                          class="w-full rounded-lg border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                          class="w-full rounded-lg border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
                           @keydown.enter.prevent="addNewCategory(close)"
                       />
                     </li>
@@ -236,7 +236,7 @@
                 v-model="editTitle"
                 :data-todo-edit-title="todo.id"
                 type="text"
-                class="min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                class="min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
                 :placeholder="t('todo.title_placeholder')"
                 @keyup.enter="onTitleEnterSave"
             />
@@ -263,7 +263,7 @@
         </div>
         <textarea
             v-model="editDescription"
-            class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+            class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
             :placeholder="t('todo.desc_placeholder')"
             rows="2"
         ></textarea>

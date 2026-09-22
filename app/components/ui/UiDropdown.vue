@@ -200,7 +200,7 @@ onBeforeUnmount(() => {
     <!-- 触发器：统一接管点击开/关（再次点击收起），键盘可达 -->
     <div
         ref="triggerEl"
-        class="cursor-pointer outline-none"
+        class="cursor-pointer outline-hidden"
         role="button"
         :aria-haspopup="true"
         :aria-expanded="open"
@@ -221,7 +221,7 @@ onBeforeUnmount(() => {
               ref="panelEl"
               :class="panelClass"
               :style="panelCapStyle"
-              class="outline-none"
+              class="outline-hidden"
               @click="onPanelClick"
           >
             <slot :close="close" :open="open" />

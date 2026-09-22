@@ -89,7 +89,7 @@ const rowLevelInput = (e: Event, idx: number) => {
   >
     <template #trigger="{ open }">
       <label
-          class="flex w-full cursor-pointer items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
+          class="flex w-full cursor-pointer items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-hidden"
           :class="open ? 'border-gold' : ''"
       >
         <span class="flex min-w-0 items-center gap-2">
@@ -139,18 +139,18 @@ const rowLevelInput = (e: Event, idx: number) => {
               <input
                   type="number" min="0" max="255"
                   :value="row.level"
-                  class="w-14 shrink-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs tabular-nums text-ink focus:border-gold focus:outline-none"
+                  class="w-14 shrink-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs tabular-nums text-ink focus:border-gold focus:outline-hidden"
                   @change="rowLevelInput($event, idx)"
               />
               <input
                   type="text" maxlength="8" :placeholder="t('todo.level_name', { n: row.level })"
                   v-model="row.name"
-                  class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                  class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
               />
               <button
                   type="button"
                   v-tip="t('common.change_color_short')"
-                  class="h-6 w-6 shrink-0 rounded-full border border-white/60 shadow-sm transition-transform hover:scale-110"
+                  class="h-6 w-6 shrink-0 rounded-full border border-white/60 shadow-xs transition-transform hover:scale-110"
                   :style="{ backgroundColor: row.color }"
                   @click="colorRow = colorRow === idx ? null : idx"
               />

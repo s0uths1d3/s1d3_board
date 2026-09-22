@@ -949,7 +949,7 @@ async function openImageViewer(item: ClipboardData) {
                       v-model="highlightContent"
                       type="text"
                       :placeholder="t('clip.search_placeholder')"
-                      class="list-search-input w-full bg-transparent text-ink placeholder:text-ink-faint focus:outline-none"
+                      class="list-search-input w-full bg-transparent text-ink placeholder:text-ink-faint focus:outline-hidden"
                   />
                   <button
                       type="button"
@@ -1011,7 +1011,7 @@ async function openImageViewer(item: ClipboardData) {
               <ul
                 ref="listElement"
                 id="listElement"
-                class="list space-y-2 rounded-2xl outline-none"
+                class="list space-y-2 rounded-2xl outline-hidden"
                 tabindex="0"
                 @keydown="onListKeydown"
               >

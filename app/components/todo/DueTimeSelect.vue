@@ -512,7 +512,7 @@ onBeforeUnmount(() => {
   <div ref="rootEl" class="relative w-auto max-w-[13rem]">
     <label
       tabindex="0"
-      class="flex w-full cursor-pointer items-center justify-between gap-2 whitespace-nowrap rounded-lg border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
+      class="flex w-full cursor-pointer items-center justify-between gap-2 whitespace-nowrap rounded-lg border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-hidden"
       :class="open ? 'border-gold' : ''"
       @click="open = !open"
       @keydown.enter.prevent="open = !open"
@@ -578,7 +578,7 @@ onBeforeUnmount(() => {
                   type="text"
                   maxlength="12"
                   :placeholder="t('todo.group_name_placeholder')"
-                  class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
+                  class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-hidden focus:border-gold"
                   @keydown.enter.prevent="submitGroupName"
                   @keydown.esc.prevent="cancelGroupRename"
                   @click.stop
@@ -613,7 +613,7 @@ onBeforeUnmount(() => {
                   type="text"
                   maxlength="12"
                   :placeholder="t('todo.new_group_name_placeholder')"
-                  class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
+                  class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-hidden focus:border-gold"
                   @keydown.enter.prevent="submitGroupName"
                   @keydown.esc.prevent="cancelGroupRename"
                   @click.stop
@@ -636,7 +636,7 @@ onBeforeUnmount(() => {
                       type="text"
                       maxlength="20"
                       :placeholder="t('todo.name')"
-                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
+                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-hidden focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
@@ -671,7 +671,7 @@ onBeforeUnmount(() => {
                       type="text"
                       maxlength="20"
                       :placeholder="t('todo.name')"
-                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
+                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-hidden focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
@@ -701,7 +701,7 @@ onBeforeUnmount(() => {
                       type="text"
                       maxlength="20"
                       :placeholder="t('todo.name')"
-                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
+                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-hidden focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
@@ -735,7 +735,7 @@ onBeforeUnmount(() => {
                       type="text"
                       maxlength="20"
                       :placeholder="t('todo.name')"
-                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
+                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-hidden focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
@@ -765,7 +765,7 @@ onBeforeUnmount(() => {
                       type="text"
                       maxlength="20"
                       :placeholder="t('todo.name')"
-                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
+                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-hidden focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop
@@ -799,7 +799,7 @@ onBeforeUnmount(() => {
                       type="text"
                       maxlength="20"
                       :placeholder="t('todo.name')"
-                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-none focus:border-gold"
+                      class="w-full min-w-0 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs text-ink outline-hidden focus:border-gold"
                       @keydown.enter.prevent="confirmRename"
                       @keydown.esc.prevent="cancelRename"
                       @click.stop

@@ -238,7 +238,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="no-drag flex items-center gap-2">
         <button
-            class="flex h-7 w-7 items-center justify-center rounded-full text-danger transition-all duration-300 ease-soft hover:bg-danger/10 hover:shadow-sm"
+            class="flex h-7 w-7 items-center justify-center rounded-full text-danger transition-all duration-300 ease-soft hover:bg-danger/10 hover:shadow-xs"
             v-tip="t('common.close_esc')"
             @click="closeViewer"
         >

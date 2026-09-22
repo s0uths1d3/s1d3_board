@@ -259,13 +259,13 @@ onUnmounted(() => {
                   <input
                       v-model="editingName"
                       :placeholder="t('clip.name_optional')"
-                      class="w-full rounded-xl border border-accent bg-surface-field px-3 py-1.5 text-sm text-ink focus:border-gold focus:outline-none"
+                      class="w-full rounded-xl border border-accent bg-surface-field px-3 py-1.5 text-sm text-ink focus:border-gold focus:outline-hidden"
                   />
                   <textarea
                       v-if="item.type === 'text'"
                       v-model="editingContent"
                       rows="3"
-                      class="mt-2 w-full rounded-xl border border-accent bg-surface-field px-3 py-1.5 text-sm text-ink focus:border-gold focus:outline-none"
+                      class="mt-2 w-full rounded-xl border border-accent bg-surface-field px-3 py-1.5 text-sm text-ink focus:border-gold focus:outline-hidden"
                   ></textarea>
                   <p v-else class="mt-2 text-xs text-ink-faint">{{ t('common.image_not_editable') }}</p>
                   <div class="mt-2 flex flex-wrap gap-2">

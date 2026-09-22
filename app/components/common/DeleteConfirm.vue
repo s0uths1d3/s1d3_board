@@ -148,9 +148,9 @@ onBeforeUnmount(() => {
         <div class="flex-1 font-bold text-ink">{{ displayMessage }}</div>
       </div>
       <div class="flex w-full justify-center gap-4">
-        <button ref="cancelBtn" type="button" class="btn-soft outline-none focus:ring-2 focus:ring-gold/60"
+        <button ref="cancelBtn" type="button" class="btn-soft outline-hidden focus:ring-2 focus:ring-gold/60"
                 @click="emit('cancel')">{{ t('common.cancel') }}</button>
-        <button ref="okBtn" type="button" class="btn-gold outline-none focus:ring-2 focus:ring-gold/60"
+        <button ref="okBtn" type="button" class="btn-gold outline-hidden focus:ring-2 focus:ring-gold/60"
                 @click="emit('confirm')">{{ t('common.confirm') }}</button>
       </div>
     </div>

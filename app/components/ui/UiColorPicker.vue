@@ -53,7 +53,7 @@ function update(hex: string) {
     <!-- 自定义：十六进制输入（当前颜色以色点实时预览） -->
     <div v-if="allowCustom" class="flex items-center gap-2">
       <span
-          class="h-6 w-6 shrink-0 rounded-md border border-white/60 shadow-sm"
+          class="h-6 w-6 shrink-0 rounded-md border border-white/60 shadow-xs"
           :style="{ backgroundColor: safeValue || '#dcc88a' }"
       />
       <input
@@ -62,7 +62,7 @@ function update(hex: string) {
           spellcheck="false"
           placeholder="#c4a77d"
           :value="safeValue"
-          class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs tabular-nums text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+          class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs tabular-nums text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
           @change="update(($event.target as HTMLInputElement).value)"
       />
     </div>

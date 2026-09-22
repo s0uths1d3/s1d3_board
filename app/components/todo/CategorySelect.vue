@@ -84,7 +84,7 @@ watch(open, (v) => {
   >
     <template #trigger="{ open: isOpen }">
       <label
-          class="flex w-full cursor-pointer items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
+          class="flex w-full cursor-pointer items-center justify-between gap-2 whitespace-nowrap rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm transition-colors duration-300 ease-soft focus:border-gold focus:outline-hidden"
           :class="isOpen ? 'border-gold' : ''"
       >
         <span class="truncate" :class="modelValue ? 'text-ink' : 'text-ink-faint'">{{ categoryName(modelValue) || placeholderText }}</span>
@@ -128,7 +128,7 @@ watch(open, (v) => {
             type="text"
             :placeholder="t('todo.new_category_placeholder')"
             maxlength="10"
-            class="w-36 rounded-md border border-accent bg-surface-field px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+            class="w-36 rounded-md border border-accent bg-surface-field px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
             @keydown.enter.prevent="submitNew"
         />
       </li>

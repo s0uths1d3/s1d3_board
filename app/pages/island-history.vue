@@ -376,7 +376,7 @@ onBeforeUnmount(() => dismissImagePreview());
       </div>
       <div class="no-drag flex items-center gap-2">
         <button
-            class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
+            class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-xs"
             v-tip="t('titlebar.minimize')"
             @click="minimizeWin"
         >
@@ -385,7 +385,7 @@ onBeforeUnmount(() => dismissImagePreview());
           </svg>
         </button>
         <button
-            class="flex h-7 w-7 items-center justify-center rounded-full text-danger transition-all duration-300 ease-soft hover:bg-danger/10 hover:shadow-sm"
+            class="flex h-7 w-7 items-center justify-center rounded-full text-danger transition-all duration-300 ease-soft hover:bg-danger/10 hover:shadow-xs"
             v-tip="t('titlebar.close')"
             @click="closeWin"
         >
@@ -497,7 +497,7 @@ onBeforeUnmount(() => dismissImagePreview());
           <button
               type="button"
               tabindex="-1"
-              class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
+              class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-xs"
               v-tip="t('island_history.export')"
           >
             <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -542,7 +542,7 @@ onBeforeUnmount(() => dismissImagePreview());
             </div>
             <button
                 type="button"
-                class="flex h-8 w-full items-center justify-center gap-1.5 rounded-xl bg-gold text-xs font-medium text-on-gold transition-all duration-300 ease-soft hover:shadow-sm disabled:pointer-events-none disabled:opacity-60"
+                class="flex h-8 w-full items-center justify-center gap-1.5 rounded-xl bg-gold text-xs font-medium text-on-gold transition-all duration-300 ease-soft hover:shadow-xs disabled:pointer-events-none disabled:opacity-60"
                 :disabled="exporting || items.length === 0"
                 @click="doExport(close)"
             >

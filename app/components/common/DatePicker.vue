@@ -374,7 +374,7 @@ const clearable = computed(() => hasValue.value);
     <button
       v-if="!hideTrigger"
       type="button"
-      class="flex w-full items-center justify-between gap-2 rounded-lg border border-accent bg-surface-field transition-colors duration-300 ease-soft focus:border-gold focus:outline-none"
+      class="flex w-full items-center justify-between gap-2 rounded-lg border border-accent bg-surface-field transition-colors duration-300 ease-soft focus:border-gold focus:outline-hidden"
       :class="[
         open ? 'border-gold' : '',
         size === 'md' ? 'px-3 py-2 text-sm' : 'px-3 py-1.5 text-sm',
@@ -469,7 +469,7 @@ const clearable = computed(() => hasValue.value);
             <!-- 小时选择（0-23）：面板靠近视口底部，向上展开避免被屏幕裁切 -->
             <UiDropdown align="end" direction="up" :close-on-select="false" :aria-label="t('date.hour')" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive('hour', hour)">
               <template #trigger>
-                <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none">
+                <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-hidden">
                   <span>{{ pad(hour) }}</span>
                   <svg class="h-3 w-3 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M6 9l6 6 6-6" />
@@ -496,7 +496,7 @@ const clearable = computed(() => hasValue.value);
             <!-- 分钟选择（0-59） -->
             <UiDropdown align="end" direction="up" :close-on-select="false" :aria-label="t('date.minute')" panel-class="glass-card menu w-16 rounded-xl p-1 dd-keep-open-panel" @open="scrollToActive('minute', minute)">
               <template #trigger>
-                <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-none">
+                <label class="flex cursor-pointer items-center gap-1 rounded-lg border border-accent bg-surface-field px-2 py-1 text-sm text-ink tabular-nums focus:border-gold focus:outline-hidden">
                   <span>{{ pad(minute) }}</span>
                   <svg class="h-3 w-3 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M6 9l6 6 6-6" />

@@ -23,7 +23,7 @@
               v-model="noteSearch"
               type="text"
               :placeholder="t('note.search_placeholder')"
-              class="h-full min-w-0 flex-1 bg-transparent text-ink placeholder:text-ink-faint focus:outline-none"
+              class="h-full min-w-0 flex-1 bg-transparent text-ink placeholder:text-ink-faint focus:outline-hidden"
               @keydown.enter.prevent="jumpToFirstMatch"
           />
           <button

@@ -47,7 +47,7 @@
                 v-model="searchQuery"
                 type="text"
                 :placeholder="t('todo.search_placeholder')"
-                class="todo-search-input min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                class="todo-search-input min-w-0 flex-1 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
             />
 
             <UiDropdown align="center" :aria-label="t('todo.filter')" panel-class="glass-card menu w-max min-w-32 rounded-2xl p-2">
@@ -106,7 +106,7 @@
               <input
                   v-model="newTodo.title"
                   type="text"
-                  class="todo-title-input w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                  class="todo-title-input w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
                   :placeholder="t('todo.title_placeholder') + ' *'"
                   @keyup.enter="newTodo.title ? descriptionInput?.focus() : null"
               />
@@ -114,7 +114,7 @@
               <textarea
                   ref="descriptionInput"
                   v-model="newTodo.description"
-                  class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                  class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
                   :placeholder="t('todo.desc_placeholder')"
                   rows="2"
               ></textarea>

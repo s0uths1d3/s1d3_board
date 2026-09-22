@@ -309,7 +309,7 @@ onBeforeUnmount(() => {
                   :key="slice.name"
                   class="flex items-center gap-2 text-xs"
               >
-                <span class="h-2.5 w-2.5 shrink-0 rounded-sm" :style="{ backgroundColor: slice.color }"></span>
+                <span class="h-2.5 w-2.5 shrink-0 rounded-xs" :style="{ backgroundColor: slice.color }"></span>
                 <span class="min-w-0 flex-1 truncate text-ink-soft">{{ slice.name }}</span>
                 <span class="shrink-0 font-medium tabular-nums text-ink">{{ slice.pct }}%</span>
               </div>

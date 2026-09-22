@@ -197,7 +197,7 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
           <div class="flex items-center gap-1.5">
             <select
                 :value="rule.kind"
-                class="h-7 shrink-0 cursor-pointer rounded-md border border-accent bg-surface-field px-1 text-xs text-ink focus:border-gold focus:outline-none"
+                class="h-7 shrink-0 cursor-pointer rounded-md border border-accent bg-surface-field px-1 text-xs text-ink focus:border-gold focus:outline-hidden"
                 @change="onKindChange(idx, ($event.target as HTMLSelectElement).value as ReminderRule['kind'], rule)"
             >
               <option value="percent">{{ t('reminder.kind_percent') }}</option>
@@ -208,7 +208,7 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
               <!-- 触发按钮：展示当前指定时刻，点击打开统一日期时间选择面板 -->
               <button
                   type="button"
-                  class="w-full cursor-pointer truncate rounded-md border bg-surface-field px-1.5 py-1 text-left text-xs tabular-nums transition-colors duration-300 ease-soft hover:border-gold focus:outline-none"
+                  class="w-full cursor-pointer truncate rounded-md border bg-surface-field px-1.5 py-1 text-left text-xs tabular-nums transition-colors duration-300 ease-soft hover:border-gold focus:outline-hidden"
                   :class="atPickerIdx === idx ? 'border-gold' : 'border-accent'"
                   @click.stop="toggleAtPicker(idx)"
               >
@@ -234,7 +234,7 @@ function onKindChange(idx: number, kind: ReminderRule['kind'], cur: ReminderRule
                   :min="1"
                   :max="rule.kind === 'percent' ? 99 : 10080"
                   :value="rule.value"
-                  class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs tabular-nums text-ink focus:border-gold focus:outline-none"
+                  class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-1.5 py-1 text-xs tabular-nums text-ink focus:border-gold focus:outline-hidden"
                   @change="updateRule(idx, { value: clampRuleValue(rule.kind, ($event.target as HTMLInputElement).value) })"
               />
               <span class="shrink-0 text-xs text-ink-faint">{{ rule.kind === 'percent' ? t('reminder.unit_percent') : t('reminder.unit_min') }}</span>

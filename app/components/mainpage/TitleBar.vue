@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
     <!-- 右侧：快速切换配色（跟随系统→琥珀→浅色→深色循环）+ 窗口控制按钮 -->
     <div class="no-drag flex items-center gap-2">
       <button
-          class="relative flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
+          class="relative flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-xs"
           v-tip="t('titlebar.switch_color_scheme')"
           :aria-label="t('titlebar.switch_color_scheme')"
           @click="onSchemeClick"
@@ -186,7 +186,7 @@ onBeforeUnmount(() => {
 
       <div v-if="isTauri()" class="flex items-center gap-2">
       <button
-          class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
+          class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-xs"
           v-tip="t('titlebar.island_history')"
           :aria-label="t('titlebar.island_history')"
           @click="toggleIslandHistoryWindow"
@@ -200,7 +200,7 @@ onBeforeUnmount(() => {
       </button>
 
       <button
-          class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-sm"
+          class="flex h-7 w-7 items-center justify-center rounded-full text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-xs"
           v-tip="t('titlebar.minimize')"
           @click="minimize"
       >
@@ -210,7 +210,7 @@ onBeforeUnmount(() => {
       </button>
 
       <button
-          class="flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:shadow-sm"
+          class="flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:shadow-xs"
           :class="isMaximized ? 'text-gold bg-gold/15 hover:bg-gold/25' : 'text-ink-soft hover:bg-secondary'"
           v-tip="t(isMaximized ? 'titlebar.restore' : 'titlebar.maximize')"
           @click="toggleMaximize"
@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
       </button>
 
       <button
-          class="flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:shadow-sm"
+          class="flex h-7 w-7 items-center justify-center rounded-full transition-all duration-300 ease-soft hover:shadow-xs"
           :class="alwaysOnTop ? 'text-gold bg-gold/15 hover:bg-gold/25' : 'text-ink-soft hover:bg-secondary'"
           v-tip="t(alwaysOnTop ? 'titlebar.unpin_window' : 'titlebar.pin_window')"
           @click="toggleAlwaysOnTop"
@@ -238,7 +238,7 @@ onBeforeUnmount(() => {
       </button>
 
       <button
-          class="flex h-7 w-7 items-center justify-center rounded-full text-danger transition-all duration-300 ease-soft hover:bg-danger/10 hover:shadow-sm"
+          class="flex h-7 w-7 items-center justify-center rounded-full text-danger transition-all duration-300 ease-soft hover:bg-danger/10 hover:shadow-xs"
           v-tip="t('titlebar.close')"
           @click="close"
       >

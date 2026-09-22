@@ -37,7 +37,7 @@ function onInput(e: Event): void {
       :placeholder="placeholder"
       autocomplete="off"
       spellcheck="false"
-      class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 pr-10 text-ink focus:border-gold focus:outline-none"
+      class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 pr-10 text-ink focus:border-gold focus:outline-hidden"
       @input="onInput"
       @blur="emit('save')"
     />
@@ -70,7 +70,7 @@ function onInput(e: Event): void {
     type="text"
     :value="modelValue"
     :placeholder="placeholder"
-    class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-none"
+    class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink focus:border-gold focus:outline-hidden"
     @input="onInput"
     @blur="emit('save')"
   />

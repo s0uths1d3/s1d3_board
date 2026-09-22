@@ -45,7 +45,7 @@ const emit = defineEmits<{
       <div class="flex items-center gap-2">
         <button
             type="button"
-            class="w-56 rounded-xl border border-accent bg-surface-field px-3 py-2 text-center font-mono text-sm font-semibold text-ink transition-all duration-300 ease-soft hover:border-gold focus:outline-none"
+            class="w-56 rounded-xl border border-accent bg-surface-field px-3 py-2 text-center font-mono text-sm font-semibold text-ink transition-all duration-300 ease-soft hover:border-gold focus:outline-hidden"
             :class="recording ? 'border-gold ring-1 ring-gold/60 animate-pulse' : ''"
             @click="emit('record')"
         >

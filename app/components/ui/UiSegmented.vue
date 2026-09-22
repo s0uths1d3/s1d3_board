@@ -70,7 +70,7 @@ function select(v: string) {
         v-tip="opt.tip || undefined"
         class="rounded-lg tabular-nums transition-all duration-200 ease-soft"
         :class="[btnClass, modelValue === opt.value
-            ? 'bg-gold text-on-gold shadow-sm'
+            ? 'bg-gold text-on-gold shadow-xs'
             : 'text-ink-soft hover:bg-secondary']"
         @click="select(opt.value)"
     >

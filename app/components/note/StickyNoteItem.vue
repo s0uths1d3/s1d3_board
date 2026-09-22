@@ -11,7 +11,7 @@
         <template #trigger>
           <div
               v-tip="t('common.change_color')"
-              class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-ink-soft outline-none transition-colors hover:bg-white/40 hover:text-ink focus:outline-none"
+              class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-ink-soft outline-hidden transition-colors hover:bg-white/40 hover:text-ink focus:outline-hidden"
           >
             <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path>
@@ -28,7 +28,7 @@
                   :key="c.name"
                   type="button"
                   v-tip="c.name"
-                  class="flex h-7 w-7 items-center justify-center rounded-full border border-white/60 shadow-sm transition-transform hover:scale-110"
+                  class="flex h-7 w-7 items-center justify-center rounded-full border border-white/60 shadow-xs transition-transform hover:scale-110"
                   :style="{ backgroundColor: c.color }"
                   @click="$emit('color-change', note.id, c.color)"
               >
@@ -46,7 +46,7 @@
                 <button
                     type="button"
                     v-tip="t('common.change_color_short')"
-                    class="h-5 w-5 shrink-0 rounded-full border border-white/60 shadow-sm transition-transform hover:scale-110"
+                    class="h-5 w-5 shrink-0 rounded-full border border-white/60 shadow-xs transition-transform hover:scale-110"
                     :class="colorRow === idx ? 'ring-2 ring-gold' : ''"
                     :style="{ backgroundColor: row.color }"
                     @click="colorRow = colorRow === idx ? null : idx"
@@ -54,7 +54,7 @@
                 <input
                     type="text" maxlength="8" :placeholder="t('note.color_name_placeholder')"
                     v-model="row.name"
-                    class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-none"
+                    class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
                 />
                 <button
                     type="button"
@@ -120,7 +120,7 @@
           v-model="editContent"
           ref="textareaRef"
           rows="1"
-          class="w-full resize-none overflow-hidden rounded-lg bg-transparent px-1 py-0.5 text-ink outline-none focus:bg-white/30 focus:shadow-[inset_0_0_0_1px_rgba(196,167,125,0.35)] transition-colors"
+          class="w-full resize-none overflow-hidden rounded-lg bg-transparent px-1 py-0.5 text-ink outline-hidden focus:bg-white/30 focus:shadow-[inset_0_0_0_1px_rgba(196,167,125,0.35)] transition-colors"
           :placeholder="t('note.content_placeholder')"
           @blur="saveAndClose"
           @input="autoResize"
@@ -135,7 +135,7 @@
       </div>
       <div
           v-if="editing && saveShortcut"
-          class="pointer-events-none rounded-md bg-white/35 px-2 py-0.5 text-[11px] text-ink-soft backdrop-blur-sm"
+          class="pointer-events-none rounded-md bg-white/35 px-2 py-0.5 text-[11px] text-ink-soft backdrop-blur-xs"
       >
         {{ saveShortcut }} {{ t('common.save') }}
       </div>

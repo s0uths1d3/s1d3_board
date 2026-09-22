@@ -16,6 +16,11 @@
 - **实现改造**：image_store 核心逻辑抽目录级函数 + `FsImageStore`；app_usage 平台前台源；island/api 出站桥改 `Arc<dyn IslandSink>` 捕获
 - **测试**：`cargo test` 42+9 全绿——图片消毒/穿越/回环/超限、qrcode QR 扫描回环、CF_DIB 解析、迁移链不变式、Webhook URL 白名单等
 
+### ⬆️ 依赖升级
+
+- **Tailwind CSS 3.4 → 4.3**：CSS-first 迁移——`@import "tailwindcss"` + `@theme inline` 令牌取代 `tailwind.config.js`（16 色令牌指向运行时 CSS 变量，透明度修饰符走 color-mix，与 v3 rgb alpha 数学等价；v4 不支持 v3 的 `<alpha-value>` 占位符，残留会导致颜色整体失效）；`@nuxtjs/tailwindcss` 模块（仅支持 v3）替换为 `@tailwindcss/vite` 插件；类名跟随 v4 重命名：`shadow-sm→shadow-xs`、`outline-none→outline-hidden`、`rounded-sm→rounded-xs`、`blur-sm→blur-xs`；补回 v4 preflight 移除的 `button/[role=button]` 手型光标
+- 小版本直升：vue 3.5.43 / vue-router 5.3.1 / @tauri-apps/* / plugin-sql 2.4.1 / plugin-notification 2.4.0 / plugin-opener 2.5.5 / uuid 14.0.2 / @types/node 26.6.2；typescript 保持 5.8（latest 7.0.2 为主版本跨越，待 vue-tsc 生态跟进）
+
 ## 0.4.0 (2026-09-21)
 
 本次更新带来两大全新模块——**智能剪贴板**（提取器分词、方案重组与 AI 分析）与**灵动岛**（屏幕顶部胶囊式反馈 + 开放 API / Webhook），为 AI 能力引入自定义提供商与流式响应，并将各窗口的操作反馈统一收敛到灵动岛。
