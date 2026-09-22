@@ -1,9 +1,10 @@
 mod ai;
 mod app_usage;
-mod clipboard_thumb;
+pub mod clipboard_thumb;
 mod commands;
 mod island_api;
 mod island_webhook;
+mod image_store;
 mod migrations;
 
 use tauri::Manager;
@@ -62,6 +63,10 @@ pub fn run() {
             app_usage::pull_app_usage,
             app_usage::foreground_app_name,
             clipboard_thumb::clipboard_image_thumb,
+            clipboard_thumb::clipboard_qr_from_data_url,
+            image_store::save_clipboard_image,
+            image_store::read_clipboard_image_file,
+            image_store::delete_clipboard_image_file,
             ai::ai_test_connection,
             ai::ai_complete,
             island_api::island_api_apply,

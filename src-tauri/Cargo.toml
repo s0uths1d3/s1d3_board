@@ -44,8 +44,19 @@ tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 # 应用图标提取：PNG 编码（Windows HICON 转码 / Linux 主题图标转码）与 base64 数据 URL
-image = { version = "0.25", default-features = false, features = ["png"] }
+# jpeg/bmp/gift：剪贴板图片二维码补解码（clipboard_qr_from_data_url）按真实字节嗅探格式，
+# 剪贴板图片可能是其他应用写入的 JPEG/BMP（data URL 前缀统一写 png 不可信）
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif"] }
 base64 = "0.22"
+# 二维码识别（quircs：C 库 quirc 的 Rust 绑定，cc 编译）：复制图片时从像素解码 QR 链接
+# （环盘/灵动岛展示）。选型：quirc 是 Android 等主流扫描器的识别引擎，对 Logo 遮挡码
+# （微信/QQ 群二维码）的网格检测与纠错解码比 rqrr 更强；输入为 1 字节/像素灰度缓冲
+quircs = "0.10"
+
+# 二维码识别单元测试：生成测试用 QR 图片（仅 cargo test 编译进测试二进制，不影响产物）；
+# 其 image 依赖同为 0.25 与工程统一
+[dev-dependencies]
+qrcode = { version = "0.14", default-features = false, features = ["image"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

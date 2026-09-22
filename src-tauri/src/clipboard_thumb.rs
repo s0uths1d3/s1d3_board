@@ -1,17 +1,47 @@
-//! 剪贴板图片缩略图（灵动岛显示提速）：复制图片时前端经插件读原图 base64（数 MB），
+//! 剪贴板图片缩略图（灵动岛显示提速）+ 二维码识别：复制图片时前端经插件读原图 base64（数 MB），
 //! 岛窗口整包接收 + 全图解码是复杂图片显示慢的根因。剪贴板位图在 Rust 侧本就是
 //! 解码好的像素数据——resize + PNG 编码毫秒级完成，前端/岛全程只传几十 KB 小图。
-//! 仅 Windows 实现（CF_DIB 解析）；其他平台返回 None，前端回退原图链路（行为不劣化）。
+//! 同一次解码顺手做二维码扫描（quircs：C 库 quirc 绑定）：识别出 QR 内容随缩略图一并返回，
+//! 前端据此在灵动岛显示链接、Ctrl+B 环盘把链接当文本切分，避免二次跨 IPC 传大图。
+//! 缩略图仅 Windows 实现（CF_DIB 解析）；其他平台返回 None，前端回退原图链路（行为不劣化）。
+//! 二维码补解码命令 clipboard_qr_from_data_url 为纯 Rust 实现，全平台可用。
 
-/// 读取当前剪贴板图片并缩略（高 ≤ max_h，只缩不放），返回 data URL（PNG base64）。
+/// 剪贴板图片处理结果：thumb = 岛显示缩略图（data URL，None 回退原图）；
+/// qrText = 图片中识别出的二维码文本（非二维码/解码失败为 None）
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardImageInfo {
+    pub thumb: Option<String>,
+    pub qr_text: Option<String>,
+}
+
+/// 读取当前剪贴板图片并缩略（高 ≤ max_h，只缩不放）+ 二维码扫描。
 /// 剪贴板打开冲突（插件轮询并发持有）时短暂重试，仍失败返回 None 由前端兜底。
 #[tauri::command]
-pub fn clipboard_image_thumb(max_h: u32) -> Option<String> {
+pub fn clipboard_image_thumb(max_h: u32) -> Option<ClipboardImageInfo> {
     platform_impl(max_h)
 }
 
+/// 从 data URL（base64 图片）解码二维码文本：存量图片条目补识别 / 右键判定用。
+/// thorough=true（默认）走多尺度彻底扫描（512/1024/2048 三档，慢但全）；
+/// false 走单档 512px 快扫（复制路径时序敏感）。按真实字节嗅探格式；无码/失败返回 None。
+#[tauri::command]
+pub fn clipboard_qr_from_data_url(data_url: String, thorough: Option<bool>) -> Option<String> {
+    use base64::Engine;
+    let b64 = data_url.split_once("base64,").map(|(_, b)| b).unwrap_or(&data_url);
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64.trim()).ok()?;
+    let img = image::load_from_memory(&bytes).ok()?;
+    let (w, h) = (img.width(), img.height());
+    let rgba = img.to_rgba8().into_raw();
+    if thorough.unwrap_or(true) {
+        scan_qr_thorough(w, h, &rgba)
+    } else {
+        scan_qr_rgba(w, h, &rgba)
+    }
+}
+
 #[cfg(target_os = "windows")]
-fn platform_impl(max_h: u32) -> Option<String> {
+fn platform_impl(max_h: u32) -> Option<ClipboardImageInfo> {
 use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
 use windows_sys::Win32::Foundation::HGLOBAL;
 use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
@@ -48,11 +78,75 @@ unsafe {
         let decoded = parse_dib(bytes);
         GlobalUnlock(hglobal);
         let (w, h, rgba) = decoded?;
-        thumb_png(w, h, rgba, max_h)
+        let thumb = thumb_png(w, h, &rgba, max_h);
+        let qr_text = scan_qr_rgba(w, h, &rgba);
+        Some(ClipboardImageInfo { thumb, qr_text })
     })();
     CloseClipboard();
     result
 }
+}
+
+/// 二维码快速扫描（复制时序敏感路径）：RGBA 像素 → 等比缩到 ≤512px（Triangle 均值降采样，
+/// 避免点采样混叠破坏 QR 模块网格）→ 逐像素灰度化 → rqrr 网格检测 + 解码。
+/// 无码/失败返回 None（零成本跳过，不影响非二维码图片链路）；彻底识别走 scan_qr_thorough。
+pub fn scan_qr_rgba(w: u32, h: u32, rgba: &[u8]) -> Option<String> {
+    let img = image::RgbaImage::from_raw(w, h, rgba.to_vec())?;
+    scan_at_scale(&img, SCAN_MAX)
+}
+
+/// 二维码彻底扫描（右键判定/懒解码路径）：依次尝试 512 / 1024 / 2048px 三档缩放
+/// （任一档成功即返回）。小码嵌大图（截图角落）在低档失败、高档成功；细模块大码
+/// 在低档即可解码，高档兜底。三档全失败返回 None。
+pub fn scan_qr_thorough(w: u32, h: u32, rgba: &[u8]) -> Option<String> {
+    let img = image::RgbaImage::from_raw(w, h, rgba.to_vec())?;
+    for target in [SCAN_MAX, 1024, 2048] {
+        if let Some(text) = scan_at_scale(&img, target) {
+            return Some(text);
+        }
+    }
+    None
+}
+
+/// 快速档目标尺寸（复制路径单尺度扫描用）
+const SCAN_MAX: u32 = 512;
+
+/// 单档扫描：最长边 > target 时 Triangle 降采样（面积均值，抗混叠），否则按原图；
+/// BT.601 整数灰度 → rqrr 自适应二值化 + 网格检测 + 解码，返回首个非空文本。
+fn scan_at_scale(img: &image::RgbaImage, target: u32) -> Option<String> {
+    let (w, h) = (img.width(), img.height());
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let long = w.max(h);
+    let scaled: image::RgbaImage = if long > target {
+        let s = target as f64 / long as f64;
+        let nw = ((w as f64 * s).round() as u32).max(1);
+        let nh = ((h as f64 * s).round() as u32).max(1);
+        image::imageops::resize(img, nw, nh, image::imageops::FilterType::Triangle)
+    } else {
+        img.clone()
+    };
+    let (sw, sh) = (scaled.width() as usize, scaled.height() as usize);
+    let rgba = scaled.as_raw();
+    let mut gray: Vec<u8> = vec![0; sw * sh];
+    for (i, px) in rgba.chunks_exact(4).enumerate() {
+        // ITU-R BT.601 整数近似灰度（77/151/28），QR 阈值检测对灰度精度不敏感
+        gray[i] = ((px[0] as u32 * 77 + px[1] as u32 * 151 + px[2] as u32 * 28) >> 8) as u8;
+    }
+    // quircs（C 库 quirc 绑定）识别：内置 Otsu 自适应二值化 + 网格检测 + 纠错解码，
+    // 对 Logo 遮挡码（微信/QQ 群二维码）的识别强于 rqrr。逐个解码取首个非空文本。
+    let mut decoder = quircs::Quirc::new();
+    for code in decoder.identify(sw, sh, &gray) {
+        let Ok(code) = code else { continue };
+        if let Ok(data) = code.decode() {
+            let text = String::from_utf8_lossy(&data.payload).trim().to_string();
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+    }
+    None
 }
 
 /// 解析 CF_DIB 内存布局 → (宽, 高, RGBA 像素)。
@@ -130,10 +224,10 @@ fn parse_dib(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 
 /// RGBA 像素 → 缩放（高 ≤ max_h，只缩不放，Triangle 滤镜）→ PNG → data URL
 #[cfg(target_os = "windows")]
-fn thumb_png(w: u32, h: u32, rgba: Vec<u8>, max_h: u32) -> Option<String> {
+fn thumb_png(w: u32, h: u32, rgba: &[u8], max_h: u32) -> Option<String> {
     use base64::Engine;
     use std::io::Cursor;
-    let img = image::RgbaImage::from_raw(w, h, rgba)?;
+    let img = image::RgbaImage::from_raw(w, h, rgba.to_vec())?;
     let scale = if max_h > 0 && h > max_h {
         max_h as f64 / h as f64
     } else {
@@ -155,7 +249,7 @@ fn thumb_png(w: u32, h: u32, rgba: Vec<u8>, max_h: u32) -> Option<String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn platform_impl(_max_h: u32) -> Option<String> {
-    // macOS/Linux 暂不实现：返回 None，前端回退原图链路（与既有行为一致，不劣化）
+fn platform_impl(_max_h: u32) -> Option<ClipboardImageInfo> {
+    // macOS/Linux 暂不实现缩略：返回 None，前端回退原图链路（与既有行为一致，不劣化）
     None
 }
