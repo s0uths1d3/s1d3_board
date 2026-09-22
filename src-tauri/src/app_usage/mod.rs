@@ -22,6 +22,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use base64::Engine;
 
+use crate::core::traits::ForegroundSource;
+
 /// 键鼠无输入超过该秒数，分段内其后部分计入"挂机"（不计活跃）
 const IDLE_THRESHOLD_SECS: u64 = 300;
 /// 分段结算周期（秒）：无前台切换时按该周期切分累计，保证增量粒度与前端拉取对齐
@@ -233,9 +235,24 @@ pub fn pull_app_usage() -> Result<PullResult, String> {
 
 /// 当前前台应用名（仅名称、不取图标，轻量查询）：供剪贴板来源标记（clip.source_app）使用。
 /// 采样失败返回 None（调用方不标记，宁缺勿错）。
+/// 依赖抽象：委托注入的 ForegroundSource（State 不进 invoke 载荷，前端签名不变）。
 #[tauri::command]
-pub fn foreground_app_name(app: tauri::AppHandle) -> Option<String> {
-    platform::foreground_name(&app)
+pub fn foreground_app_name(
+    source: tauri::State<'_, crate::core::traits::ForegroundSourceHandle>,
+    app: tauri::AppHandle,
+) -> Option<String> {
+    source.0.foreground_name(&app)
+}
+
+// ===================== trait 实现（lib.rs 装配注入） =====================
+
+/// traits::ForegroundSource 的平台实现：委托当前编译目标的 platform 模块前台采样。
+pub(crate) struct PlatformForegroundSource;
+
+impl ForegroundSource for PlatformForegroundSource {
+    fn foreground_name(&self, app: &tauri::AppHandle) -> Option<String> {
+        platform::foreground_name(app)
+    }
 }
 
 // ===================== 平台实现（按编译目标选择） =====================
@@ -267,4 +284,21 @@ pub fn encode_data_url(bytes: Vec<u8>) -> String {
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_data_url_wraps_base64() {
+        let out = encode_data_url(b"hello".to_vec());
+        assert_eq!(out, "data:image/png;base64,aGVsbG8=");
+    }
+
+    #[test]
+    fn encode_data_url_empty_is_valid_data_url() {
+        // 空字节也应产出合法 data URL（前缀 + 空 base64）
+        assert_eq!(encode_data_url(Vec::new()), "data:image/png;base64,");
+    }
 }

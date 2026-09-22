@@ -287,3 +287,37 @@ pub struct TestResult {
     pub ok: bool,
     pub error: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn https_any_host_allowed() {
+        assert!(validate_url("https://example.com/hook").is_ok());
+        assert!(validate_url("https://10.0.0.1/hook").is_ok());
+        assert!(validate_url("https://localhost:9000/hook").is_ok());
+    }
+
+    #[test]
+    fn http_loopback_allowed() {
+        assert!(validate_url("http://127.0.0.1:8080/hook").is_ok());
+        assert!(validate_url("http://localhost/hook").is_ok());
+    }
+
+    #[test]
+    fn http_remote_rejected() {
+        // http 远程主机拒绝（防明文外发），提示改用 https
+        let err = validate_url("http://example.com/hook").unwrap_err();
+        assert!(err.contains("https"));
+        assert!(validate_url("http://192.168.1.5/hook").is_err());
+        assert!(validate_url("http://[::1]:8080/").is_ok()); // IPv6 回环仍放行
+    }
+
+    #[test]
+    fn non_http_schemes_rejected() {
+        assert!(validate_url("ftp://example.com").is_err());
+        assert!(validate_url("file:///etc/passwd").is_err());
+        assert!(validate_url("not a url").is_err());
+    }
+}

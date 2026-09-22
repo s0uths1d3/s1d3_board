@@ -1,10 +1,10 @@
 //! 二维码识别集成测试（独立于核心代码，`cargo test --test clipboard_thumb_qr` 运行）。
-//! 被测对象：`clipboard_thumb` 模块的二维码扫描纯函数与 data URL 解码命令——
+//! 被测对象：`clipboard::thumb` 模块的二维码扫描纯函数与 data URL 解码命令——
 //! - `scan_qr_rgba`：RGBA 像素 → 灰度化（≤512px 缩放）→ rqrr 识别；
 //! - `clipboard_qr_from_data_url`：base64 图片 → 字节嗅探格式 → 解码。
 //! 测试用二维码图片由 `qrcode` dev-dependency 现场生成（不落盘、不依赖固定资源文件）。
 
-use app_lib::clipboard_thumb::{clipboard_qr_from_data_url, scan_qr_rgba, scan_qr_thorough};
+use app_lib::thumb::{clipboard_qr_from_data_url, scan_qr_rgba, scan_qr_thorough};
 
 /// 用 qrcode crate 生成二维码灰度图并转 RGBA（Pixel 实现在 image::Luma<u8> 上）
 fn qr_rgba(text: &str) -> (u32, u32, Vec<u8>) {

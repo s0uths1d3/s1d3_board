@@ -1,15 +1,24 @@
-//! 通用命令（前端 invoke 入口）：粘贴模拟 / 原生菜单主题 / 退出应用
+//! 粘贴模拟与全局粘贴/剪切感知（原 commands.rs 粘贴域拆分）：
+//! - `paste` 命令：enigo 模拟 Ctrl/Cmd+V（前端写剪贴板→隐藏窗口→等焦点→调这里）
+//! - 全局感知：用户在任意应用按 Ctrl+V / Ctrl+X → 广播 island:paste-detected /
+//!   island:cut-detected → 前端灵动岛弹"已粘贴"/"已剪切"（跟随灵动岛总开关，含历史记录）
+//!
+//! 注入抑制：模拟粘贴注入的合成按键同样会触发全局钩子，PASTE_INJECTING 标志
+//! 覆盖注入窗口防循环（Windows 以系统 INJECTED 标志过滤为准，此标志仅兜底）。
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::Emitter;
 
+use crate::core::events;
+
 /// 注入抑制标志：模拟粘贴（paste 命令 / 全局 Ctrl+V 钩子转发）期间置 true——
 /// 注入的合成按键同样会触发全局快捷键钩子，不抑制会再次转发导致死循环与重复弹岛
-static PASTE_INJECTING: AtomicBool = AtomicBool::new(false);
+pub(crate) static PASTE_INJECTING: AtomicBool = AtomicBool::new(false);
 
 /// 模拟 Ctrl/Cmd+V 粘贴（delay_ms 用于 pasteUtil"隐藏窗口→等焦点回目标应用"的时序）。
 /// 注入全程挂 PASTE_INJECTING 抑制标志，全局钩子据此跳过我们自己的合成按键。
-fn inject_paste_blocking(delay_ms: u64) -> Result<(), String> {
+pub(crate) fn inject_paste_blocking(delay_ms: u64) -> Result<(), String> {
     use enigo::{
         Direction::{Click, Press, Release},
         Enigo, Key, Keyboard, Settings,
@@ -73,7 +82,7 @@ pub fn register_global_paste_hotkey(app: &tauri::AppHandle) {
             if PASTE_INJECTING.load(Ordering::SeqCst) {
                 return;
             }
-            let _ = app.emit("island:paste-detected", ());
+            let _ = app.emit(events::ISLAND_PASTE_DETECTED, ());
             std::thread::spawn(|| { let _ = inject_paste_blocking(10); });
         });
         if let Err(e) = result {
@@ -82,7 +91,7 @@ pub fn register_global_paste_hotkey(app: &tauri::AppHandle) {
     }
 }
 
-static PASTE_HOOK_APP: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+pub(crate) static PASTE_HOOK_APP: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
 /// WH_KEYBOARD_LL 钩子线程：安装钩子后跑消息泵（低级钩子回调依赖安装线程 pump 消息）
 #[cfg(target_os = "windows")]
@@ -121,9 +130,9 @@ unsafe extern "system" fn paste_ll_keyboard_proc(ncode: i32, wparam: usize, lpar
         if !injected && ctrl_held && !PASTE_INJECTING.load(Ordering::SeqCst) {
             if let Some(app) = PASTE_HOOK_APP.get() {
                 if info.vkCode == 0x56 {
-                    let _ = app.emit("island:paste-detected", ());
+                    let _ = app.emit(events::ISLAND_PASTE_DETECTED, ());
                 } else if info.vkCode == 0x58 {
-                    let _ = app.emit("island:cut-detected", ());
+                    let _ = app.emit(events::ISLAND_CUT_DETECTED, ());
                 }
             }
         }
@@ -138,6 +147,8 @@ mod paste_tap {
     use std::ffi::c_void;
     use std::sync::atomic::Ordering;
     use tauri::Emitter;
+
+    use crate::core::events;
 
     type CGEventRef = *mut c_void;
     type CGEventTapCallBack = unsafe extern "C" fn(*mut c_void, u32, CGEventRef, *mut c_void) -> CGEventRef;
@@ -191,7 +202,7 @@ mod paste_tap {
             let is_cmd_x = cmd && keycode == K_VK_ANSI_X;
             if is_physical && (is_cmd_v || is_cmd_x) && !PASTE_INJECTING.load(Ordering::SeqCst) {
                 if let Some(app) = PASTE_HOOK_APP.get() {
-                    let _ = app.emit(if is_cmd_v { "island:paste-detected" } else { "island:cut-detected" }, ());
+                    let _ = app.emit(if is_cmd_v { events::ISLAND_PASTE_DETECTED } else { events::ISLAND_CUT_DETECTED }, ());
                 }
             }
         }
@@ -225,61 +236,3 @@ mod paste_tap {
 
 #[cfg(target_os = "macos")]
 use paste_tap::paste_event_tap_thread;
-
-#[tauri::command]
-pub fn quit_app(app: tauri::AppHandle) {
-    app.exit(0);
-}
-
-
-#[tauri::command]
-pub fn set_menu_theme(theme: String) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        const DEFAULT_MODE: i32 = 0;
-        const ALLOW_DARK: i32 = 1;
-        const FORCE_DARK: i32 = 2;
-        const FORCE_LIGHT: i32 = 3;
-
-        let mode: i32 = match theme.as_str() {
-            "dark" => FORCE_DARK,
-            "light" => FORCE_LIGHT,
-            "system" => ALLOW_DARK,
-            _ => DEFAULT_MODE,
-        };
-
-        apply_preferred_app_mode(mode);
-        Ok(())
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = theme;
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn apply_preferred_app_mode(mode: i32) {
-    use std::sync::OnceLock;
-    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
-
-    type SetPreferredAppModeFn = unsafe extern "system" fn(i32) -> i32;
-    static SET_PREFERRED_APP_MODE: OnceLock<Option<SetPreferredAppModeFn>> = OnceLock::new();
-
-    let f = *SET_PREFERRED_APP_MODE.get_or_init(|| unsafe {
-        let name: Vec<u16> = "uxtheme.dll\0".encode_utf16().collect();
-        let mut handle = GetModuleHandleW(name.as_ptr());
-        if handle.is_null() {
-            handle = windows_sys::Win32::System::LibraryLoader::LoadLibraryW(name.as_ptr());
-        }
-        if handle.is_null() {
-            return None;
-        }
-        let addr = GetProcAddress(handle, 135 as *const u8);
-        addr.map(|a| std::mem::transmute::<unsafe extern "system" fn() -> isize, SetPreferredAppModeFn>(a))
-    });
-
-    if let Some(f) = f {
-        unsafe { f(mode) };
-    }
-}

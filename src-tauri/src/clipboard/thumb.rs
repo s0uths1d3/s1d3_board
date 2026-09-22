@@ -253,3 +253,158 @@ fn platform_impl(_max_h: u32) -> Option<ClipboardImageInfo> {
     // macOS/Linux 暂不实现缩略：返回 None，前端回退原图链路（与既有行为一致，不劣化）
     None
 }
+
+// ===================== 单元测试 =====================
+
+/// 测试用 QR 图生成：qrcode dev-dep 生成矩阵 → 每模块 scale 像素 + 4 模块静区 → RGBA。
+/// （qrcode 仅在 dev-dependencies，运行时不引入。）
+#[cfg(test)]
+fn make_qr_rgba(text: &str, scale: usize) -> (u32, u32, Vec<u8>) {
+    use qrcode::{Color, EcLevel, QrCode, Version};
+    let code = QrCode::with_version(text.as_bytes(), Version::Normal(5), EcLevel::M)
+        .expect("QR 生成失败");
+    let qw = code.width();
+    let colors = code.to_colors();
+    assert_eq!(colors.len(), qw * qw);
+    let quiet = 4usize;
+    let total = (qw + quiet * 2) * scale;
+    let mut img = vec![255u8; total * total * 4]; // 白底（RGB 各 255，alpha 255）
+    for (i, c) in colors.iter().enumerate() {
+        let (mx, my) = (i % qw, i / qw);
+        for dy in 0..scale {
+            for dx in 0..scale {
+                let off = (((quiet + my) * scale + dy) * total + (quiet + mx) * scale + dx) * 4;
+                let v = if *c == Color::Dark { 0u8 } else { 255u8 };
+                img[off] = v;
+                img[off + 1] = v;
+                img[off + 2] = v;
+                img[off + 3] = 255;
+            }
+        }
+    }
+    (total as u32, total as u32, img)
+}
+
+#[cfg(test)]
+mod qr_tests {
+    use super::*;
+
+    const TEXT: &str = "https://s1d3.example/roundtrip";
+
+    #[test]
+    fn scan_qr_rgba_roundtrip() {
+        let (w, h, rgba) = make_qr_rgba(TEXT, 8);
+        assert_eq!(scan_qr_rgba(w, h, &rgba).as_deref(), Some(TEXT));
+    }
+
+    #[test]
+    fn scan_qr_thorough_roundtrip() {
+        let (w, h, rgba) = make_qr_rgba(TEXT, 8);
+        assert_eq!(scan_qr_thorough(w, h, &rgba).as_deref(), Some(TEXT));
+    }
+
+    #[test]
+    fn scan_plain_image_returns_none() {
+        // 纯白图无码 → None（零成本跳过路径）
+        let (w, h, rgba) = (64u32, 64u32, vec![255u8; 64 * 64 * 4]);
+        assert_eq!(scan_qr_rgba(w, h, &rgba), None);
+        assert_eq!(scan_qr_thorough(w, h, &rgba), None);
+    }
+
+    #[test]
+    fn scan_rejects_zero_dimension() {
+        assert_eq!(scan_qr_rgba(0, 10, &[]), None);
+        assert_eq!(scan_qr_thorough(10, 0, &[]), None);
+    }
+
+    #[test]
+    fn clipboard_qr_from_data_url_roundtrip() {
+        // 命令入口回环：QR RGBA → PNG → data URL → clipboard_qr_from_data_url 解出原文
+        use base64::Engine;
+        use std::io::Cursor;
+        let (w, h, rgba) = make_qr_rgba(TEXT, 8);
+        let img = image::RgbaImage::from_raw(w, h, rgba).expect("构造图片失败");
+        let mut png = Cursor::new(Vec::new());
+        img.write_to(&mut png, image::ImageFormat::Png).expect("PNG 编码失败");
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png.into_inner())
+        );
+        assert_eq!(
+            clipboard_qr_from_data_url(data_url, Some(false)).as_deref(),
+            Some(TEXT)
+        );
+    }
+}
+
+/// CF_DIB 解析测试（仅 Windows：parse_dib 为 Windows 路径）
+#[cfg(all(test, target_os = "windows"))]
+mod dib_tests {
+    use super::*;
+
+    /// 构造 BITMAPINFOHEADER（header_size 字节，V3 最小 40）
+    fn header(header_size: u32, w: i32, height: i32, bpp: u16, compression: u32) -> Vec<u8> {
+        let mut h = vec![0u8; header_size as usize];
+        h[0..4].copy_from_slice(&header_size.to_le_bytes());
+        h[4..8].copy_from_slice(&w.to_le_bytes());
+        h[8..12].copy_from_slice(&height.to_le_bytes());
+        h[12..14].copy_from_slice(&1u16.to_le_bytes()); // biPlanes
+        h[14..16].copy_from_slice(&bpp.to_le_bytes());
+        h[16..20].copy_from_slice(&compression.to_le_bytes());
+        h
+    }
+
+    #[test]
+    fn parse_dib_32bpp_bottom_up_flip() {
+        // 1×2 32bpp BI_RGB：正值高度 = bottom-up。底行 BGRA(10,20,30,255)、顶行 BGRA(100,110,120,255)
+        let mut dib = header(40, 1, 2, 32, 0);
+        dib.extend_from_slice(&[10, 20, 30, 255]); // bottom row
+        dib.extend_from_slice(&[100, 110, 120, 255]); // top row
+        let (w, h, rgba) = parse_dib(&dib).expect("应解析成功");
+        assert_eq!((w, h), (1, 2));
+        // 翻转为自上而下：首行是顶行，BGRA → RGBA
+        assert_eq!(&rgba[0..4], &[120, 110, 100, 255]);
+        assert_eq!(&rgba[4..8], &[30, 20, 10, 255]);
+    }
+
+    #[test]
+    fn parse_dib_24bpp_top_down_with_stride_padding() {
+        // 2×1 24bpp 顶down（负高度）：行宽 6B，stride 对齐到 8B（2B padding 不参与）
+        let mut dib = header(40, 2, -1, 24, 0);
+        dib.extend_from_slice(&[1, 2, 3, 4, 5, 6, 0, 0]); // BGR,BGR + padding
+        let (w, h, rgba) = parse_dib(&dib).expect("应解析成功");
+        assert_eq!((w, h), (2, 1));
+        assert_eq!(&rgba[0..4], &[3, 2, 1, 255]); // BGR→RGBA，alpha 兜底 255
+        assert_eq!(&rgba[4..8], &[6, 5, 4, 255]);
+    }
+
+    #[test]
+    fn parse_dib_bitfields_legacy_header_offset_masks() {
+        // BI_BITFIELDS(3) + 40B 旧头：头后跟 3 个 4B 掩码，像素偏移 +12
+        let mut dib = header(40, 1, 1, 32, 3);
+        dib.extend_from_slice(&[0, 0, 0, 0]); // R mask（占位）
+        dib.extend_from_slice(&[0, 0, 0, 0]); // G mask
+        dib.extend_from_slice(&[0, 0, 0, 0]); // B mask
+        dib.extend_from_slice(&[10, 20, 30, 255]);
+        let (_, _, rgba) = parse_dib(&dib).expect("BITFIELDS 旧头应解析成功");
+        assert_eq!(&rgba[0..4], &[30, 20, 10, 255]);
+    }
+
+    #[test]
+    fn parse_dib_bumps_all_zero_alpha() {
+        // 32bpp alpha 全 0（截图常见）→ 兜底 255
+        let mut dib = header(40, 1, 1, 32, 0);
+        dib.extend_from_slice(&[10, 20, 30, 0]);
+        let (_, _, rgba) = parse_dib(&dib).expect("应解析成功");
+        assert_eq!(&rgba[0..4], &[30, 20, 10, 255]);
+    }
+
+    #[test]
+    fn parse_dib_rejects_unsupported() {
+        assert!(parse_dib(&[0u8; 39]).is_none(), "短于 40B 头应拒绝");
+        assert!(parse_dib(&header(40, 1, 1, 16, 0)).is_none(), "16bpp 应拒绝");
+        assert!(parse_dib(&header(40, 1, 1, 32, 1)).is_none(), "RLE 压缩应拒绝");
+        assert!(parse_dib(&header(40, 0, 1, 32, 0)).is_none(), "宽 0 应拒绝");
+        assert!(parse_dib(&header(40, 1, 0, 32, 0)).is_none(), "高 0 应拒绝");
+    }
+}

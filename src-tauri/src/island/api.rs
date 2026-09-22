@@ -27,6 +27,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Listener};
 
+use crate::core::events;
+use crate::core::traits::IslandSink;
+
 /// API 版本（语义化版本；随 `.docs/island-api.md` 更新日志同步）
 pub const API_VERSION: &str = "1.4.0";
 
@@ -253,8 +256,19 @@ fn handle_island_show(
     };
     // 交前端灵动岛管理器弹岛；SSE 广播由 event bridge 在实际处理时单点发出（此处不直接广播，
     // 保证应用自身与第三方事件同源、延迟合并丢弃的事件不产生幽灵广播）
-    let _ = app.emit("island-api:show", &event);
+    let _ = app.emit(events::ISLAND_API_SHOW, &event);
     respond(stream, "204 No Content", "application/json", "");
+}
+
+/// 应用内岛显示事件的双通道出站（SSE 广播 + Webhook 投递）。
+pub(crate) struct OutboundIslandSink;
+
+impl IslandSink for OutboundIslandSink {
+    fn send(&self, event: &serde_json::Value) {
+        // 出站双通道：SSE 广播 + Webhook 投递（后者内部 spawn，不阻塞）
+        crate::island::webhook::dispatch(event);
+        broadcast(&sse_frame("island.show", &event.to_string()));
+    }
 }
 
 /// 应用内岛事件 → SSE 出站桥：前端每次岛显示事件都会 emit("island:show")（应用自身复制/粘贴/
@@ -262,7 +276,8 @@ fn handle_island_show(
 /// 灵动岛总开关只控制岛窗口显示，事件照常广播（总开关关闭时 SSE/Webhook 出站仍可用）。
 /// 与 API 开关无关常驻（无订阅者时 broadcast 零开销）；API 停止时订阅表已清，同样无副作用。
 pub fn attach_event_bridge(app: &tauri::AppHandle) {
-    app.listen("island:show", move |ev| {
+    let sink: Arc<dyn IslandSink + Send + Sync> = Arc::new(OutboundIslandSink);
+    app.listen(events::ISLAND_SHOW, move |ev| {
         let Ok(p) = serde_json::from_str::<serde_json::Value>(ev.payload()) else {
             return;
         };
@@ -280,9 +295,7 @@ pub fn attach_event_bridge(app: &tauri::AppHandle) {
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0),
         });
-        // 出站双通道：SSE 广播 + Webhook 投递（后者内部 spawn，不阻塞）
-        crate::island_webhook::dispatch(&event);
-        broadcast(&sse_frame("island.show", &event.to_string()));
+        sink.send(&event);
     });
 }
 
@@ -303,7 +316,7 @@ fn handle_history(stream: &mut TcpStream, app: &tauri::AppHandle, path: &str) {
         map.insert(request_id.clone(), tx);
     }
     let _ = app.emit(
-        "island-history:query",
+        events::ISLAND_HISTORY_QUERY,
         serde_json::json!({ "requestId": request_id, "query": query }),
     );
     match rx.recv_timeout(Duration::from_secs(3)) {
@@ -417,7 +430,7 @@ fn serve(port: u16, token: String, stop: Arc<AtomicBool>, app: tauri::AppHandle)
         Ok(l) => l,
         Err(e) => {
             log::error!("[island-api] 端口 {port} 绑定失败: {e}");
-            let _ = app.emit("island-api:failed", format!("port {port}: {e}"));
+            let _ = app.emit(events::ISLAND_API_FAILED, format!("port {port}: {e}"));
             return;
         }
     };

@@ -420,7 +420,7 @@ async fn complete_stream(
             {
                 if !text.is_empty() {
                     out.push_str(text);
-                    let _ = app.emit("ai:chunk", serde_json::json!({ "text": out }));
+                    let _ = app.emit(crate::core::events::AI_CHUNK, serde_json::json!({ "text": out }));
                 }
             }
         }
@@ -522,4 +522,45 @@ pub async fn ai_complete(
     provider_for_err(&cfg)?
         .complete(&cfg, &system, &content, &app)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_base_url_trims_trailing_slash() {
+        assert_eq!(
+            normalize_base_url("https://api.example.com/v1/", "https://default"),
+            "https://api.example.com/v1"
+        );
+        // 多个尾斜杠全部去除
+        assert_eq!(
+            normalize_base_url("https://api.example.com/v1///", "https://default"),
+            "https://api.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_keeps_clean_url() {
+        assert_eq!(
+            normalize_base_url("https://api.openai.com/v1", "https://default"),
+            "https://api.openai.com/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_trims_whitespace() {
+        assert_eq!(
+            normalize_base_url("  https://api.example.com  ", "https://default"),
+            "https://api.example.com"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_empty_falls_back_to_default() {
+        assert_eq!(normalize_base_url("", "https://fallback"), "https://fallback");
+        assert_eq!(normalize_base_url("   ", "https://fallback"), "https://fallback");
+        assert_eq!(normalize_base_url("/", "https://fallback"), "https://fallback");
+    }
 }
