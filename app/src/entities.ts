@@ -11,6 +11,8 @@ export interface ClipboardData {
     updated_at: string;
     /** 来源应用：复制瞬间的前台进程名（小写、去 .exe）；存量数据/查询失败为空，UI 空值不显示 */
     source_app?: string | null;
+    /** 二维码识别结果：图片条目解码出的文本（链接等）；存量未扫描为 NULL，已扫无码为 ''（防重复扫描） */
+    qr_text?: string | null;
 }
 
 export interface PinnedClip {

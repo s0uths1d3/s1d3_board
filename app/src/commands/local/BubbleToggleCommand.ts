@@ -592,9 +592,13 @@ async function openRing(): Promise<void> {
   (window as any).__childOpeningUntil = Date.now() + 600;
 
   // 预判先行（毫秒级本地判定，无 AI 成本）：按下瞬间即定分流去向，灵动岛据此立刻给出
-  // 首屏反馈，不等环盘窗口创建。选中项此刻快照：处理期间新复制不改变本次环的目标
+  // 首屏反馈，不等环盘窗口创建。选中项此刻快照：处理期间新复制不改变本次环的目标。
+  // 二维码图片：解码出的链接当文本走既有环盘流程（单片段气泡，Enter 粘贴链接）；
+  // 无识别结果的图片维持空内容（不出环盘片段）
   const selected = getSelectedItem();
-  const content = selected && (selected.type ?? 'text') === 'text' ? selected.content : '';
+  const content = selected && (selected.type ?? 'text') === 'text'
+    ? selected.content
+    : selected?.type === 'image' ? (selected.qr_text ?? '') : '';
   const planP: Promise<AnalysisPlan | null> = content ? planAnalysis(content) : Promise.resolve(null);
 
   const { cx, cy } = await ringCenter();

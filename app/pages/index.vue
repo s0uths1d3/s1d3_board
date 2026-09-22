@@ -13,6 +13,7 @@ import {
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {isTauri} from "~/utils/env";
 import clipboardService from "~/src/db/dbService";
+import { writeText } from 'tauri-plugin-clipboard-api';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -109,6 +110,15 @@ function ensureImageObserver(): IntersectionObserver | null {
       if (!entry.isIntersecting) continue;
       const id = Number((entry.target as HTMLElement).dataset.imageId);
       if (Number.isFinite(id)) visibleImageIds.value.add(id);
+      // 存量图片二维码补识别（fire-and-forget）：qr_text 为 NULL（复制时扫描不可用/老数据）
+      // 的图片在首次可见时补扫一次；识别文本回写本地行，Ctrl+B 环盘/灵动岛立即可用；
+      // 无码写 '' 哨兵（本地行同步置 ''，防重渲染重复扫描）
+      const item = data.value.find((i: ClipboardData) => i.id === id);
+      if (item && item.type === 'image' && item.qr_text == null && isTauri()) {
+        void clipboardService.decodeQrText(id, item.content).then((qr) => {
+          if (qr !== null) item.qr_text = qr;
+        });
+      }
       imageObserver?.unobserve(entry.target);
     }
   }, { rootMargin: '200px 0px' });
@@ -278,7 +288,10 @@ async function openTooltipWindow() {
     height: 360,
     resizable: false,
     decorations: false,
-    transparent: false,  // 不透明：tooltip 窗口自带背景，避免透出主窗口导航与控件
+    transparent: true,   // 透明窗口：页面 .tooltip-view 自绘圆角裁切——不透明窗口在 Win11
+                         // 被系统强制圆角，圆角外露出窗口底色（白色圆角残角）
+    shadow: false,       // 关系统阴影：Windows 无边框窗口的 DWM 阴影边缘黑线难看，
+                         // 层次由卡片圆角+边框承载
     skipTaskbar: true,
     focus: false,        // 不抢焦点：避免打断主窗口键盘交互与触发主窗口自动隐藏
     visible: false,      // 定位与尺寸就绪后再 show，避免闪烁/错位的空窗口
@@ -334,6 +347,9 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
   // 图片查看器（image-viewer）打开期间禁止 tooltip 出现：
   // 查看器为独立前台窗口，悬停主列表项不再弹出 tooltip；关闭查看器（viewerLabel 置空）后自动恢复。
   if (viewerLabel) return;
+  // 右键菜单打开期间禁止 tooltip：tooltip 为独立置顶窗口会盖住右键菜单（右键优先级更高）；
+  // 菜单关闭（ctxMenuVisible 置 false）后自动恢复
+  if (ctxMenuVisible.value) return;
   const el = event.currentTarget as HTMLElement;
   // 取消挂起的隐藏计时器，避免移动到其他项时旧 tooltip 误关闭新 tooltip
   if (hideTimer) {
@@ -608,16 +624,65 @@ const ctxMenuX = ref(0);
 const ctxMenuY = ref(0);
 const ctxMenuItems = ref<{ label: string; danger?: boolean; action: () => void }[]>([]);
 
-/** 右键列表项：显示「添加到常用剪贴板」菜单 */
+/** 右键列表项：「添加到常用剪贴板」+ 图片项的二维码即时判定入口：
+ *  qr_text 有值 → 直接显示「复制二维码内容」；未扫描（NULL）或历史扫描无码（''）→
+ *  菜单先弹出、判定异步执行（Rust 多尺度彻底扫描），出码后把「复制二维码内容」
+ *  追加进已打开的菜单，无码/失败静默（菜单保持原样）——即「右键时判断有无二维码」。
+ *  右键优先级高于 tooltip：菜单弹出即关闭独立 tooltip 窗口，避免遮挡 */
 function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
   e.preventDefault();
   selectRow(index);
+  // 关闭 tooltip 并复位悬停状态（右键菜单不被 tooltip 窗口遮挡）
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+  hoveringClip = false;
+  hoveringTooltip = false;
+  emit('tooltip:hide').catch(() => {});
   ctxMenuX.value = e.clientX;
   ctxMenuY.value = e.clientY;
   ctxMenuItems.value = [
     { label: t('clip.add_to_pinned'), action: () => addToPinned(item) },
   ];
   ctxMenuVisible.value = true;
+  ctxMenuTarget = item;
+  if ((item.type ?? 'text') === 'image') {
+    if (item.qr_text) {
+      // 已识别（复制时快扫或此前判定成功）：立即显示复制项，零等待
+      ctxMenuItems.value.push({ label: t('clip.copy_qr'), action: () => copyQrContent(item) });
+    } else {
+      // 未扫描（NULL）/历史快扫无码（''）：异步彻底判定，出码后追加进已打开的菜单
+      void judgeQrForMenu(item);
+    }
+  }
+}
+
+/** 右键判定进行中的目标项：异步判定回填菜单前校验菜单未被关闭/切换到其他项 */
+let ctxMenuTarget: ClipboardData | null = null;
+
+/** 右键即时二维码判定：彻底扫描出码则回填 qr_text 并把「复制二维码内容」追加进菜单 */
+async function judgeQrForMenu(item: ClipboardData) {
+  const qr = await clipboardService.decodeQrText(item.id, item.content);
+  item.qr_text = qr; // '' = 确认无码 / 文本 = 识别结果 / null = 失败可重试
+  if (qr && ctxMenuTarget === item && ctxMenuVisible.value) {
+    ctxMenuItems.value = [
+      ...ctxMenuItems.value,
+      { label: t('clip.copy_qr'), action: () => copyQrContent(item) },
+    ];
+  }
+}
+
+/** 复制二维码内容到剪贴板（走系统剪贴板 → 触发既有弹岛/落库/计数链路） */
+async function copyQrContent(item: ClipboardData) {
+  if (!item.qr_text) return;
+  try {
+    await writeText(item.qr_text);
+    showPinnedHint(t('clip.qr_copied'));
+  } catch (e) {
+    console.error('复制二维码内容失败:', e);
+    showPinnedHint(t('clip.qr_copy_failed'), 'error');
+  }
 }
 
 /** 把当前剪贴项（文本/图片）添加到常用剪贴板列表末尾 */

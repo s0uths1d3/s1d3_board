@@ -195,8 +195,9 @@ async function applyIsland(payload: { kind: IslandKind; text?: string; image?: s
   islandKind.value = payload.kind;
   islandText.value = payload.text ?? '';
   // 图片内容：优先渲染显示级缩略图（几十 KB，复杂图片秒弹），缺省回退 image 原图；
-  // 复制图片兼容旧载荷（data URL 在 text）
-  islandImage.value = payload.thumb || payload.image || (payload.kind === 'copy-image' ? (payload.text ?? '') : '');
+  // 复制图片兼容旧载荷（data URL 在 text）——text 现为二维码链接时不当作图片
+  islandImage.value = payload.thumb || payload.image
+    || (payload.kind === 'copy-image' && payload.text?.startsWith('data:') ? payload.text : '');
   islandTitle.value = payload.title ?? '';
   islandDuration.value = payload.durationMs ?? ISLAND_SHOW_MS;
   // 重复提示辨识：同内容（kind+text+图片标记）短时间内再次弹出 → ×N 递增（胶囊显示徽标，用户可区分
@@ -443,7 +444,8 @@ async function pinCurrent(): Promise<void> {
     height: 96,
     resizable: false,
     decorations: false,
-    transparent: false,
+    transparent: true,   // 透明窗口：页面根元素自绘圆角（rounded-xl）——不透明窗口在 Win11
+                         // 被系统强制圆角，圆角外露出窗口底色（白色残角）
     skipTaskbar: true,
     alwaysOnTop: true,
     focus: false,        // 钉住卡片不抢目标应用焦点
@@ -690,7 +692,8 @@ onBeforeUnmount(() => {
             @mouseenter="onIslandImageEnter"
             @mouseleave="hideImagePreview"
         />
-        <span v-else-if="islandText" ref="islandTextEl" class="min-w-0 flex-1 truncate text-xs text-ink-soft">{{ islandText }}</span>
+        <!-- 文本与缩略图并存渲染（v-if 非 v-else-if）：二维码图片事件的链接文本显示在缩略图旁 -->
+        <span v-if="islandText" ref="islandTextEl" class="min-w-0 flex-1 truncate text-xs text-ink-soft">{{ islandText }}</span>
         <!-- 重复提示计数徽标：同一时段相同内容再次弹出时递增（×2/×3…），用户可明确辨识是新提示 -->
         <span
             v-if="islandRepeat > 1"

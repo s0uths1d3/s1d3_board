@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
-import { getCurrentWindow, currentMonitor, PhysicalPosition, LogicalSize } from '@tauri-apps/api/window';
+import { getCurrentWindow, currentMonitor, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 import { isTauri } from '~/utils/env';
 
@@ -162,7 +162,10 @@ async function fitWindowToContent() {
     const minW = isImage.value ? IMG_MIN_WIDTH : MIN_WIDTH;
     const cssW = Math.min(Math.max(naturalW, minW), maxW);
     const cssH = Math.min(Math.max(naturalH, MIN_HEIGHT), maxH);
-    await win.setSize(new LogicalSize(Math.ceil(cssW), Math.ceil(cssH)));
+    // 物理像素精确 setSize：逻辑尺寸经 DPR 放大后再 ceil——若用 LogicalSize（逻辑 ceil，
+    // 放大后不足一物理像素）窗口会比内容渲染区宽/高最多 1 物理像素，露出窗口底层底色（黑边）
+    const dpr = window.devicePixelRatio || 1;
+    await win.setSize(new PhysicalSize(Math.ceil(cssW * dpr), Math.ceil(cssH * dpr)));
   } catch { /* 尺寸调整失败不影响显示 */ }
 }
 
@@ -309,12 +312,16 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .tooltip-view {
-  /* 与主窗口一致的暖色渐变背景，作为窗口底色，避免透明透出下方主窗口的导航/控件 */
+  /* 与主窗口一致的暖色渐变背景，画在自绘圆角卡片内：窗口已 transparent，
+     圆角外为真透明（无系统圆角白残角、无 DWM 阴影黑线），层次由圆角+内边框承载 */
   background: linear-gradient(135deg, rgb(var(--bg-a)) 0%, rgb(var(--bg-b)) 50%, rgb(var(--bg-c)) 100%);
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  /* 注意：此处不能用 border-radius，否则圆角外会透出 Tauri 窗口默认的白色背景（白角） */
+  border-radius: 14px;
+  /* 内描边用背景色同系加深：收住圆角边缘，替代被关掉的系统阴影层次 */
+  border: 1px solid rgb(var(--bg-c));
+  box-sizing: border-box;
 }
 .tooltip-card {
   /* 卡片填满窗口（width:100%），配合 fitWindowToContent 测得精确窗口尺寸后无空白 */

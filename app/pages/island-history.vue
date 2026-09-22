@@ -338,17 +338,18 @@ onMounted(() => {
   void loadHistory();
   if (!isTauri()) return;
   // 历史窗口存活期间与岛同步接收：新消息实时插到列表头部（限长 500 与 DB 一致）。
-  // copy-image 的 text 是完整 base64（岛内缩略图用），与 DB 写入点同规则：先插空占位条目，
-  // 缩略图（webp 小图）生成后回填，原图 base64 不进列表内存
-  void listen<{ kind?: string; text?: string }>('island:show', (ev) => {
+  // copy-image 的原图在出站事件 image 字段（v1.4.0 起 text 不再携带 data URL），与 DB 写入点
+  // 同规则：先插空占位条目，缩略图（webp 小图）生成后回填，原图 base64 不进列表内存
+  void listen<{ kind?: string; text?: string; image?: string }>('island:show', (ev) => {
     const p = ev.payload;
     if (!p || !p.kind) return;
     const kind = (p.kind in kindMeta ? p.kind : 'info') as IslandKind;
     if (kind === 'copy-image') {
       const id = -Date.now();
       items.value = [{ id, kind, text: '', createdAt: Date.now() }, ...items.value].slice(0, 500);
-      if (typeof p.text === 'string' && p.text.startsWith('data:')) {
-        void makeImageThumb(p.text).then((thumb) => {
+      const src = [p.image, p.text].find((s) => typeof s === 'string' && s.startsWith('data:'));
+      if (src) {
+        void makeImageThumb(src).then((thumb) => {
           const it = items.value.find((i) => i.id === id);
           if (it) it.text = thumb;
         }).catch(() => {});

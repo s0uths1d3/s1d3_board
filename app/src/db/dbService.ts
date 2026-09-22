@@ -4,6 +4,16 @@ import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from
 import type { ClipboardData,Note,Todo,ReminderRule,PinnedClip,ClipScheme } from "../entities";
 import statsService from "~/src/statistics/statsService";
 
+/** 剪贴板默认保留上限：设置项 max_save_count 未设置/无效时生效（防 DB 无限膨胀） */
+const DEFAULT_MAX_SAVE_COUNT = 1000;
+
+/**
+ * 图片条目 content 的文件引用前缀：原图字节不再存 SQLite（base64 是库体积膨胀主因），
+ * 落盘到 %APPDATA%/S1d3Board/images/<sha256前16hex>.png（Rust 侧内容寻址，同图天然去重），
+ * DB 只存 imgfile:<文件名> 引用；读取边界统一换回 data URL，下游消费无感知。
+ */
+const IMAGE_FILE_PREFIX = 'imgfile:';
+
 /** 优先级数值收敛：整数 0-255（越界/非法回退 127 中档） */
 function clampPriorityLevel(level?: number): number {
     const n = Math.round(Number(level));
@@ -146,6 +156,9 @@ class DatabaseService {
         for (const { backup } of CLEAR_BACKUP_TABLES) {
             await this.db!.execute(`DROP TABLE IF EXISTS ${backup}`).catch(() => {});
         }
+        // 存量图片迁移（fire-and-forget 后台任务）：旧 base64 条目分批落盘换 imgfile: 引用，
+        // 失败/超限保留原样下次重试，不阻塞启动
+        void this.migrateClipboardImagesToFiles();
     }
 
     /**
@@ -238,6 +251,8 @@ class DatabaseService {
             { table: 'clip_templates', column: 'members', ddl: 'ALTER TABLE clip_templates ADD COLUMN members TEXT' },
             // 剪贴条目来源应用（复制瞬间的前台进程名；存量数据为 NULL，UI 空值不显示）
             { table: 'clipboard', column: 'source_app', ddl: 'ALTER TABLE clipboard ADD COLUMN source_app TEXT' },
+            // 剪贴图片二维码识别结果（复制时 Rust 侧解码；存量未扫描 NULL，已扫无码 ''）
+            { table: 'clipboard', column: 'qr_text', ddl: 'ALTER TABLE clipboard ADD COLUMN qr_text TEXT' },
         ];
         let addedPriorityLevel = false;
         for (const { table, column, ddl } of wanted) {
@@ -308,16 +323,35 @@ class DatabaseService {
                 const dataUrl = base64.startsWith('data:')
                     ? base64
                     : `data:image/png;base64,${base64}`;
-                // 岛显示级缩略图：Rust 侧从剪贴板位图（解码好的像素）直接 resize+编码（毫秒级，几十 KB）——
-                // 原图（数 MB）整包广播给岛窗口 + 全图解码是复杂图片岛显示慢的根因。
-                // 非 Windows/读取失败返回 null：岛回退原图渲染（行为不劣化）
-                let thumb: string | null = null;
+                // 原图落文件（Rust 侧 sha256 内容寻址去重 + 20MB 单条上限）：DB 只存 imgfile: 引用，
+                // 原图字节不再进 SQLite。落盘失败/超限返回 null，回退存 dataUrl 兜底（不丢数据）
+                let storeContent = dataUrl;
                 try {
-                    thumb = await invoke<string | null>('clipboard_image_thumb', { maxH: 384 });
+                    const fileRef = await invoke<string | null>('save_clipboard_image', { dataUrl });
+                    if (fileRef) storeContent = fileRef;
+                } catch { /* 落盘不可用：存 dataUrl 兜底 */ }
+                // 岛显示级缩略图 + 二维码识别：Rust 侧从剪贴板位图（解码好的像素）直接
+                // resize+编码（毫秒级，几十 KB）并顺手扫描 QR——原图（数 MB）整包广播给岛窗口
+                // + 全图解码是复杂图片岛显示慢的根因。非 Windows/读取失败返回 null：岛回退原图渲染
+                let thumb: string | null = null;
+                let qrText: string | null = null;
+                let qrScanned = false; // 二维码扫描是否已执行（决定无码时写 '' 哨兵还是留 NULL）
+                try {
+                    const info = await invoke<{ thumb: string | null; qrText: string | null } | null>('clipboard_image_thumb', { maxH: 384 });
+                    thumb = info?.thumb ?? null;
+                    qrText = info?.qrText ?? null;
+                    qrScanned = info !== null;
                 } catch { /* 命令不可用：回退 */ }
-                // 先派发岛事件（带缩略图，弹岛不等写库），saveClipboard 写库后的二次派发由内容去重跳过
-                window.dispatchEvent(new CustomEvent('island:copy', { detail: { content: dataUrl, type: 'image', thumb } }));
-                await this.saveClipboard(dataUrl, 'image', await queryForegroundApp());
+                if (!qrScanned) {
+                    // 缩略命令不可用（非 Windows）或剪贴板读取冲突：data URL 纯 Rust 解码兜底二维码
+                    // 复制路径时序敏感（弹岛延迟敏感）：走单档 512px 快扫；彻底多尺度留给右键判定/懒解码
+                    try { qrText = (await invoke<string | null>('clipboard_qr_from_data_url', { dataUrl, thorough: false })) ?? null; qrScanned = true; } catch { /* ignore */ }
+                }
+                // 先派发岛事件（带缩略图/二维码链接，弹岛不等写库），saveClipboard 写库后的二次派发由内容去重跳过
+                window.dispatchEvent(new CustomEvent('island:copy', { detail: { content: dataUrl, type: 'image', thumb, qrText } }));
+                // 已扫无码写 '' 哨兵（qr_text 非 NULL 不再补扫）；扫描完全不可用留 NULL（列表可见时补解码重试）。
+                // 尾参 dataUrl：岛事件语义需要原图（DB 存的是文件引用，见 saveClipboard 注释）
+                await this.saveClipboard(storeContent, 'image', await queryForegroundApp(), qrScanned ? (qrText ?? '') : null, dataUrl);
                 // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
                 window.dispatchEvent(new CustomEvent('clipboard:changed'));
             } catch (err) {
@@ -364,13 +398,17 @@ class DatabaseService {
         }
     }
 
-    /** 写入一条剪贴板记录（文本或图片；sourceApp = 复制瞬间的前台进程名，可空）。
+    /** 写入一条剪贴板记录（文本或图片；sourceApp = 复制瞬间的前台进程名，可空；
+     *  qrText = 图片条目的二维码识别结果，可空）。
+     * - 图片条目 content 存 imgfile: 文件引用（原图落盘）；islandImageContent = 岛事件用的
+     *   原图 data URL（island:copy 的消费方按原图语义处理：岛回退渲染/出站推送/历史缩略图，
+     *   引用串对它们无意义）。首次派发与本次二次派发传同一 dataUrl，内容去重不重复弹岛；
      * - 使用 INSERT ... ON CONFLICT(content) 单语句 upsert：并发监听回调同时到达时
      *   不会撞 content UNIQUE 约束（此前的"先查后插"存在竞态，第二条会抛错丢事件）；
      * - 新插入时额外做统计埋点与按上限裁剪；
-     * - source_app 仅在新插入时写入：应用自身粘贴也会写剪贴板（触发本函数），
-     *   冲突时若更新来源会把历史条目的原始来源覆盖为 S1d3 Board。 */
-    private async saveClipboard(content: string, type: 'text' | 'image', sourceApp?: string | null): Promise<void> {
+     * - source_app / qr_text 仅在新插入时写入：应用自身粘贴也会写剪贴板（触发本函数），
+     *   冲突时若更新会把历史条目的原始来源/识别结果覆盖为本次写入。 */
+    private async saveClipboard(content: string, type: 'text' | 'image', sourceApp?: string | null, qrText?: string | null, islandImageContent?: string): Promise<void> {
         const now = Math.floor(Date.now());
         // 先查一次用于区分"新插入 / 计数递增"（统计与裁剪只应发生在新插入时）；
         // 写入本身用 ON CONFLICT 单语句 upsert，即使并发事件在查询后插入也不会撞 UNIQUE 丢事件。
@@ -383,14 +421,18 @@ class DatabaseService {
         const bump = Date.now() >= this.useCountSuppressUntil ? 1 : 0;
 
         const result = await this.execWithRetry<{ lastInsertId?: number | bigint }>(
-            "INSERT INTO clipboard (content, category, type, created_at, updated_at, source_app) VALUES ($1, $2, $3, $4, $5, $7) " +
+            "INSERT INTO clipboard (content, category, type, created_at, updated_at, source_app, qr_text) VALUES ($1, $2, $3, $4, $5, $7, $8) " +
             "ON CONFLICT(content) DO UPDATE SET count = count + $6, updated_at = $5",
-            [content, 'T', type, now, now, bump, sourceApp ?? null]
+            [content, 'T', type, now, now, bump, sourceApp ?? null, qrText ?? null]
         );
         console.log(`Clipboard ${type} saved (upsert):`, result);
         // 灵动岛：复制行为反馈（文本/图片、重复复制同一内容同样提示；
-        // 本应用粘贴流程的写入由 island 模块抑制，不会误报"已复制"）
-        window.dispatchEvent(new CustomEvent('island:copy', { detail: { content, type } }));
+        // 本应用粘贴流程的写入由 island 模块抑制，不会误报"已复制"）。
+        // 图片传 islandImageContent（原图 data URL）而非 content（文件引用）：
+        // 与监听回调的首次派发同串，lastShownCopy 按内容去重不重复弹岛
+        window.dispatchEvent(new CustomEvent('island:copy', {
+            detail: { content: type === 'image' && islandImageContent ? islandImageContent : content, type, qrText },
+        }));
         if (!isNew) return;
 
         // 统计埋点（fire-and-forget）：新插入文本/图片剪贴 +1；文本额外累加字符量（图片 base64 不计入"打字量"）
@@ -412,27 +454,135 @@ class DatabaseService {
         }
     }
 
+    /**
+     * 存量图片条目的二维码补识别：复制时未扫出的老数据（qr_text IS NULL）在列表可见时
+     * 惰性调用——Rust 侧从 data URL 解码（纯 Rust 全平台可用），结果写库。
+     * 已扫无码写 ''（哨兵：自动路径防每次渲染重复扫描），已识别写文本。
+     * 守卫：NULL（未扫描）与 ''（已扫无码）可写入（右键主动重试允许覆盖空哨兵重扫），已有识别结果不覆盖。
+     * 返回写入值：'' = 已扫无码，二维码文本 = 识别成功，null = 命令/写库失败（库未变更，可重试）。
+     */
+    public async decodeQrText(id: number, content: string): Promise<string | null> {
+        try {
+            const qrText = (await invoke<string | null>('clipboard_qr_from_data_url', { dataUrl: content })) ?? '';
+            await this.execWithRetry(
+                "UPDATE clipboard SET qr_text = $1 WHERE id = $2 AND (qr_text IS NULL OR qr_text = '')",
+                [qrText, id]
+            );
+            return qrText;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * imgfile: 文件引用 → 原图 data URL（读回 %APPDATA%/images 下的 PNG）。
+     * 非引用（文本/旧 base64 条目）原样返回；文件缺失/读取失败也原样返回
+     * （下游渲染裂图可感知，不静默吞掉引用串冒充图片）。
+     */
+    private async resolveImageContent(content: string): Promise<string> {
+        if (!content.startsWith(IMAGE_FILE_PREFIX)) return content;
+        try {
+            const dataUrl = await invoke<string | null>('read_clipboard_image_file', { file: content.slice(IMAGE_FILE_PREFIX.length) });
+            return dataUrl ?? content;
+        } catch {
+            return content;
+        }
+    }
+
+    /** 行集合的图片引用统一解析（就地替换 content）：读取边界换回原图 data URL，
+     * 列表/tooltip/查看器/粘贴等下游消费与旧 base64 时代完全一致 */
+    private async resolveImageRows<T extends { type?: string; content: string }>(rows: T[]): Promise<T[]> {
+        await Promise.all(rows.map(async (row) => {
+            if (row.type === 'image') row.content = await this.resolveImageContent(row.content);
+        }));
+        return rows;
+    }
+
+    /** 删除图片条目对应的原图文件（fire-and-forget）：引用形如 imgfile:<名> 时调 Rust 删除，
+     *  旧 base64 条目/文本条目原样跳过；失败静默（残留孤儿文件无害，不影响 DB 一致性） */
+    private deleteImageFileByRef(content: string | null | undefined): void {
+        if (!content || !content.startsWith(IMAGE_FILE_PREFIX)) return;
+        void invoke('delete_clipboard_image_file', { file: content.slice(IMAGE_FILE_PREFIX.length) }).catch(() => {});
+    }
+
+    /**
+     * 存量图片迁移（fire-and-forget 后台任务）：旧版本把图片 base64 整包存 DB（库体积膨胀主因），
+     * 分批调 Rust 落盘（sha256 去重 + 20MB 上限），content 就地替换为 imgfile: 引用。
+     * - 目标引用已存在（同一图片新旧两条记录并存）：跳过保留原 base64 行，不删行不合并不动收藏标记；
+     * - 超过单条上限 / 落盘失败 / 单条异常：保留原样，下次启动自动重试；
+     * - 批间串行逐条处理，启动延迟 3s 避开首屏查询与岛窗口预建高峰。
+     */
+    private async migrateClipboardImagesToFiles(): Promise<void> {
+        await new Promise((r) => setTimeout(r, 3000));
+        try {
+            const rows = await this.db!.select(
+                "SELECT id FROM clipboard WHERE type = 'image' AND content NOT LIKE 'imgfile:%'"
+            ) as { id: number }[];
+            const BATCH = 50;
+            for (let i = 0; i < rows.length; i += BATCH) {
+                const ids = rows.slice(i, i + BATCH).map((r) => r.id);
+                if (ids.length === 0) break;
+                const batch = await this.db!.select(
+                    `SELECT id, content FROM clipboard WHERE id IN (${ids.map((_, j) => `$${j + 1}`).join(',')})`,
+                    ids
+                ) as { id: number; content: string }[];
+                for (const row of batch) {
+                    try {
+                        const ref = await invoke<string | null>('save_clipboard_image', { dataUrl: row.content });
+                        if (!ref) continue; // 超限/解码失败：保留原样，下次启动重试
+                        // NOT EXISTS 守卫：目标引用已存在（同图重复条目）时不更新，避免撞 content UNIQUE
+                        await this.db!.execute(
+                            "UPDATE clipboard SET content = $1 WHERE id = $2 AND NOT EXISTS (SELECT 1 FROM clipboard WHERE content = $1)",
+                            [ref, row.id]
+                        );
+                    } catch { /* 单条失败不影响其余 */ }
+                }
+            }
+        } catch (e) {
+            console.warn('[db] 存量图片迁移失败（下次启动重试）:', e);
+        }
+    }
+
 
     /**
      * 按设置项「剪贴板最大存储数量」（max_save_count）裁剪剪贴板：
-     * 超出上限时删除最旧记录；未设置或值为无效数字时不裁剪。
+     * 超出上限时删除最旧记录。未设置或值无效时按默认上限（1000）裁剪，
+     * 防止数据库无限膨胀。
+     * 收藏项（is_favorite=1）豁免裁剪；常用剪贴（pinned_clip）为独立内容副本表，天然不受影响。
+     * 图片条目删除时联动删除原图文件（imgfile: 引用）。
      */
     private async trimClipboard(): Promise<void> {
         try {
             const maxRaw = await this.getKeyValue('max_save_count');
-            const max = parseInt(maxRaw ?? '', 10);
-            if (!max || max <= 0) return;
+            const parsed = parseInt(maxRaw ?? '', 10);
+            // 未设置/空串/0/负数/非数字 → 默认上限（0 无「存 0 条」的实际意义，视为未配置）
+            const max = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_SAVE_COUNT;
 
             const rows: any[] = await this.db!.select("SELECT COUNT(*) AS cnt FROM clipboard");
             const count = rows?.[0]?.cnt as number | undefined;
             if (count === undefined || count <= max) return;
 
             const excess = count - max;
-            await this.db!.execute(
-                "DELETE FROM clipboard WHERE id IN " +
-                "(SELECT id FROM clipboard ORDER BY updated_at ASC, id ASC LIMIT $1)",
+            // 先取出将被淘汰的行（候选条件与删除完全一致），图片条目联动删原图文件；
+            // 裁剪候选排除收藏项（is_favorite=1）：收藏是用户显式标记要留的内容，不被上限挤掉；
+            // 收藏占比高时可能删完 excess 后仍超上限——下次插入时再继续淘汰，语义可接受
+            const victims: { id: number; type: string; content: string }[] = await this.db!.select(
+                "SELECT id, type, content FROM clipboard WHERE is_favorite <> 1 ORDER BY updated_at ASC, id ASC LIMIT $1",
                 [excess]
             );
+            if (victims.length === 0) return;
+            // 分批按 id 删除（SQL 参数上限约束；新插入的 updated_at 更大不会挤进候选集，集合稳定）
+            const ids = victims.map((v) => v.id);
+            for (let i = 0; i < ids.length; i += 500) {
+                const chunk = ids.slice(i, i + 500);
+                await this.execWithRetry(
+                    `DELETE FROM clipboard WHERE id IN (${chunk.map((_, j) => `$${j + 1}`).join(',')})`,
+                    chunk
+                );
+            }
+            for (const v of victims) {
+                if (v.type === 'image') this.deleteImageFileByRef(v.content);
+            }
         } catch (e) {
             console.error('裁剪剪贴板失败:', e);
         }
@@ -489,17 +639,22 @@ class DatabaseService {
         }
 
         const baseSql = `SELECT * FROM clipboard ${whereSql} ORDER BY updated_at DESC, id DESC`;
+        let rows: ClipboardData[];
         if (page) {
             const { sql, params: pageParams } = withPage(page, params);
-            return await this.db!.select(baseSql + sql, pageParams) as ClipboardData[];
+            rows = await this.db!.select(baseSql + sql, pageParams) as ClipboardData[];
+        } else {
+            rows = await this.db!.select(baseSql + ` LIMIT ${limit}`, params) as ClipboardData[];
         }
-        return await this.db!.select(baseSql + ` LIMIT ${limit}`, params) as ClipboardData[];
+        // 图片条目 content 为 imgfile: 文件引用：读取边界统一换回原图 data URL，
+        // 列表/tooltip/查看器/粘贴等下游消费与旧 base64 时代完全一致
+        return await this.resolveImageRows(rows);
     }
 
     public async fetchClipboardSingleData(id: number): Promise<ClipboardData | undefined> {
         await this.ensureDbInitialized();
         const data = await this.db!.select("SELECT * FROM clipboard WHERE id = $1", [id]) as ClipboardData[]
-        return data[0]
+        return (await this.resolveImageRows(data))[0]
     }
 
     public async updateFavorite(id: number, value: number): Promise<void> {
@@ -532,7 +687,12 @@ class DatabaseService {
 
     public async deleteClipboardData(id: number): Promise<void> {
         await this.ensureDbInitialized();
+        // 删库前取出条目：图片条目联动删除原图文件（imgfile: 引用；旧 base64 条目自动跳过）
+        const rows = await this.db!.select(
+            "SELECT type, content FROM clipboard WHERE id = $1", [id]
+        ) as { type: string; content: string }[];
         await this.db!.execute("DELETE FROM clipboard WHERE id = $1", [id]);
+        if (rows[0]?.type === 'image') this.deleteImageFileByRef(rows[0].content);
     }
 
     // ===== 常用剪贴（pinned_clip）=====
@@ -661,6 +821,16 @@ class DatabaseService {
     /** 撤回窗口结束：丢弃备份，清空彻底生效（幂等，可在无备份时安全调用） */
     public async finalizeClear(): Promise<void> {
         await this.ensureDbInitialized();
+        // 撤回窗口已过：清理被清空图片条目的原图文件。clearDatabase 阶段不删文件——
+        // 5s 撤回窗口内 undoClearDatabase 恢复行后引用必须仍有效。只删当前 clipboard 表
+        // 未再引用的文件（清空后用户可能重新复制了同一张图：新条目与备份引用同一文件）
+        try {
+            const orphans = await this.db!.select(
+                "SELECT content FROM clear_backup_clipboard WHERE type = 'image' AND content LIKE 'imgfile:%' " +
+                "AND content NOT IN (SELECT content FROM clipboard)"
+            ) as { content: string }[];
+            for (const row of orphans) this.deleteImageFileByRef(row.content);
+        } catch { /* 备份表可能不存在（异常路径/重复调用），跳过文件清理 */ }
         for (const { backup } of CLEAR_BACKUP_TABLES) {
             await this.db!.execute(`DROP TABLE IF EXISTS ${backup}`);
         }

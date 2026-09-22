@@ -102,11 +102,13 @@ export type IslandKind = 'copy' | 'copy-image' | 'cut' | 'paste' | 'info' | 'suc
 
 /** 弹岛载荷：kind 图标与默认标签 / title 自定义标签（API 调用） / durationMs 单次停留时长覆盖 /
  *  sticky 驻留（过程提示：不按时长收回，直到下一条岛替换；页面侧有兜底超时防残留） /
- *  image 图片内容（data URL，粘贴/剪切图片事件携带，岛内胶囊渲染缩略图，与复制图片一致） */
+ *  image 图片内容（data URL，粘贴/剪切图片事件携带，岛内胶囊渲染缩略图，与复制图片一致） /
+ *  qrText 图片中识别出的二维码文本（链接等）：胶囊文本直接显示链接，出站事件走 qr_text 字段 */
 export interface IslandShowPayload {
   kind: IslandKind;
   text?: string;
   image?: string;
+  qrText?: string;
   /** 岛显示级缩略图（Rust 侧剪贴板位图直接 resize，几十 KB）：岛 UI 优先渲染它提速，
    *  出站事件（SSE/Webhook）仍发 image 原图；缺省回退 image 原图渐进渲染 */
   thumb?: string;
@@ -204,16 +206,23 @@ listen('island:paste-detected', () => {
     let text = '';
     let image: string | undefined;
     let thumb: string | undefined;
+    let qrText: string | undefined;
     try { text = (await readText()) ?? ''; } catch { /* 图片等非文本：转图片读取 */ }
     if (!text) {
       try {
         const base64 = await readImageBase64();
         if (base64) {
           image = normalizeImageDataUrl(base64);
-          // 显示级缩略图（Rust 侧剪贴板位图直接 resize）：粘贴图片岛显示与大图解码解耦
+          // 显示级缩略图（Rust 侧剪贴板位图直接 resize）+ 二维码识别（缩略命令顺带扫描）：粘贴图片岛显示与大图解码解耦
           try {
-            thumb = (await invoke<string | null>('clipboard_image_thumb', { maxH: 384 })) ?? undefined;
+            const info = await invoke<{ thumb: string | null; qrText: string | null } | null>('clipboard_image_thumb', { maxH: 384 });
+            thumb = info?.thumb ?? undefined;
+            qrText = info?.qrText ?? undefined;
           } catch { /* 非 Windows/命令失败：回退原图渲染 */ }
+          if (!thumb && !qrText) {
+            // 缩略命令不可用（非 Windows）或剪贴板读取冲突：纯 Rust data URL 解码兜底二维码
+            try { qrText = (await invoke<string | null>('clipboard_qr_from_data_url', { dataUrl: image })) ?? undefined; } catch { /* ignore */ }
+          }
         }
       } catch { /* 无图片或读取失败：image 保持空 */ }
     }
@@ -223,7 +232,8 @@ listen('island:paste-detected', () => {
     // 目标（如焦点在桌面）属系统层不可判定，维持按下即提示的语义
     if (!text && !image) return;
     if (text) void dbService.increaseUseCountByContent(text).catch(() => {});
-    void showIsland({ kind: 'paste', text: text.slice(0, PREVIEW_MAX), image, thumb });
+    // 二维码图片：链接作为胶囊文本显示（缩略图仍在，并存渲染）；使用计数只看剪贴板文本，不受链接影响
+    void showIsland({ kind: 'paste', text: (qrText ?? text).slice(0, PREVIEW_MAX), image, thumb, qrText });
   })();
 }).catch(() => {});
 
@@ -384,9 +394,9 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
       }
     }
   }
-  // 图片内容统一收敛：复制图片的 data URL 在 text 字段，粘贴/剪切图片在 image 字段——
-  // 出站事件统一走 image（文本字段保持 120 字符截断语义）
-  const imgData = payload.image ?? (payload.kind === 'copy-image' ? payload.text : undefined);
+  // 图片内容统一收敛：复制/粘贴/剪切图片事件统一在 image 字段携带原图 data URL
+  // （二维码链接走 text/qrText，不再借道 text 传原图）——出站事件统一走 image
+  const imgData = payload.image;
   // 岛显示用缩略图（Rust 侧剪贴板位图直接 resize 产出，几十 KB）；复制/剪切路径由
   // 剪贴板监听附带，缺失时回退原图（数 MB 整包广播是复杂图片慢的根因，但保证能显示）。
   // 生成缩略图不在此处 await——对大 PNG 前端解码+编码要数百 ms，反拖慢显示
@@ -414,10 +424,11 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
   if (payload.kind === 'cut') {
     void statsService.record({ clip_cut: 1 }).catch(() => {});
   }
-  // 岛显示事件（小 payload：缩略图）：先发显示再发出站，出站大图序列化不拖慢岛弹出
+  // 岛显示事件（小 payload：缩略图）：先发显示再发出站，出站大图序列化不拖慢岛弹出。
+  // text 直接透传：二维码图片事件在生产端已把链接写入 text（胶囊与缩略图并存渲染）
   await emit('island:show-ui', {
     kind: payload.kind,
-    text: payload.kind === 'copy-image' ? undefined : payload.text,
+    text: payload.text,
     image: displayImage,
     title: payload.title,
     durationMs: payload.durationMs ?? islandDurationMs.value,
@@ -425,11 +436,14 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
   }).catch(() => {});
   // 出站事件（Rust 桥 → SSE/Webhook 广播，image 保持原图语义）：uiHandled 标记岛窗口跳过
   // 本次显示（显示已由 show-ui 负责，否则岛要重复接收并解码数 MB 原图）；
-  // Rust 桥 json! 白名单构造天然剥离该标记，出站载荷不含实现细节
+  // Rust 桥 json! 白名单构造天然剥离该标记，出站载荷不含实现细节。
+  // qr_text：图片事件解码出的二维码文本（API v1.4.0 新增）；copy-image 的 text 维持 null
+  // 语义（v1.3.0：图片事件文本不携带内容，链接走 qr_text 字段）
   await emit('island:show', {
     kind: payload.kind,
     text: payload.kind === 'copy-image' ? undefined : payload.text,
     image: imgData,
+    qr_text: payload.qrText,
     title: payload.title,
     durationMs: payload.durationMs ?? islandDurationMs.value,
     sticky: payload.sticky ?? false,
@@ -462,21 +476,24 @@ export function initCopyIsland(): void {
   // 图片路径监听回调先行派发带缩略图的版本，写库后 saveClipboard 的二次派发按内容去重跳过）。
   // 快速通道已显示的同一内容（900ms 内）不重复弹岛（文本与图片均去重）
   window.addEventListener('island:copy', (ev) => {
-    const d = (ev as CustomEvent<{ content: string; type: 'text' | 'image'; thumb?: string | null }>).detail;
+    const d = (ev as CustomEvent<{ content: string; type: 'text' | 'image'; thumb?: string | null; qrText?: string | null }>).detail;
     if (!d || Date.now() < suppressUntil) return;
     if (lastShownCopy && lastShownCopy.type === d.type && lastShownCopy.content === d.content && Date.now() < lastShownCopy.until) return;
     // Ctrl+X 感知窗口内的剪贴板变化（文本与图片均可）按"已剪切"提示（快速通道已显示的同一文本内容已被上方去重跳过）
     const cut = consumeCut();
     lastShownCopy = { type: d.type, content: d.content, until: Date.now() + 900 };
+    // 二维码图片：链接写入 text（胶囊文本与缩略图并存）并随 qrText 出站；无识别结果维持纯图片语义
+    const qr = d.qrText || undefined;
     void showIsland(cut
       ? {
           kind: 'cut',
-          text: d.type === 'text' ? d.content.slice(0, PREVIEW_MAX) : '',
+          text: d.type === 'text' ? d.content.slice(0, PREVIEW_MAX) : (qr ?? ''),
           image: d.type === 'image' ? d.content : undefined,
           thumb: d.type === 'image' && d.thumb ? d.thumb : undefined,
+          qrText: d.type === 'image' ? qr : undefined,
         }
       : d.type === 'image'
-        ? { kind: 'copy-image', text: d.content, thumb: d.thumb ?? undefined }
+        ? { kind: 'copy-image', text: qr, image: d.content, thumb: d.thumb ?? undefined, qrText: qr }
         : { kind: 'copy', text: d.content.slice(0, PREVIEW_MAX) });
   });
   // 灵动岛 API：Rust 侧 HTTP 服务（island_api.rs）转发的第三方显示请求。
