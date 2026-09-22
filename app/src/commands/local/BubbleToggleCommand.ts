@@ -553,6 +553,16 @@ async function pasteRing(index: number): Promise<void> {
   if (seg?.extractorId === 'ai-analysis') void recordAiAdoption().catch(() => {});
 }
 
+/** 延迟解绑：Tauri listen 的注册脚本走 webview eval 宏任务队列，listen 返回后立即解绑
+ *  （同步关环 / 守卫分支）会让注入的 unregisterListener 读到尚未注册的 eventId——
+ *  Tauri 2.11 注入脚本不判空（读 undefined.handlerId 抛 unhandled rejection），
+ *  且 Rust 侧 unlisten invoke 不再执行造成监听泄漏。先 yield 一次宏任务保证注册
+ *  脚本先行执行，解绑完整生效。 */
+async function safeUnlisten(u: UnlistenFn): Promise<void> {
+  await new Promise((r) => setTimeout(r, 0));
+  try { await u(); } catch { /* ignore */ }
+}
+
 /** 整体关闭：全部气泡 + 控制盘 + 事件监听 */
 async function closeRing(): Promise<void> {
   const current = ring;
@@ -560,7 +570,7 @@ async function closeRing(): Promise<void> {
   // 环形系统生命周期结束：解除主窗口失焦隐藏的豁免（app.vue 据此跳过连带隐藏）
   (window as any).__ringActive = false;
   if (!current) return;
-  current.unlisteners.forEach((u) => { try { u(); } catch { /* ignore */ } });
+  current.unlisteners.forEach((u) => { void safeUnlisten(u); });
   for (const s of current.slots) void s.win.close().catch(() => {});
   void current.hub.close().catch(() => {});
 }
@@ -633,7 +643,7 @@ async function openRing(): Promise<void> {
   const on = async (name: string, handler: (payload: any) => void): Promise<void> => {
     const un = await listen(name, (ev) => handler(ev.payload));
     // await 期间环可能已被关闭（控制盘创建失败 / 用户重按 Ctrl+B）：立即解绑防泄漏
-    if (!ring) { try { un(); } catch { /* ignore */ } return; }
+    if (!ring) { void safeUnlisten(un); return; }
     ring.unlisteners.push(un);
   };
   await on('ring:nav', (p) => {
@@ -670,7 +680,7 @@ async function openRing(): Promise<void> {
   const unHubFocus = await ring.hub.onFocusChanged(({ payload: focused }) => {
     if (!focused && ring && ring.shown && !ring.hidden) void closeRing();
   });
-  if (!ring) { try { unHubFocus(); } catch { /* ignore */ } return; }
+  if (!ring) { void safeUnlisten(unHubFocus); return; }
   ring.unlisteners.push(unHubFocus);
 
   // 控制盘 ready 握手收尾异步推进（不阻塞）：环心就绪即补推状态+显示+取焦。
@@ -737,7 +747,7 @@ function waitHubReady(hubLabel: string): Promise<void> {
       finish();
     }).then((u) => {
       un = u;
-      if (done) { try { u(); } catch { /* ignore */ } }
+      if (done) { void safeUnlisten(u); }
     });
     // 控制盘创建失败（tauri://error → closeRing → ring=null）时立即放行
     poll = setInterval(() => { if (!ring) finish(); }, 100);

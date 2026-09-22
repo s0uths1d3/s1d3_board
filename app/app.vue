@@ -25,6 +25,31 @@ import { restoreIslandApiSetting, setupIslandHistoryBridge } from "~/src/island/
 import { restoreIslandWebhookSetting } from "~/src/island/islandWebhook";
 import { initCopyIsland } from "~/composables/useCopyIsland";
 
+// Tauri 2.11 注入脚本缺陷补丁：unregisterListener 读本地表不判空
+// （listeners[eventId].handlerId）——listen 返回后立即解绑（注册脚本经 webview eval
+// 宏任务队列尚未执行）会抛 unhandled rejection，且中断 _unlisten 后续的 Rust 侧
+// unlisten invoke 造成监听泄漏。覆写为容错版：崩溃时延迟到注册入表后重试本地清理，
+// _unlisten 的 invoke 正常继续；注册先行时行为与原版完全一致。
+// 存在性守卫：注入脚本未就绪时跳过（补丁失效但不影响应用启动）。
+if (isTauri()) {
+  const internals = (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ as {
+    unregisterListener: (event: string, eventId: number) => void;
+  } | undefined;
+  if (internals && typeof internals.unregisterListener === 'function') {
+    const origUnregisterListener = internals.unregisterListener.bind(internals);
+    internals.unregisterListener = (event: string, eventId: number) => {
+      try {
+        origUnregisterListener(event, eventId);
+      } catch {
+        // 本地表尚无此 eventId（注册 eval 未执行）：延迟一帧重试本地清理
+        setTimeout(() => {
+          try { origUnregisterListener(event, eventId); } catch { /* 条目已被清理 */ }
+        }, 0);
+      }
+    };
+  }
+}
+
 /** 剪贴板监听与全局快捷键只需在主窗口注册一次；
  * 子窗口（如图片查看器）跳过，避免重复监听，以及关闭子窗口时误注销主窗口的全局快捷键。 */
 function isMainWindow(): boolean {
