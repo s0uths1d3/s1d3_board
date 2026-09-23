@@ -2,6 +2,12 @@
 
 > 行为与 0.4.0 完全一致的架构重构；架构文档见 `.docs/architecture.md`。
 
+### ✨ 新功能（统计界面升级）
+
+- **数据故事卡**：统计区间转叙事句（操作总量/字量 A4 换算/主力功能/粘贴复用率/峰值日/时长电影换算），金色数字高亮；个性化洞察规则库（深夜/早起/复用/待办完成率等 11 条）按日期种子每日轮换取 2 条；环比上一等长区间增长徽章（正增长金色脉冲）
+- **图表增强**：趋势图新增柱状/折线双视图切换（折线为 SVG 面积图 + 峰值点 + 逐点 hover）；Tab 访问分布新增甜甜圈图（分段 hover 与列表行双向联动，中心显示占比）；指标卡入场级联动画 + 趋势柱条自底部升起动画
+- **纯函数模块**：`src/statistics/story.ts`（故事事实/洞察规则/每日轮换），i18n 双语全覆盖，新增 vitest 13 个（总计 121 全绿）
+
 ### ♻️ 重构（前端）
 
 - **core 层**：新增 `core/events.ts` 类型化事件总线（模块间通信唯一通道）、`core/registry.ts` 模块注册表（拓扑排序启动、反向序收尾、单模块故障隔离）、`core/context.ts` 模块能力抽象、`core/db/` 连接层（PRAGMA + execWithRetry）与 9 个领域仓储
@@ -19,7 +25,7 @@
 ### ⬆️ 依赖升级
 
 - **Tailwind CSS 3.4 → 4.3**：CSS-first 迁移——`@import "tailwindcss"` + `@theme inline` 令牌取代 `tailwind.config.js`（16 色令牌指向运行时 CSS 变量，透明度修饰符走 color-mix，与 v3 rgb alpha 数学等价；v4 不支持 v3 的 `<alpha-value>` 占位符，残留会导致颜色整体失效）；`@nuxtjs/tailwindcss` 模块（仅支持 v3）替换为 `@tailwindcss/vite` 插件；类名跟随 v4 重命名：`shadow-sm→shadow-xs`、`outline-none→outline-hidden`、`rounded-sm→rounded-xs`、`blur-sm→blur-xs`；补回 v4 preflight 移除的 `button/[role=button]` 手型光标
-- 小版本直升：vue 3.5.43 / vue-router 5.3.1 / @tauri-apps/* / plugin-sql 2.4.1 / plugin-notification 2.4.0 / plugin-opener 2.5.5 / uuid 14.0.2 / @types/node 26.6.2；typescript 保持 5.8（latest 7.0.2 为主版本跨越，待 vue-tsc 生态跟进）
+- 小版本直升：vue 3.5.43 / vue-router 5.3.1 / @tauri-apps/* / plugin-sql 2.4.1 / plugin-notification 2.4.0 / plugin-opener 2.5.5 / uuid 14.0.2 / @types/node 26.6.2；npm 插件包升级后同步 `cargo update` 刷新 Cargo.lock，使 Rust crate 与 npm 包 major/minor 对齐（notification 2.4.0 / opener 2.5.5 / sql 2.4.1，Tauri 启动时校验两侧版本一致性）；typescript 保持 5.8（latest 7.0.2 为主版本跨越，待 vue-tsc 生态跟进）
 
 ## 0.4.0 (2026-09-21)
 
