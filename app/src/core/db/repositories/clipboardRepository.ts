@@ -39,6 +39,8 @@ export interface ClipboardRepository {
     increaseUseCount(id: number): Promise<void>;
     increaseUseCountByContent(content: string): Promise<void>;
     deleteClipboardData(id: number): Promise<void>;
+    /** 区间内按来源应用聚合的复制条数 Top N（统计页"来源应用"榜；startMs 含、endMs 不含） */
+    fetchSourceAppTop(startMs: number, endMs: number, limit: number): Promise<{ app: string; cnt: number }[]>;
 }
 
 export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
@@ -274,6 +276,17 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
             ) as { type: string; content: string }[];
             await db.execute("DELETE FROM clipboard WHERE id = $1", [id]);
             if (rows[0]?.type === 'image') deleteImageFileByRef(rows[0].content);
+        },
+
+        async fetchSourceAppTop(startMs: number, endMs: number, limit: number): Promise<{ app: string; cnt: number }[]> {
+            const db = await conn.ready();
+            return await db.select<{ app: string; cnt: number }[]>(
+                `SELECT source_app AS app, COUNT(*) AS cnt FROM clipboard
+                 WHERE source_app IS NOT NULL AND source_app <> ''
+                   AND created_at >= $1 AND created_at < $2
+                 GROUP BY source_app ORDER BY cnt DESC LIMIT $3`,
+                [startMs, endMs, limit]
+            );
         },
     };
 }

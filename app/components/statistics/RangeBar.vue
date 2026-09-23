@@ -13,6 +13,8 @@ import DatePicker from '~/components/common/DatePicker.vue';
 export interface RangeBarOption {
   key: string;
   name: string;
+  /** hover 提示：解释该范围标签的统计口径（可选） */
+  tip?: string;
 }
 
 const props = withDefaults(defineProps<{
@@ -76,6 +78,7 @@ function shift(delta: number) {
         type="button"
         class="btn-soft shrink-0 whitespace-nowrap px-2.5 py-1.5 text-sm"
         :class="modelValue === opt.key ? 'border-gold bg-secondary text-gold' : ''"
+        v-tip="opt.tip ?? ''"
         @click="select(opt.key)"
       >
         {{ opt.name }}

@@ -24,13 +24,14 @@ const rangeOffset = ref(0);
 const customFrom = ref('');
 const customTo = ref('');
 
-const rangeOptions = computed(() => [
-  { key: 'day' as const, name: t('statistics.day') },
-  { key: 'week' as const, name: t('statistics.week') },
-  { key: 'month' as const, name: t('statistics.month') },
-  { key: 'year' as const, name: t('statistics.year') },
-  { key: 'custom' as const, name: t('statistics.custom') },
-]);
+const rangeOptions = computed(() =>
+  (['day', 'week', 'month', 'year', 'custom'] as RangeKey[]).map(key => ({
+    key,
+    name: t(`statistics.${key}`),
+    // 范围标签的 hover 口径说明（与统计页共用文案，RangeBar 以 v-tip 展示）
+    tip: t(`statistics.range_${key}_desc`),
+  }),
+));
 
 /** 范围起止（本地时区 YYYY-MM-DD；周一起始整周；自定义取所选起止，未选时回退今天） */
 const rangeDates = computed(() => {

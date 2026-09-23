@@ -365,16 +365,18 @@ await this.ensureDbInitialized();
   /**
    * 5) 查询区间内按日（或按月降采样）分组的趋势明细（§7.6 / §14.4）
    * 区间 ≤ TREND_DOWNSAMPLE_DAYS：逐日柱状；超过：按月聚合返回稀疏月柱。
+   * opts.forceDaily = true 时强制逐日（热力图/星期节奏等需要完整逐日序列的场景）。
    * 支持多字段求和（如 ["clip_text","clip_image","clip_use"] 为"剪贴活动"）。
    */
   public async getDailySeries(
     from: string,
     to: string,
-    fields: StatField[] = ['clip_text', 'clip_image', 'clip_use']
+    fields: StatField[] = ['clip_text', 'clip_image', 'clip_use'],
+    opts?: { forceDaily?: boolean }
   ): Promise<{ stat_date: string; value: number }[]> {
     await this.ensureDbInitialized();
     if (fields.length === 0) return [];
-    const downsample = daySpan(from, to) > TREND_DOWNSAMPLE_DAYS;
+    const downsample = !opts?.forceDaily && daySpan(from, to) > TREND_DOWNSAMPLE_DAYS;
     // §14.7：pending 中本字段增量
     const pendingAdd = (acc: Partial<Record<StatField, number>>): number =>
       fields.reduce((sum, f) => sum + (acc[f] ?? 0), 0);

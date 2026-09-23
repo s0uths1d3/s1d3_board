@@ -241,16 +241,16 @@ body::after {
 .s1d3-tip {
   position: fixed;
   z-index: 99999;
-  max-width: 280px;
-  padding: 5px 10px;
+  max-width: 320px;
+  padding: 6px 10px;
   border-radius: 8px;
   background: rgb(var(--tip-bg));
   color: rgb(var(--tip-text));
   font-size: 12px;
   line-height: 1.5;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 长文案自动换行完整展示（不截断省略）；短文案仍保持单行紧凑 */
+  white-space: normal;
+  overflow-wrap: break-word;
   border: 1px solid rgb(var(--c-gold) / 0.45);
   box-shadow: 0 6px 20px rgb(var(--c-shadow) / 0.3);
   opacity: 0;

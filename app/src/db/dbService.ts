@@ -11,6 +11,7 @@ import { createIslandHistoryRepository, type IslandHistoryRepository } from "../
 import { createBackupRepository, type BackupRepository } from "../core/db/repositories/backupRepository";
 import type { PageQuery } from "../core/db/sql";
 import statsService from "~/src/statistics/statsService";
+import { dateRangeToMs } from "~/src/statistics/chartMath";
 import { startClipboardListener, suppressUseCountBump } from "../clipboard/clipboardListener";
 
 /**
@@ -88,6 +89,13 @@ class DatabaseService {
     public async fetchClipboardSingleData(id: number): Promise<ClipboardData | undefined> {
         await this.ensureDbInitialized();
         return this.clipboard.fetchClipboardSingleData(id);
+    }
+
+    /** 区间内复制来源应用 Top N（统计页"来源应用"榜；YYYY-MM-DD 闭区间，内部换算毫秒边界） */
+    public async fetchSourceAppTop(from: string, to: string, limit = 5): Promise<{ app: string; cnt: number }[]> {
+        await this.ensureDbInitialized();
+        const { startMs, endMs } = dateRangeToMs(from, to);
+        return this.clipboard.fetchSourceAppTop(startMs, endMs, limit);
     }
 
     public async updateFavorite(id: number, value: number): Promise<void> {
