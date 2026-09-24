@@ -109,7 +109,9 @@ function shift(delta: number) {
           class="min-w-[8.5rem] max-w-full truncate whitespace-nowrap text-center tabular-nums"
         >{{ label }}</span>
         <span v-else class="flex min-w-0 items-center gap-1 rounded-xl bg-secondary/50 px-1.5 py-1">
-          <span class="w-32 min-w-0">
+          <!-- flex 包裹消除 DatePicker 根元素 inline-block 的行盒基线空隙，
+               否则 span 实际高度大于按钮，连接箭头相对输入框垂直偏下 -->
+          <span class="flex w-32 min-w-0 [&>div]:w-full">
             <DatePicker
               :model-value="customFrom"
               :placeholder="t('statistics.from_date')"
@@ -123,7 +125,7 @@ function shift(delta: number) {
             <path d="M5 12h14" />
             <path d="M12 5l7 7-7 7" />
           </svg>
-          <span class="w-32 min-w-0">
+          <span class="flex w-32 min-w-0 [&>div]:w-full">
             <DatePicker
               :model-value="customTo"
               :placeholder="t('statistics.to_date')"
