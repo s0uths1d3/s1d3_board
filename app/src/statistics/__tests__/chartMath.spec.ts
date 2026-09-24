@@ -93,6 +93,16 @@ describe('buildHeatmapCells', () => {
         const sep1 = g.cells.find(c => c.date === '2026-09-01')!;
         expect(g.months.some(m => m.label === '9月' && m.idx === sep1.weekIdx)).toBe(true);
     });
+
+    it('指定 start 时网格从 start 所在周一起（跨年区间跟随所选范围）', () => {
+        // 2024-09-23（周一）~ 2026-09-23：约两年，105 整周 = 105 列 × 7 = 735 格
+        const g = buildHeatmapCells(rows([['2025-06-01', 5]]), '2026-09-23', label, '2024-09-23');
+        expect(g.cells[0]!.date).toBe('2024-09-23');
+        expect(g.cells).toHaveLength(735);
+        expect(g.cells[g.cells.length - 1]!.date).toBe('2026-09-27');
+        const hit = g.cells.find(c => c.date === '2025-06-01')!;
+        expect(hit.value).toBe(5);
+    });
 });
 
 // ---------------------------------------------------------------------------

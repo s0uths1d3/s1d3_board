@@ -26,6 +26,9 @@ export function totalOps(s: StatsSummary): number {
   return OPS_FIELDS.reduce((sum, k) => sum + (s[k] ?? 0), 0);
 }
 
+/** 环盘金色透明度梯度（统计页 Tab 访问分布与应用时长页应用占比共用；第 7 档供「其他」聚合段使用） */
+export const DONUT_OPS = [1, 0.82, 0.64, 0.5, 0.38, 0.28, 0.2] as const;
+
 /** 逐日序列行（与 statsService.getDailySeries 返回对齐） */
 export interface SeriesRow {
   stat_date: string;
@@ -60,12 +63,13 @@ export interface HeatmapGrid {
 }
 
 /**
- * 构建近一年（含 endDate）热力图网格：53 整列 × 7 行（371 格，周一列首）：
- * - 末列覆盖 endDate 所在整周（其后日期为占位格，value 0 灰显，不标注月份）；
+ * 构建热力图网格（周一列首）：
+ * - 起点为 start（缺省 end-364，即近一年）；末列覆盖 endDate 所在整周
+ *   （其后日期为占位格，value 0 灰显，不标注月份）；
  * - 每格 level 按 max 的比例分五档：0 无数据 / >0 / ≥25% / ≥50% / ≥75%；
  * - months 为各月 1 号所在列（同列去重，未来占位日跳过）。
  */
-export function buildHeatmapCells(rows: SeriesRow[], endDate: string, monthLabel: (m: number) => string): HeatmapGrid {
+export function buildHeatmapCells(rows: SeriesRow[], endDate: string, monthLabel: (m: number) => string, start?: string): HeatmapGrid {
   const byDate = new Map(rows.map(r => [r.stat_date, r.value]));
   const end = new Date(`${endDate}T00:00:00`);
   if (isNaN(end.getTime())) return { cells: [], months: [] };
@@ -75,14 +79,17 @@ export function buildHeatmapCells(rows: SeriesRow[], endDate: string, monthLabel
   const lastMonday = new Date(end);
   lastMonday.setDate(end.getDate() - endDayIdx);
 
-  // 首格：倒推 364 天后对齐到所在周的周一
-  const first = new Date(end);
-  first.setDate(end.getDate() - 364);
+  // 首格：指定 start 时从 start 起（跨年区间跟随所选范围）；否则倒推 364 天
+  let first = start ? new Date(`${start}T00:00:00`) : null;
+  if (!first || isNaN(first.getTime())) {
+    first = new Date(end);
+    first.setDate(end.getDate() - 364);
+  }
   const firstDayIdx = (first.getDay() + 6) % 7;
   const firstMonday = new Date(first);
   firstMonday.setDate(first.getDate() - firstDayIdx);
 
-  // 网格覆盖 firstMonday 至 endDate 所在周的周日（53 整列 × 7 格）：
+  // 网格覆盖 firstMonday 至 endDate 所在周的周日（整列 × 7 格；近一年为 53 列，跨年区间列数随之增加）：
   // 末列中 endDate 之后的日期为占位格（value 0，level 0 灰显）
   const totalDays = Math.round((lastMonday.getTime() - firstMonday.getTime()) / 86400000) + 7;
   const cells: HeatmapCell[] = [];

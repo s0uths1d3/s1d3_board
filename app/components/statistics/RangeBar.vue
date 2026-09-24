@@ -29,11 +29,14 @@ const props = withDefaults(defineProps<{
   customTo?: string;
   /** 范围文案（显示在阶段箭头中间，如 "2026-09-01 ~ 2026-09-30"） */
   label?: string;
+  /** 禁用阶段切换箭头（如「全部」= 完整历史，无阶段可切） */
+  disableShift?: boolean;
 }>(), {
   offset: 0,
   customFrom: '',
   customTo: '',
   label: '',
+  disableShift: false,
 });
 
 const emit = defineEmits<{
@@ -46,10 +49,10 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const isCustom = computed(() => props.modelValue === 'custom');
-/** 左箭头禁用：自定义范围无"阶段"概念 */
-const leftDisabled = computed(() => isCustom.value);
+/** 左箭头禁用：自定义范围无"阶段"概念；禁用切换的范围（如「全部」）同样不可切 */
+const leftDisabled = computed(() => isCustom.value || props.disableShift);
 /** 右箭头禁用：自定义范围，或已处于当前（最新）阶段不可再往后 */
-const rightDisabled = computed(() => isCustom.value || props.offset >= 0);
+const rightDisabled = computed(() => isCustom.value || props.disableShift || props.offset >= 0);
 
 function select(key: string) {
   if (props.modelValue !== key) {
@@ -61,7 +64,7 @@ function select(key: string) {
 
 /** 阶段切换：delta=-1 上一阶段，delta=1 下一阶段；不允许进入未来阶段 */
 function shift(delta: number) {
-  if (isCustom.value) return;
+  if (isCustom.value || props.disableShift) return;
   const next = props.offset + delta;
   if (next > 0) return;
   emit('update:offset', next);
@@ -83,9 +86,30 @@ function shift(delta: number) {
       >
         {{ opt.name }}
       </button>
-      <div class="ml-auto flex min-w-0 items-center gap-1.5 text-xs text-ink-faint">
-        <span v-if="isCustom" class="flex min-w-0 items-center gap-1">
-          <span class="w-36 min-w-0">
+      <!-- 右侧：箭头始终夹住中间内容——普通范围为「‹ 阶段文案 ›」，
+           自定义为「‹ 日期输入组 ›」（隐藏重复的只读文案，箭头与输入组不割裂） -->
+      <div class="ml-auto flex min-w-0 items-center gap-1 text-xs text-ink-faint">
+        <!-- 左箭头：上一阶段（自定义/禁用切换范围时置灰） -->
+        <button
+          type="button"
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
+          :class="leftDisabled ? 'cursor-not-allowed text-ink-faint/40' : 'text-gold hover:bg-secondary'"
+          :disabled="leftDisabled"
+          v-tip="t('statistics.prev_phase')"
+          @click="shift(-1)"
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
+        <!-- 中间内容：阶段文案 或 日期输入组 -->
+        <span
+          v-if="!isCustom"
+          class="min-w-[8.5rem] max-w-full truncate whitespace-nowrap text-center tabular-nums"
+        >{{ label }}</span>
+        <span v-else class="flex min-w-0 items-center gap-1 rounded-xl bg-secondary/50 px-1.5 py-1">
+          <span class="w-32 min-w-0">
             <DatePicker
               :model-value="customFrom"
               :placeholder="t('statistics.from_date')"
@@ -93,8 +117,13 @@ function shift(delta: number) {
               @update:model-value="emit('update:customFrom', $event)"
             />
           </span>
-          <span class="text-ink-faint">—</span>
-          <span class="w-36 min-w-0">
+          <!-- 区间连接符：右向箭头与阶段切换箭头同视觉语言，浅底容器强化"区间组合"整体感 -->
+          <svg class="h-3.5 w-3.5 shrink-0 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12h14" />
+            <path d="M12 5l7 7-7 7" />
+          </svg>
+          <span class="w-32 min-w-0">
             <DatePicker
               :model-value="customTo"
               :placeholder="t('statistics.to_date')"
@@ -103,36 +132,20 @@ function shift(delta: number) {
             />
           </span>
         </span>
-        <!-- 阶段切换箭头：左右选择上一阶段/下一阶段，无可用方向时置灰禁用 -->
-        <div class="flex items-center gap-1">
-          <button
-            type="button"
-            class="flex h-8 w-8 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
-            :class="leftDisabled ? 'cursor-not-allowed text-ink-faint/40' : 'text-gold hover:bg-secondary'"
-            :disabled="leftDisabled"
-            v-tip="t('statistics.prev_phase')"
-            @click="shift(-1)"
-          >
-            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-                 stroke-linecap="round" stroke-linejoin="round">
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </button>
-          <span class="min-w-[8.5rem] max-w-full truncate whitespace-nowrap text-center tabular-nums">{{ label }}</span>
-          <button
-            type="button"
-            class="flex h-8 w-8 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
-            :class="rightDisabled ? 'cursor-not-allowed text-ink-faint/40' : 'text-gold hover:bg-secondary'"
-            :disabled="rightDisabled"
-            v-tip="t('statistics.next_phase')"
-            @click="shift(1)"
-          >
-            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-                 stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 6l6 6-6 6" />
-            </svg>
-          </button>
-        </div>
+        <!-- 右箭头：下一阶段（自定义/禁用切换范围/已是当前阶段时置灰） -->
+        <button
+          type="button"
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ease-soft"
+          :class="rightDisabled ? 'cursor-not-allowed text-ink-faint/40' : 'text-gold hover:bg-secondary'"
+          :disabled="rightDisabled"
+          v-tip="t('statistics.next_phase')"
+          @click="shift(1)"
+        >
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        </button>
       </div>
     </div>
   </div>

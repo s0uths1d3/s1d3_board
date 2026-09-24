@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from '~/composables/useI18n';
 import statsService from '~/src/statistics/statsService';
+import { DONUT_OPS } from '~/src/statistics/chartMath';
 import { toDateString } from '~/utils/datetime';
 import RangeBar from '~/components/statistics/RangeBar.vue';
 import { appUsageEnabled, setAppUsageEnabled } from '~/composables/useAppUsage';
@@ -81,17 +82,8 @@ const totals = computed(() => ({
 }));
 const idleSecs = computed(() => Math.max(0, totals.value.total - totals.value.active));
 
-/** 应用占比环形图：前 6 名单列，其余合并为「其他」；配色为主题金色的深浅梯度 */
-const PIE_COLORS = [
-  'rgb(var(--c-gold) / 1)',
-  'rgb(var(--c-gold) / 0.72)',
-  'rgb(var(--c-gold) / 0.52)',
-  'rgb(var(--c-gold) / 0.36)',
-  'rgb(var(--c-gold) / 0.24)',
-  'rgb(var(--c-gold) / 0.15)',
-  'rgb(var(--c-ink-soft) / 0.35)',
-];
-
+/** 应用占比环形图分段：前 6 名 + 其他；几何与统计页 Tab 访问分布完全一致
+ *  （r52 / stroke14 / 段间 2px 间隙 / dashoffset 按段长负累进；透明度梯度共用 DONUT_OPS） */
 const pieSlices = computed(() => {
   if (totals.value.total <= 0) return [];
   const sorted = [...rows.value].sort((a, b) => b.total - a.total);
@@ -101,24 +93,34 @@ const pieSlices = computed(() => {
   if (rest.length > 0) {
     named.push({ name: t('app_usage.others'), value: rest.reduce((s, r) => s + r.total, 0) });
   }
-  let accPct = 0;
+  const R = 52;
+  const C = 2 * Math.PI * R;
+  let offset = 0;
   return named.map((s, i) => {
     const pct = Math.round((s.value / totals.value.total) * 100);
+    const len = Math.max((pct / 100) * C - 2, 0);
     const slice = {
       name: s.name,
       value: s.value,
       pct,
-      color: PIE_COLORS[i % PIE_COLORS.length]!,
-      dash: pct,
-      offset: -accPct,
+      op: DONUT_OPS[i % DONUT_OPS.length]!,
+      dash: `${len} ${C - len}`,
+      offset: -offset,
     };
-    accPct += pct;
+    offset += len;
     return slice;
   });
 });
 
-/** 环形图半径：周长凑成 100，方便直接用百分比画分段 */
-const DONUT_R = 15.9155;
+/** 环盘 hover 段（分段与图例双向联动） */
+const hoveredApp = ref<string | null>(null);
+
+/** 环盘中心：hover 段时显示其占比，否则显示总时长（与统计页 Tab 环盘一致） */
+const pieCenter = computed(() => {
+  const hit = pieSlices.value.find(s => s.name === hoveredApp.value);
+  if (hit) return { main: `${hit.pct}%`, sub: hit.name };
+  return { main: fmt(totals.value.total), sub: t('app_usage.total') };
+});
 
 /** 条形宽度基准：最大总时长 */
 const maxTotal = computed(() => rows.value[0]?.total ?? 0);
@@ -278,39 +280,46 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- 应用占比环形图：前 6 名 + 其他；中心显示总时长，右侧图例带占比 -->
+        <!-- 应用占比环形图：几何与 hover 机制与统计页 Tab 访问分布一致（分段↔图例双向联动，中心 hover 显占比） -->
         <div class="glass-card card-lift rounded-2xl p-4 shadow-soft">
           <div class="mb-4 text-xs uppercase tracking-wide text-ink-faint">{{ t('app_usage.share_title') }}</div>
           <div class="flex flex-wrap items-center gap-6">
             <div class="relative h-40 w-40 shrink-0">
-              <svg viewBox="-0.5 -0.5 37 37" class="h-full w-full -rotate-90">
-                <circle cx="18" cy="18" r="15.9155" fill="none" stroke="rgb(var(--c-line) / 0.6)" stroke-width="4" />
+              <svg viewBox="0 0 120 120" class="h-full w-full -rotate-90">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="rgb(var(--c-secondary))" stroke-width="14" />
                 <circle
                     v-for="slice in pieSlices"
                     :key="slice.name"
-                    cx="18"
-                    cy="18"
-                    r="15.9155"
+                    cx="60"
+                    cy="60"
+                    r="52"
                     fill="none"
-                    :stroke="slice.color"
-                    stroke-width="5"
-                    :stroke-dasharray="`${slice.dash} 100`"
+                    :stroke="`rgb(var(--c-gold) / ${slice.op})`"
+                    :stroke-width="hoveredApp === slice.name ? 18 : 14"
+                    :stroke-dasharray="slice.dash"
                     :stroke-dashoffset="slice.offset"
+                    class="cursor-default transition-all duration-300 ease-soft"
+                    :style="{ opacity: hoveredApp && hoveredApp !== slice.name ? 0.35 : 1 }"
                     v-tip="`${slice.name} · ${fmt(slice.value)}（${slice.pct}%）`"
+                    @mouseenter="hoveredApp = slice.name"
+                    @mouseleave="hoveredApp = null"
                 />
               </svg>
-              <div class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-0.5">
-                <span class="text-[10px] uppercase tracking-wide text-ink-faint">{{ t('app_usage.total') }}</span>
-                <span class="text-base font-semibold tabular-nums text-ink">{{ fmt(totals.total) }}</span>
+              <div class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <div class="text-lg font-semibold text-ink tabular-nums">{{ pieCenter.main }}</div>
+                <div class="max-w-20 truncate text-[10px] text-ink-faint">{{ pieCenter.sub }}</div>
               </div>
             </div>
-            <div class="flex min-w-0 flex-1 flex-col gap-2">
+            <div class="min-w-0 flex-1 space-y-2">
               <div
                   v-for="slice in pieSlices"
                   :key="slice.name"
-                  class="flex items-center gap-2 text-xs"
+                  class="flex cursor-default items-center gap-2 rounded-lg px-1.5 py-0.5 text-xs transition-colors duration-300"
+                  :class="hoveredApp === slice.name ? 'bg-gold/10' : ''"
+                  @mouseenter="hoveredApp = slice.name"
+                  @mouseleave="hoveredApp = null"
               >
-                <span class="h-2.5 w-2.5 shrink-0 rounded-xs" :style="{ backgroundColor: slice.color }"></span>
+                <span class="h-2.5 w-2.5 shrink-0 rounded-xs" :style="{ backgroundColor: `rgb(var(--c-gold) / ${slice.op})` }"></span>
                 <span class="min-w-0 flex-1 truncate text-ink-soft">{{ slice.name }}</span>
                 <span class="shrink-0 font-medium tabular-nums text-ink">{{ slice.pct }}%</span>
               </div>

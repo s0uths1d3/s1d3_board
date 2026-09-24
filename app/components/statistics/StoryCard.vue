@@ -20,6 +20,8 @@ const props = defineProps<{
   insights: string[];
   /** 环比上一等长区间：pct 为变化百分比（null = 上一阶段无数据），diff 为绝对增量 */
   growth: { pct: number | null; diff: number };
+  /** 相伴天数（最早统计日 → 今天；0 = 无数据不显示开篇行） */
+  days?: number;
 }>();
 
 /** 把 [[...]] 标记拆为 { text, gold } 片段 */
@@ -38,6 +40,9 @@ function splitSegs(line: string): { text: string; gold: boolean }[] {
 }
 
 const lines = computed(() => props.storyLines.map(splitSegs));
+
+/** 相伴开篇（同一 [[...]] 金色分段语法，字号更大） */
+const openSegs = computed(() => (props.days && props.days > 0 ? splitSegs(t('statistics.story_open', { n: String(props.days) })) : []));
 
 /** 增长徽章文案与样式 */
 const growthView = computed(() => {
@@ -68,6 +73,14 @@ const growthView = computed(() => {
         {{ growthView.text }}
       </span>
     </div>
+
+    <!-- 相伴开篇：把冷数据变成陪伴叙事（天数来自全历史最早统计日 → 今天） -->
+    <p v-if="openSegs.length > 0" class="mb-2.5 border-l-2 border-gold/60 pl-3 text-base font-semibold leading-relaxed text-ink">
+      <template v-for="(seg, j) in openSegs" :key="j">
+        <b v-if="seg.gold" class="font-semibold text-gold tabular-nums">{{ seg.text }}</b>
+        <template v-else>{{ seg.text }}</template>
+      </template>
+    </p>
 
     <!-- 叙事行 -->
     <div class="space-y-1.5">

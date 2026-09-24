@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
- * 年度活跃热力图（ActivityHeatmap）
+ * 活跃热力图（ActivityHeatmap）
  *
- * GitHub 风格贡献格：53 周 × 7 行，近 365 天每日总操作量按五档金色深度着色；
- * 数据由页面层用 chartMath.buildHeatmapCells 预计算（纯函数，本组件不查询）。
+ * GitHub 风格贡献格：区间每日总操作量按五档金色深度着色（列数随跨度自适应，
+ * 仅当所选区间跨度大于一年时由页面层展示）；数据由页面层用
+ * chartMath.buildHeatmapCells 预计算（纯函数，本组件不查询）。
  * - hover 任意格显示「日期 · 次数」（v-tip）；
  * - 点击某格 emit('select-day', date)，页面层把范围切换为该日的自定义区间；
  * - level→颜色类必须用完整字面量数组（Tailwind v4 源码扫描，拼接类名会静默丢样式）。
@@ -18,6 +19,8 @@ const props = defineProps<{
   cells: HeatmapCell[];
   /** 月份标注（月初所在周列 + 文案） */
   months: HeatmapMonth[];
+  /** 里程碑日（区间峰值日）：金色描边 + 悬浮标注，讲述"最忙碌的一天" */
+  highlightDate?: string;
 }>();
 
 const emit = defineEmits<{
@@ -55,7 +58,8 @@ const monthByWeek = computed<Map<number, string>>(() => {
 });
 
 function cellTip(cell: HeatmapCell | null): string {
-  return cell ? `${cell.date} · ${cell.value}` : '';
+  if (!cell) return '';
+  return cell.date === props.highlightDate ? `${cell.date} · ${cell.value} · ${t('statistics.heat_peak_tip')}` : `${cell.date} · ${cell.value}`;
 }
 </script>
 
@@ -67,17 +71,19 @@ function cellTip(cell: HeatmapCell | null): string {
     </div>
 
     <div v-if="weeks.length === 0" class="text-sm text-ink-faint">{{ t('statistics.no_stats_data') }}</div>
-    <div v-else class="min-w-0">
-      <!-- 月份标注行：列宽与主体严格一致（同样的 min-w-[10px] flex-1，显式 min-width
-           同时关闭 flex 内容撑宽），标签不截断、溢出绘制到后续列（GitHub 式——月份间隔 ≥4 列不会碰撞） -->
+    <!-- 区间跨度可大于一年（列数 >53）：内容超宽时整体横向滚动 -->
+    <div v-else class="min-w-0 overflow-x-auto">
+      <!-- 月份标注行：列宽固定 11px 与主体严格一致（固定宽同时关闭 flex 拉伸——
+           列数少时 flex-1 会把唯一一列拉满整行，aspect-square 放大成全屏巨块），
+           标签不截断、溢出绘制到后续列（GitHub 式——月份间隔 ≥4 列不会碰撞） -->
       <div class="mb-1 flex gap-[2px] pl-6">
-        <div v-for="(week, wi) in weeks" :key="`m-${wi}`" class="min-w-[10px] flex-1 whitespace-nowrap text-[10px] leading-3 text-ink-faint">
+        <div v-for="(week, wi) in weeks" :key="`m-${wi}`" class="w-[11px] shrink-0 whitespace-nowrap text-[10px] leading-3 text-ink-faint">
           {{ monthByWeek.get(wi) ?? '' }}
         </div>
       </div>
-      <!-- 主体：53 列自适应宽度（窄屏收缩不滚动），每列 7 格；末列未来占位格灰显且不可交互 -->
+      <!-- 主体：列宽固定 11px（≤1 年约 53 列在宽屏铺开，跨年横向滚动，列数少时靠左排列），每列 7 格；末列未来占位格灰显且不可交互 -->
       <div class="flex gap-[2px] pl-6">
-        <div v-for="(week, wi) in weeks" :key="wi" class="flex min-w-[10px] flex-1 flex-col gap-[2px]">
+        <div v-for="(week, wi) in weeks" :key="wi" class="flex w-[11px] shrink-0 flex-col gap-[2px]">
           <div
             v-for="(cell, di) in week"
             :key="di"
@@ -85,6 +91,8 @@ function cellTip(cell: HeatmapCell | null): string {
             :class="[
               cell && !isFuture(cell) ? LEVEL_CLASS[cell.level] : 'bg-transparent',
               cell && !isFuture(cell) ? 'cursor-pointer hover:scale-110' : '',
+              // 里程碑日（区间峰值）：金色描边 + 外扩，与普通格区分
+              cell && cell.date === props.highlightDate ? 'ring-2 ring-gold ring-offset-1' : '',
             ]"
             v-tip="cell && !isFuture(cell) ? cellTip(cell) : ''"
             @click="cell && !isFuture(cell) && emit('select-day', cell.date)"

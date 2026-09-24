@@ -22,17 +22,17 @@ import ActivityHeatmap from '~/components/statistics/ActivityHeatmap.vue';
 import AnimatedNumber from '~/components/statistics/AnimatedNumber.vue';
 import { buildStoryFacts, computeInsightIds, pickDailyInsights } from '~/src/statistics/story';
 import {
-  OPS_FIELDS, totalOps, buildHeatmapCells, weekdayAverages, alignGhost,
+  OPS_FIELDS, totalOps, buildHeatmapCells, weekdayAverages, alignGhost, DONUT_OPS,
   type SeriesRow, type GhostRow,
 } from '~/src/statistics/chartMath';
 import dbService from '~/src/db/dbService';
 
 const { t, tName, locale } = useI18n();
 
-type RangeKey = 'day' | 'week' | 'month' | 'year' | 'custom';
+type RangeKey = 'all' | 'month' | 'year' | 'custom';
 
 const rangeOptions = computed<{ key: RangeKey; name: string; tip: string }[]>(() =>
-  (['day', 'week', 'month', 'year', 'custom'] as RangeKey[]).map(key => ({
+  (['month', 'year', 'all', 'custom'] as RangeKey[]).map(key => ({
     key,
     name: t(`statistics.${key}`),
     // 范围标签的 hover 口径说明（RangeBar 以 v-tip 展示）
@@ -46,7 +46,7 @@ const customTo = ref('');
 
 /**
  * 阶段偏移：0 = 当前阶段，-1 = 上一阶段，1 = 下一阶段（仅预设范围，自定义不使用）。
- * 由范围切换栏左右箭头调整；周/月/年取完整阶段区间（整周/整月/整年），便于"上一个阶段"浏览。
+ * 由范围切换栏左右箭头调整；月/年取完整阶段区间（整月/整年），便于"上一个阶段"浏览。
  */
 const rangeOffset = ref(0);
 
@@ -55,18 +55,9 @@ const rangeDates = computed<{ from: string; to: string }>(() => {
   const now = new Date();
   const off = rangeOffset.value;
   switch (range.value) {
-    case 'day': {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + off);
-      const s = toDateString(d);
-      return { from: s, to: s };
-    }
-    case 'week': {
-      // 周一起始的整周
-      const monday = new Date(now);
-      monday.setDate(now.getDate() - ((now.getDay() + 6) % 7) + off * 7);
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-      return { from: toDateString(monday), to: toDateString(sunday) };
+    case 'all': {
+      // 全部历史：起点早于任何数据（配合热力图起点取最早统计日期，避免空格子爆炸）
+      return { from: '2000-01-01', to: toDateString(now) };
     }
     case 'month': {
       const f = new Date(now.getFullYear(), now.getMonth() + off, 1);
@@ -82,6 +73,11 @@ const rangeDates = computed<{ from: string; to: string }>(() => {
       return { from: customFrom.value || toDateString(now), to: customTo.value || toDateString(now) };
   }
 });
+
+/** 范围栏中间文案：全部显示固定文案，其余显示起止日期 */
+const rangeLabel = computed(() =>
+  range.value === 'all' ? t('statistics.all_range_label') : `${rangeDates.value.from} ~ ${rangeDates.value.to}`,
+);
 
 // 范围选择/阶段切换的交互逻辑在共用组件 RangeBar 内（v-model 同步 range 与 rangeOffset）；
 // rangeDates 变化（含 150ms 防抖）驱动下方 load 重新查询。
@@ -113,9 +109,7 @@ const growth = ref<{ pct: number | null; diff: number }>({ pct: null, diff: 0 })
 const srcApps = ref<{ app: string; cnt: number }[]>([]);
 /** 环比幽灵序列（上一等长区间，与 series 按索引对齐，短者截断） */
 const ghostSeries = ref<GhostRow[]>([]);
-/** 年度热力图逐日序列（近 365 天，仅挂载时查询一次） */
-const heatRows = ref<SeriesRow[]>([]);
-/** 区间内逐日总操作量（星期节奏输入） */
+/** 区间内逐日总操作量（星期节奏输入；跨年时热力图共用同一序列） */
 const weekRows = ref<SeriesRow[]>([]);
 /** 竞态守卫：load 会话（主链/growth）与趋势会话（series/ghost）分离计数，
  *  响应落值前比对序号，过期即丢弃（快速切范围/切趋势字段的旧响应不覆盖新数据） */
@@ -160,7 +154,7 @@ async function load(opts?: { skeleton?: boolean }) {
   const rs = ++rangeSeq;
   const ts = ++trendSeq;
   try {
-    const [sum, s, tg, tl, scores, ad, week, srcTop] = await Promise.all([
+    const [sum, s, tg, tl, scores, ad, week, srcTop, earliest] = await Promise.all([
       statsService.getStatsRange(from, to),
       statsService.getDailySeries(from, to, trendFields.value),
       computeTags(from, to),
@@ -171,6 +165,8 @@ async function load(opts?: { skeleton?: boolean }) {
       statsService.getDailySeries(from, to, OPS_FIELDS, { forceDaily: true }),
       // 来源应用 Top：失败不阻塞整页（旧数据无 source_app，常见空结果）
       dbService.fetchSourceAppTop(from, to, 5).catch(() => []),
+      // 最早统计日期（全部范围的热力图起点，查询极轻）
+      statsService.getEarliestDate().catch(() => null),
     ]);
     if (rs !== rangeSeq) return; // 已有更新的 load 会话，丢弃本响应
     stats.value = sum;
@@ -181,6 +177,7 @@ async function load(opts?: { skeleton?: boolean }) {
     activeDays.value = ad;
     weekRows.value = week;
     srcApps.value = srcTop;
+    companionFrom.value = earliest ?? ''; // 全库最早统计日（相伴天数；null = 无任何数据）
     // 复制之王（趣味数据，§7.5）：直接查 clipboard 表
     try {
       kingClip.value = await statsService.getTopClipboard();
@@ -197,12 +194,14 @@ async function load(opts?: { skeleton?: boolean }) {
         ? { pct: ((cur - pv) / pv) * 100, diff: cur - pv }
         : { pct: null, diff: 0 };
     }).catch(() => { if (rs === rangeSeq) growth.value = { pct: null, diff: 0 }; });
-    // 环比幽灵序列（fire-and-forget，仅趋势区可见时查询；降采样两侧同规则对齐）
-    if (range.value !== 'day') {
+    // 环比幽灵序列（fire-and-forget；「全部」无上一区间对照，清空旧值；降采样两侧同规则对齐）
+    if (range.value !== 'all') {
       statsService.getDailySeries(prev.from, prev.to, trendFields.value).then((gs) => {
         if (ts !== trendSeq) return;
         ghostSeries.value = alignGhost(s, gs);
       }).catch(() => { if (ts === trendSeq) ghostSeries.value = []; });
+    } else {
+      ghostSeries.value = [];
     }
   } catch (e) {
     // 查询失败显式标记：不与"暂无统计数据"空态混淆（过期会话的失败不覆盖新会话状态）
@@ -255,13 +254,6 @@ onMounted(async () => {
   // 进入统计 Tab 才发起查询（§14.8 按需加载），首次显示整页骨架
   await nextTick();
   void load({ skeleton: true });
-  // 年度热力图：固定近 365 天，仅挂载时查询一次（切范围不重查；页面无 keep-alive，切 Tab 重挂即刷新）
-  const today = toDateString(new Date());
-  const fromD = new Date();
-  fromD.setDate(fromD.getDate() - 364);
-  statsService.getDailySeries(toDateString(fromD), today, OPS_FIELDS, { forceDaily: true })
-    .then((rows) => { heatRows.value = rows; })
-    .catch(() => { heatRows.value = []; });
 });
 
 /** 热力图点击某天：范围切换为该日的自定义区间 */
@@ -486,6 +478,19 @@ const storyLines = computed<string[]>(() => {
     const h = Math.floor(f.usageSeconds / 3600);
     lines.push(t('statistics.story_usage', { n: `[[${t('statistics.dur_hour', { n: h })}]]`, m: Math.floor(f.usageSeconds / 7200) }));
   }
+  // 习惯章节：星期节奏里状态最佳的日子（日均 >0 才讲）
+  if (bestWeekday.value) {
+    lines.push(t('statistics.story_week_best', { name: `[[${bestWeekday.value.name}]]`, n: bestWeekday.value.avg.toFixed(1) }));
+  }
+  // 伙伴章节：来源应用 No.1（source_app 自 2026-09-20 起才有记录，缺失时跳过）
+  const topSrc = srcApps.value[0];
+  if (topSrc && topSrc.cnt > 0) {
+    lines.push(t('statistics.story_src_top', { name: `[[${topSrc.app}]]`, n: fmtNum(topSrc.cnt) }));
+  }
+  // 坚持章节：最长连续活跃 ≥2 天才值得一提
+  if (longestStreak.value >= 2) {
+    lines.push(t('statistics.story_streak', { n: `[[${longestStreak.value}]]` }));
+  }
   return lines;
 });
 
@@ -507,10 +512,9 @@ const donut = computed(() => {
   const R = 52;
   const C = 2 * Math.PI * R;
   let offset = 0;
-  const OPS = [1, 0.82, 0.64, 0.5, 0.38, 0.28];
   const segs = tabDist.value.map((item, i) => {
     const len = Math.max((item.pct / 100) * C - 2, 0);
-    const seg = { ...item, dash: `${len} ${C - len}`, dashOffset: -offset, op: OPS[i % OPS.length] };
+    const seg = { ...item, dash: `${len} ${C - len}`, dashOffset: -offset, op: DONUT_OPS[i % DONUT_OPS.length] };
     offset += len;
     return seg;
   });
@@ -586,12 +590,48 @@ function ghostBarAt(idx: number): number {
   return ghostSeries.value[idx]?.value ?? 0;
 }
 
-// ===== 年度热力图 / 星期节奏 / 来源应用（§7.9 深度优化）=====
+// ===== 热力图 / 星期节奏 / 来源应用（§7.9 深度优化）=====
 
-/** 热力图网格：近 365 天逐日总操作量分格（月份短名跟随当前语言，Intl 生成无需 i18n key） */
+/** 热力图显示门槛：全部历史（包含所有功能）或自定义跨度大于一年时展示；月/年度固定不展示 */
+const heatmapVisible = computed(() => range.value === 'all' || daySpan(rangeDates.value.from, rangeDates.value.to) > 365);
+
+/** 全库最早统计日（相伴开篇用；'' = 无数据） */
+const companionFrom = ref('');
+
+/** 相伴天数：最早统计日 → 今天（与所选区间无关，讲"从第一天到现在"的故事） */
+const companionDays = computed(() =>
+  companionFrom.value ? daySpan(companionFrom.value, toDateString(new Date())) : 0,
+);
+
+/** 星期节奏日均（周一~周日）——故事线"状态最佳的一天"用 */
+const weekAvg = computed(() => weekdayAverages(weekRows.value));
+
+/** 故事线：本周节奏里日均最高的日子（日均值 >0 才讲） */
+const bestWeekday = computed(() => {
+  let best = -1;
+  let bestVal = 0;
+  weekAvg.value.forEach((v, i) => {
+    if (v > bestVal) { bestVal = v; best = i; }
+  });
+  return best >= 0 && bestVal > 0 ? { name: t(`statistics.weekday_${best + 1}`), avg: bestVal } : null;
+});
+
+/** 热力图里程碑：区间峰值日（OPS 口径逐日序列中最高的一天，value>0 才标注） */
+const heatPeak = computed(() => {
+  let best: string | null = null;
+  let bestVal = 0;
+  for (const r of weekRows.value) {
+    if (r.value > bestVal) { bestVal = r.value; best = r.stat_date; }
+  }
+  return best ?? undefined;
+});
+
+/** 热力图网格：完整近一年骨架（53 整列 × 7 天，GitHub 式——数据少的日子灰显、
+ *  有活动的日子着色，网格与区间起点解耦才不会只剩几列）；序列复用星期节奏的
+ *  OPS_FIELDS 逐日查询，月份短名跟随当前语言（Intl 生成无需 i18n key） */
 const heatmap = computed(() => buildHeatmapCells(
-  heatRows.value,
-  toDateString(new Date()),
+  weekRows.value,
+  rangeDates.value.to,
   m => new Date(2026, m, 1).toLocaleDateString(locale.value, { month: 'short' }),
 ));
 
@@ -634,7 +674,8 @@ function barTip(idx: number): string {
       v-model:offset="rangeOffset"
       v-model:custom-from="customFrom"
       v-model:custom-to="customTo"
-      :label="`${rangeDates.from} ~ ${rangeDates.to}`"
+      :label="rangeLabel"
+      :disable-shift="range === 'all'"
     />
 
     <div v-if="loading" class="space-y-4">
@@ -747,14 +788,14 @@ function barTip(idx: number): string {
           </div>
         </div>
 
-        <!-- ===== 年度活跃热力图（§7.9 深度优化）· 点击某天跳转该日 · 流式加载 ===== -->
-        <LazySection :key="`heat-${lazyKey}`" skeleton-class="h-40">
-          <ActivityHeatmap :cells="heatmap.cells" :months="heatmap.months" @select-day="heatmapPick" />
+        <!-- ===== 活跃热力图（§7.9）· 仅跨年区间展示 · 点击某天跳转该日 · 流式加载 ===== -->
+        <LazySection v-if="heatmapVisible" :key="`heat-${lazyKey}`" skeleton-class="h-40">
+          <ActivityHeatmap :cells="heatmap.cells" :months="heatmap.months" :highlight-date="heatPeak" @select-day="heatmapPick" />
         </LazySection>
 
         <!-- ===== 数据故事（§7.9）· 流式加载：叙事句 + 个性化洞察 + 阶段增长徽章 ===== -->
         <LazySection :key="`story-${lazyKey}`" skeleton-class="h-40">
-          <StoryCard :story-lines="storyLines" :insights="insights" :growth="growth" />
+          <StoryCard :story-lines="storyLines" :insights="insights" :growth="growth" :days="companionDays" />
         </LazySection>
 
         <!-- ===== 趣味数据（§7.5）· 流式加载 ===== -->
@@ -929,8 +970,8 @@ function barTip(idx: number): string {
           </div>
         </LazySection>
 
-        <!-- ===== 每日趋势（§7.6）· 流式加载（「每日」范围仅 1 天，趋势无意义，隐藏）===== -->
-        <LazySection v-if="range !== 'day'" :key="`trend-${lazyKey}`" skeleton-class="h-52">
+        <!-- ===== 每日趋势（§7.6）· 流式加载 ===== -->
+        <LazySection :key="`trend-${lazyKey}`" skeleton-class="h-52">
           <div class="glass-card card-lift rounded-2xl p-4">
           <div class="mb-3 flex flex-wrap items-center gap-2">
             <h2 class="gold-bar mr-2 text-sm font-semibold text-ink">{{ t('statistics.daily_trend') }}</h2>
@@ -968,13 +1009,15 @@ function barTip(idx: number): string {
             </span>
           </div>
           <div v-if="series.length === 0" class="text-sm text-ink-faint">{{ t('statistics.no_trend_data') }}</div>
-          <!-- 折线视图：SVG 面积图 + 峰值点 + 逐点 hover -->
+          <!-- 折线视图：SVG 面积图 + 峰值点 + 逐点 hover；
+               峰值点用 HTML 圆点（preserveAspectRatio=none 的非均匀缩放会把 SVG circle
+               拉成扁椭圆，vector-effect 只保线宽不保半径），置于与 svg 同宽的 relative 内层按百分比定位 -->
           <div v-else-if="trendMode === 'line' && lineChart" class="overflow-x-auto pb-1">
+            <div class="relative h-40" :style="{ minWidth: `${Math.max(lineChart.pts.length * 3, 100)}px` }">
             <svg
               :viewBox="`0 0 ${lineChart.W} ${lineChart.H}`"
               preserveAspectRatio="none"
-              class="h-40 w-full"
-              :style="{ minWidth: `${Math.max(lineChart.pts.length * 3, 100)}px` }"
+              class="h-full w-full"
             >
               <defs>
                 <linearGradient id="trend-area" x1="0" y1="0" x2="0" y2="1">
@@ -1004,10 +1047,6 @@ function barTip(idx: number): string {
                 stroke-linejoin="round"
                 stroke-linecap="round"
               />
-              <circle
-                :cx="lineChart.peak.x" :cy="lineChart.peak.y" r="3.5"
-                fill="rgb(var(--c-gold))" stroke="rgb(var(--c-surface))" stroke-width="1.5"
-              />
               <!-- 逐点 hover 命中区（复用 v-tip） -->
               <rect
                 v-for="(p, i) in lineChart.pts"
@@ -1018,6 +1057,13 @@ function barTip(idx: number): string {
                 v-tip="barTip(i)"
               />
             </svg>
+            <!-- 峰值标记：HTML 圆点置于 svg 之上（svg 内 circle 会被非均匀缩放拉成扁椭圆），
+                 按百分比定位于 relative 内层（宽度与 svg 一致，横向滚动时同步移动） -->
+            <span
+              class="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-surface bg-gold"
+              :style="{ left: `${(lineChart.peak.x / lineChart.W) * 100}%`, top: `${(lineChart.peak.y / lineChart.H) * 100}%` }"
+            ></span>
+            </div>
           </div>
           <!-- 柱状视图：入场级联升起动画 + 幽灵对照柱 -->
           <div v-else class="flex h-40 items-end gap-[2px] overflow-x-auto pb-1">
