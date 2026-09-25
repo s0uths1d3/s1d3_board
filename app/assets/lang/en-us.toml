@@ -1,4 +1,4 @@
-﻿
+
 [app]
 name = "S1d3 Board"
 image_viewer = "Image Viewer"
@@ -657,6 +657,7 @@ csv_header = "Type,Content,Time"
 txt_header = "Island history export · {time} · {n} records"
 today = "Today"
 yesterday = "Yesterday"
+dupe_tip = "Same content appeared {n} times"
 copied = "Copied to clipboard"
 copy_failed = "Copy failed"
 date_filter = "Filter by date"

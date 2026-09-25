@@ -1,4 +1,4 @@
-﻿
+
 [app]
 name = "S1d3 Board"
 image_viewer = "图片查看器"
@@ -657,6 +657,7 @@ csv_header = "类型,内容,时间"
 txt_header = "灵动岛历史导出 · {time} · 共 {n} 条"
 today = "今天"
 yesterday = "昨天"
+dupe_tip = "相同内容出现 {n} 次"
 copied = "已复制到剪贴板"
 copy_failed = "复制失败"
 date_filter = "按日期筛选"

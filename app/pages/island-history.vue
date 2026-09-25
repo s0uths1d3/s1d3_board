@@ -149,7 +149,10 @@ const filteredItems = computed(() =>
 // 上限下收益极小，反而引入"首屏外记录不渲染 → 看起来记录丢失"的风险，故移除。
 
 // ===== 日期分组：今天/昨天/日期 吸顶分隔（扫视 500 条流水的锚点） =====
-interface HistoryGroup { key: string; label: string; items: IslandHistoryItem[] }
+// 展示条目 = 明细聚合：相同内容（kind+text）叠为一条，count 记出现次数（右侧 ×N 徽标），
+// 代表条目取最新一次（时间/展开状态跟随）；导出与筛选计数仍按明细全量计算
+type DisplayItem = IslandHistoryItem & { count: number };
+interface HistoryGroup { key: string; label: string; total: number; items: DisplayItem[] }
 
 function groupLabel(ts: number): string {
   const d = new Date(ts);
@@ -166,20 +169,38 @@ function groupLabel(ts: number): string {
 }
 
 const groupedItems = computed<HistoryGroup[]>(() => {
-  const groups: HistoryGroup[] = [];
-  const byKey = new Map<string, HistoryGroup>();
+  const groups: { key: string; label: string; items: IslandHistoryItem[] }[] = [];
+  const byKey = new Map<string, { label: string; items: IslandHistoryItem[] }>();
   for (const it of filteredItems.value) {
     const d = new Date(it.createdAt);
     const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     let g = byKey.get(key);
     if (!g) {
-      g = { key, label: groupLabel(it.createdAt), items: [] };
+      g = { label: groupLabel(it.createdAt), items: [] };
       byKey.set(key, g);
-      groups.push(g);
+      groups.push({ key, label: g.label, items: g.items });
     }
     g.items.push(it);
   }
-  return groups;
+  // 相同内容聚合：kind+text 为叠放键，代表条目取最新一次（createdAt/id 同步更新），
+  // 其余出现次数累计进 count；条目位置保持该内容首次出现的位置
+  return groups.map((g) => {
+    const merged = new Map<string, DisplayItem>();
+    for (const it of g.items) {
+      const mkey = `${it.kind}\u0000${it.text}`;
+      const prev = merged.get(mkey);
+      if (prev) {
+        prev.count += 1;
+        if (it.createdAt > prev.createdAt) {
+          prev.id = it.id;
+          prev.createdAt = it.createdAt;
+        }
+      } else {
+        merged.set(mkey, { ...it, count: 1 });
+      }
+    }
+    return { key: g.key, label: g.label, total: g.items.length, items: [...merged.values()] };
+  });
 });
 
 // ===== 长文本：默认收起 3 行，点击条目展开/收起（防 2000 字长内容撑爆列表） =====
@@ -667,7 +688,7 @@ onBeforeUnmount(() => dismissImagePreview());
             </svg>
             {{ group.label }}
           </span>
-          <span class="tabular-nums">{{ group.items.length }}</span>
+          <span class="tabular-nums">{{ group.total }}</span>
         </button>
         <!-- 折叠动画：grid-rows 0fr/1fr 过渡（高度自适应内容，无需 JS 测量；overflow-hidden 裁切内容） -->
         <div
@@ -702,8 +723,13 @@ onBeforeUnmount(() => dismissImagePreview());
                 <span class="rounded-full bg-secondary px-1.5 py-px">{{ t(kindMeta[item.kind].labelKey) }}</span>
               </p>
             </div>
-            <!-- 右侧：悬停出现复制按钮 + 相对时间 -->
+            <!-- 右侧：重复次数徽标（聚合展示）+ 悬停复制按钮 + 相对时间 -->
             <div class="flex shrink-0 items-center gap-1 self-start">
+              <span
+                  v-if="item.count > 1"
+                  class="rounded-full bg-gold/15 px-1.5 py-px text-[10px] font-medium tabular-nums text-gold"
+                  v-tip="t('island_history.dupe_tip', { n: item.count })"
+              >×{{ item.count }}</span>
               <button
                   v-if="!isThumb(item) && item.text"
                   type="button"
