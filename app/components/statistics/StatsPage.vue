@@ -105,8 +105,26 @@ const hoveredTab = ref<string | null>(null);
 const activeDays = ref(0);
 /** 环比上一等长区间的操作总量变化（pct null = 无对照数据，不展示徽章） */
 const growth = ref<{ pct: number | null; diff: number }>({ pct: null, diff: 0 });
-/** 来源应用 Top（区间内复制条数；失败/无数据为空数组） */
-const srcApps = ref<{ app: string; cnt: number }[]>([]);
+/** 来源应用 Top（区间内复制条数；失败/无数据为空数组）；icon = 真实程序图标（PNG data URL，null 回退纯文本名） */
+const srcApps = ref<{ app: string; cnt: number; icon: string | null }[]>([]);
+
+/** 拉取榜单应用的真实图标：app_icons 缓存优先，未命中由 Rust 按名实时提取并回填。
+ *  图标直接并入榜单条目（单数据源，避免 Map 与榜单跨 ref 同步）；榜单随区间切换
+ *  重建，响应返回时校验榜单引用，过期响应直接丢弃（防竞态错配） */
+async function loadSrcIcons(list: { app: string; cnt: number }[]): Promise<void> {
+  const names = list.map(a => a.app).filter(Boolean);
+  if (names.length === 0) return;
+  try {
+    const got = await statsService.fetchAppIcons(names);
+    // [icon-diag] 显示层输入诊断：Map 键与 data URL 大小（空 = 上游未返回任何图标）
+    console.info(`[icon-diag] 榜单图标响应: ${[...got.entries()].map(([k, v]) => `${k}=${Math.round(v.length / 1024)}KB`).join(', ') || '空'}`);
+    if (srcApps.value !== list) {
+      console.info('[icon-diag] 响应过期丢弃（榜单已随区间切换重建）');
+      return;
+    }
+    srcApps.value = list.map(a => ({ ...a, icon: got.get(a.app) ?? null }));
+  } catch { /* 图标获取失败：条目回退显示纯文本应用名 */ }
+}
 /** 环比幽灵序列（上一等长区间，与 series 按索引对齐，短者截断） */
 const ghostSeries = ref<GhostRow[]>([]);
 /** 区间内逐日总操作量（星期节奏输入；跨年时热力图共用同一序列） */
@@ -176,7 +194,8 @@ async function load(opts?: { skeleton?: boolean }) {
     titleScores.value = scores;
     activeDays.value = ad;
     weekRows.value = week;
-    srcApps.value = srcTop;
+    srcApps.value = srcTop.map(a => ({ ...a, icon: null })); // 图标由 loadSrcIcons 异步并入
+    void loadSrcIcons(srcApps.value);
     companionFrom.value = earliest ?? ''; // 全库最早统计日（相伴天数；null = 无任何数据）
     // 复制之王（趣味数据，§7.5）：直接查 clipboard 表
     try {
@@ -955,7 +974,16 @@ function barTip(idx: number): string {
             <div v-else class="space-y-2">
               <div v-for="(a, i) in srcApps" :key="a.app" class="flex cursor-default items-center gap-3" v-tip="srcTip(a)">
                 <span class="w-5 shrink-0 text-xs tabular-nums" :class="i === 0 ? 'font-semibold text-gold' : 'text-ink-faint'">{{ i + 1 }}</span>
-                <span class="w-32 shrink-0 truncate text-sm text-ink">{{ a.app }}</span>
+                <span class="flex w-32 shrink-0 items-center gap-1.5 text-sm text-ink">
+                  <!-- 真实程序图标（app_icons 采样库 / Rust 按名实时提取）；无图标回退纯文本名 -->
+                  <img
+                    v-if="a.icon"
+                    :src="a.icon"
+                    :alt="a.app"
+                    class="h-4 w-4 shrink-0 rounded-[4px]"
+                  >
+                  <span class="truncate">{{ a.app }}</span>
+                </span>
                 <div class="h-3 flex-1 overflow-hidden rounded-full bg-secondary">
                   <div
                     class="h-full rounded-full bg-gradient-to-r from-gold to-gold-soft transition-all duration-500 ease-soft"

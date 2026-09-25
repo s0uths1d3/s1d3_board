@@ -134,9 +134,11 @@ unsafe {
         loop {
             let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
             let exe = String::from_utf16_lossy(&entry.szExeFile[..len]);
-            // 与前台采样命名对齐：szExeFile 是带 .exe 的文件名，去掉后缀再比
+            // 与前台采样命名对齐：szExeFile 是带 .exe 的文件名，去掉后缀再比。
+            // 兼容历史 source_app 数据（旧版本写入的名字带 .exe，如 winword.exe）：
+            // 输入带后缀时补回后缀再比一次，两种命名都能命中同一进程
             let exe_name = exe.strip_suffix(".exe").unwrap_or(&exe).to_lowercase();
-            if exe_name == want {
+            if exe_name == want || format!("{exe_name}.exe") == want {
                 if let Some(path) = exe_full_path(entry.th32ProcessID) {
                     found = icon_data_url_of_path(&path);
                     break;
@@ -347,5 +349,22 @@ unsafe {
     // dwTime 为系统启动毫秒计数，回绕安全（wrapping）
     (GetTickCount().wrapping_sub(li.dwTime)) as u64 / 1000
 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 真机链路自检：explorer 常驻运行，icon_of_app 应能走通
+    /// 进程枚举 → 路径查询 → SHGetFileInfo → PNG data URL 全链路
+    #[test]
+    fn icon_of_running_process_returns_data_url() {
+        let icon = icon_of_app("explorer").expect("explorer 应能提取到图标");
+        assert!(icon.starts_with("data:image/png;base64,"), "应为 PNG data URL");
+        assert!(icon.len() > 100, "data URL 不应为空");
+        // 带旧式 .exe 后缀的名字（历史 source_app 数据）也应匹配成功
+        let icon2 = icon_of_app("explorer.exe").expect("带 .exe 后缀的名字也应能提取");
+        assert!(icon2.starts_with("data:image/png;base64,"));
+    }
 }
 

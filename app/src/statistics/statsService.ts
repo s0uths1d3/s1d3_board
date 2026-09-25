@@ -336,32 +336,38 @@ await this.ensureDbInitialized();
  *  缓存未命中的应用：实时 invoke 按名提取运行中进程的真实图标（与前台采样同一链路），
  *  提取成功后写回 app_icons 表（下次直接命中）；应用未运行/平台不支持则无记录。 */
 public async fetchAppIcons(names: string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  const uniq = [...new Set(names.filter(n => !!n))];
-  if (uniq.length === 0) return out;
-  let missing: string[] = [];
-  try {
-    await this.ensureDbInitialized();
-    const rows = await this.repo.fetchAppIconsByNames(uniq);
-    for (const r of rows ?? []) out.set(r.app_name, r.icon);
-    missing = uniq.filter(n => !out.has(n));
-  } catch (e) {
-    console.error('[stats] app_icons 查询失败:', e);
-    missing = uniq;
-  }
-  if (missing.length > 0 && isTauri()) {
-    await Promise.all(missing.map(async (name) => {
-      try {
-        const icon = await invoke<string | null>('app_icon_by_name', { name });
-        if (icon) {
-          out.set(name, icon);
-          await this.repo.upsertAppIcon(name, icon);
+    const out = new Map<string, string>();
+    const uniq = [...new Set(names.filter(n => !!n))];
+    if (uniq.length === 0) return out;
+    let missing: string[] = [];
+    try {
+      await this.ensureDbInitialized();
+      const rows = await this.repo.fetchAppIconsByNames(uniq);
+      // [icon-diag] 图标链路诊断：表命中数与查询名单（提取异常时对照控制台快速定位环节）
+      console.info(`[icon-diag] app_icons 表命中 ${rows?.length ?? 0}/${uniq.length}（查询: ${uniq.join(', ')}）`);
+      for (const r of rows ?? []) out.set(r.app_name, r.icon);
+      missing = uniq.filter(n => !out.has(n));
+    } catch (e) {
+      console.error('[stats] app_icons 查询失败:', e);
+      missing = uniq;
+    }
+    if (missing.length > 0 && isTauri()) {
+      await Promise.all(missing.map(async (name) => {
+        try {
+          const icon = await invoke<string | null>('app_icon_by_name', { name });
+          // null = 应用未运行或提取失败（正常情况，调用方回退文本）；异常才需要关注
+          console.info(`[icon-diag] 实时提取 ${name} → ${icon ? `成功 ${Math.round(icon.length / 1024)}KB` : 'null（应用未运行或无图标）'}`);
+          if (icon) {
+            out.set(name, icon);
+            await this.repo.upsertAppIcon(name, icon);
+          }
+        } catch (e) {
+          console.warn(`[icon-diag] 实时提取 ${name} 的 invoke 调用失败:`, e);
         }
-      } catch { /* 提取失败：该应用无图标，调用方回退展示 */ }
-    }));
+      }));
+    }
+    return out;
   }
-  return out;
-}
 
   /** 把 pending 中落在 [from, to] 区间内的增量合并到聚合结果（§14.7，纯内存加法） */
   private mergePending(target: Record<string, number>, from?: string, to?: string): void {
