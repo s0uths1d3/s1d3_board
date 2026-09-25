@@ -13,6 +13,7 @@
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
@@ -102,6 +103,36 @@ fn read_from_dir(dir: &Path, file: &str) -> Option<String> {
     ))
 }
 
+/// RGBA 像素直接落盘核心：PNG 编码 → sha256 内容寻址 → 写盘，返回 `imgfile:` 引用。
+/// clipboard_capture_image 快速通道用：剪贴板位图在 Rust 侧一步落盘，
+/// 原图字节不经前端 IPC 往返（旧链路多 MB base64 来回搬运是截图延迟入列主因）。
+pub(crate) fn save_rgba_to_dir(dir: &Path, w: u32, h: u32, rgba: &[u8]) -> Option<String> {
+    let img = image::RgbaImage::from_raw(w, h, rgba.to_vec())?;
+    let mut png = Cursor::new(Vec::new());
+    image::DynamicImage::from(img)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .ok()?;
+    let bytes = png.into_inner();
+    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let hex = format!("{:x}", hasher.finalize());
+    // 取 hash 前 16 hex 字符：与 save_to_dir 同规则，同内容天然去重
+    let name = format!("{}.png", &hex[..16]);
+    let path = dir.join(&name);
+    if !path.exists() {
+        fs::write(&path, &bytes).ok()?;
+    }
+    Some(format!("imgfile:{}", name))
+}
+
+/// RGBA 像素直接落盘（以 AppHandle 解析 images 目录后委托 save_rgba_to_dir）
+pub(crate) fn save_rgba_image(app: &AppHandle, w: u32, h: u32, rgba: &[u8]) -> Option<String> {
+    images_dir(app).and_then(|dir| save_rgba_to_dir(&dir, w, h, rgba))
+}
+
 /// 删除核心：文件不存在视为已删除（幂等 true）；删除失败返回 false（不致命，调用方仅记日志）。
 fn delete_from_dir(dir: &Path, file: &str) -> bool {
     match sanitize_file_name(file) {
@@ -164,6 +195,18 @@ pub fn read_clipboard_image_file(
     file: String,
 ) -> Option<String> {
     store.0.read(&file)
+}
+
+/// 批量读取图片 → data URL 列表（与入参顺序一一对应，读不到的槽位为 null）。
+/// 列表一次刷新含整页图片：单条命令逐图 IPC 往返开销可观，批量一次往返拉全；
+/// async 定义使其离开主线程执行（Tauri 约束：async 命令持有 State 须返回 Result），
+/// 大图磁盘读 + base64 编码不再阻塞事件循环。
+#[tauri::command]
+pub async fn read_clipboard_image_files(
+    store: tauri::State<'_, ImageStoreHandle>,
+    files: Vec<String>,
+) -> Result<Vec<Option<String>>, ()> {
+    Ok(files.iter().map(|f| store.0.read(f)).collect())
 }
 
 /// 删除图片文件（条目删除/裁剪联动清理，防孤儿文件堆积）。
@@ -347,6 +390,26 @@ mod tests {
         assert!(read_from_dir(&images, "../secret.txt").is_none());
         assert!(read_from_dir(&images, "C:\\boot.png").is_none());
         assert!(delete_from_dir(&images, "../secret.txt") == false);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn save_rgba_to_dir_roundtrip_and_dedup() {
+        let (root, images) = temp_images_dir("rgba");
+        // 2×1 红蓝像素：RGBA → 落盘 → 读回 data URL 可解码出同尺寸 PNG
+        let rgba = [255u8, 0, 0, 255, 0, 0, 255, 255];
+        let ref1 = save_rgba_to_dir(&images, 2, 1, &rgba).expect("落盘应成功");
+        assert!(ref1.starts_with("imgfile:"));
+        let name = ref1.trim_start_matches("imgfile:").to_string();
+        assert_eq!(name.len(), "0123456789abcdef.png".len());
+        // 同像素再次落盘 → 同引用（内容寻址去重）
+        assert_eq!(ref1, save_rgba_to_dir(&images, 2, 1, &rgba).expect("二次落盘应成功"));
+        // 读回字节是合法 PNG 且尺寸一致
+        let out = read_from_dir(&images, &name).expect("读取应成功");
+        let b64 = out.split_once("base64,").unwrap().1;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        let img = image::load_from_memory(&bytes).unwrap();
+        assert_eq!((img.width(), img.height()), (2, 1));
         fs::remove_dir_all(root).ok();
     }
 }

@@ -67,16 +67,16 @@ describe('clipboardRepository', () => {
         emitSpy.mockRestore();
     });
 
-    it('fetchClipboardData：imgfile: 引用在读取边界换回原图 data URL', async () => {
+    it('fetchClipboardData：imgfile: 引用在读取边界换回原图 data URL（批量读取命令）', async () => {
         const { db } = stubDb(() => [{ id: 1, type: 'image', content: 'imgfile:a.png' }]);
         const conn = await connWith(db);
         const { repo } = makeRepo(conn);
-        vi.mocked(invoke).mockResolvedValueOnce('data:image/png;base64,XXX');
+        vi.mocked(invoke).mockResolvedValueOnce(['data:image/png;base64,XXX']);
 
         const rows = await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '', type: 'all' } });
 
         expect(rows[0]?.content).toBe('data:image/png;base64,XXX');
-        expect(vi.mocked(invoke)).toHaveBeenCalledWith('read_clipboard_image_file', { file: 'a.png' });
+        expect(vi.mocked(invoke)).toHaveBeenCalledWith('read_clipboard_image_files', { files: ['a.png'] });
     });
 
     it('fetchClipboardData：收藏筛选走 is_favorite 条件 + 100 条上限', async () => {

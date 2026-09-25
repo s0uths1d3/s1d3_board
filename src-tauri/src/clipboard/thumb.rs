@@ -42,12 +42,22 @@ pub fn clipboard_qr_from_data_url(data_url: String, thorough: Option<bool>) -> O
 
 #[cfg(target_os = "windows")]
 fn platform_impl(max_h: u32) -> Option<ClipboardImageInfo> {
+with_clipboard_dib(|w, h, rgba| {
+    let thumb = thumb_png(w, h, rgba, max_h);
+    let qr_text = scan_qr_rgba(w, h, rgba);
+    Some(ClipboardImageInfo { thumb, qr_text })
+})
+}
+
+/// 打开剪贴板读 CF_DIB 解析为 RGBA 交给回调消费（thumb / capture 共用）。
+/// 剪贴板是全局互斥资源：clipboard 插件的 200ms 轮询可能正持有打开状态，
+/// OpenClipboard 失败短暂重试（10ms × 3），仍失败放弃（宁缺勿错）。
+#[cfg(target_os = "windows")]
+fn with_clipboard_dib<T>(consume: impl FnOnce(u32, u32, &[u8]) -> Option<T>) -> Option<T> {
 use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
 use windows_sys::Win32::Foundation::HGLOBAL;
 use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 unsafe {
-    // 剪贴板是全局互斥资源：clipboard 插件的 200ms 轮询可能正持有打开状态，
-    // OpenClipboard 失败短暂重试（10ms × 3），仍失败放弃（宁缺勿错）
     let mut opened = false;
     for _ in 0..3 {
         if OpenClipboard(std::ptr::null_mut()) != 0 {
@@ -78,13 +88,56 @@ unsafe {
         let decoded = parse_dib(bytes);
         GlobalUnlock(hglobal);
         let (w, h, rgba) = decoded?;
-        let thumb = thumb_png(w, h, &rgba, max_h);
-        let qr_text = scan_qr_rgba(w, h, &rgba);
-        Some(ClipboardImageInfo { thumb, qr_text })
+        consume(w, h, &rgba)
     })();
     CloseClipboard();
     result
 }
+}
+
+// ===================== 复制快速通道：单命令捕获 =====================
+
+/// 单命令捕获结果：file_ref = 原图落盘引用（DB 直接存）；thumb = 岛显示缩略图；
+/// qr_text = 二维码文本；original = 原图 data URL（岛事件/出站的原图语义不变）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapturedClipboardImage {
+    pub file_ref: String,
+    pub thumb: Option<String>,
+    pub qr_text: Option<String>,
+    pub original: String,
+}
+
+/// 复制图片快速通道（取代旧三段串行链路）：剪贴板位图读一次，PNG 落盘 +
+/// 缩略图 + 二维码扫描一并完成。旧链路「插件 readImageBase64（多 MB IPC）→
+/// save_clipboard_image（多 MB 回传落盘）→ clipboard_image_thumb（重复读剪贴板）」
+/// 把数 MB 原图跨进程搬运 3 次，串行排队是截图后延迟入列的主因；快速通道
+/// 原图只随本命令返回一次。async 定义使落盘/编码离开主线程。
+/// 捕获失败（非 Windows/剪贴板锁冲突/格式不支持/超限）返回 None，前端回退旧链路。
+#[tauri::command]
+pub async fn clipboard_capture_image(
+    app: tauri::AppHandle,
+    max_h: u32,
+) -> Option<CapturedClipboardImage> {
+    platform_capture(&app, max_h)
+}
+
+#[cfg(target_os = "windows")]
+fn platform_capture(app: &tauri::AppHandle, max_h: u32) -> Option<CapturedClipboardImage> {
+with_clipboard_dib(|w, h, rgba| {
+    // 原图直接落盘（内容寻址）：失败（超限等）返回 None 整体回退旧链路
+    let file_ref = crate::clipboard::image_store::save_rgba_image(app, w, h, rgba)?;
+    let original = png_data_url(w, h, rgba, None)?;
+    let thumb = thumb_png(w, h, rgba, max_h);
+    let qr_text = scan_qr_rgba(w, h, rgba);
+    Some(CapturedClipboardImage { file_ref, thumb, qr_text, original })
+})
+}
+
+#[cfg(not(target_os = "windows"))]
+fn platform_capture(_app: &tauri::AppHandle, _max_h: u32) -> Option<CapturedClipboardImage> {
+// macOS/Linux 暂无缩略/落盘链路：返回 None，前端回退旧链路（行为不劣化）
+None
 }
 
 /// 二维码快速扫描（复制时序敏感路径）：RGBA 像素 → 等比缩到 ≤512px（Triangle 均值降采样，
@@ -222,14 +275,16 @@ fn parse_dib(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     Some((w, h, rgba))
 }
 
-/// RGBA 像素 → 缩放（高 ≤ max_h，只缩不放，Triangle 滤镜）→ PNG → data URL
+/// RGBA 像素 → 缩放（max_h 有值且高 > max_h 时只缩不放，Triangle 滤镜）→ PNG → data URL。
+/// max_h=None 编码原图（capture 快速通道返回原图 data URL 用）。
 #[cfg(target_os = "windows")]
-fn thumb_png(w: u32, h: u32, rgba: &[u8], max_h: u32) -> Option<String> {
+fn png_data_url(w: u32, h: u32, rgba: &[u8], max_h: Option<u32>) -> Option<String> {
     use base64::Engine;
     use std::io::Cursor;
     let img = image::RgbaImage::from_raw(w, h, rgba.to_vec())?;
-    let scale = if max_h > 0 && h > max_h {
-        max_h as f64 / h as f64
+    let max = max_h.unwrap_or(0);
+    let scale = if max > 0 && h > max {
+        max as f64 / h as f64
     } else {
         1.0
     };
@@ -246,6 +301,12 @@ fn thumb_png(w: u32, h: u32, rgba: &[u8], max_h: u32) -> Option<String> {
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(png.into_inner())
     ))
+}
+
+/// RGBA 像素 → 缩略图 data URL（高 ≤ max_h，只缩不放）
+#[cfg(target_os = "windows")]
+fn thumb_png(w: u32, h: u32, rgba: &[u8], max_h: u32) -> Option<String> {
+    png_data_url(w, h, rgba, Some(max_h))
 }
 
 #[cfg(not(target_os = "windows"))]

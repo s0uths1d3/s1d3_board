@@ -5,6 +5,7 @@ import { appConnection } from "../core/db/appConnection";
 import { runDatabaseMigrations } from "../core/db/migrator";
 import { createSettingsRepository } from "../core/db/repositories/settingsRepository";
 import { createClipboardRepository, type ClipboardRepository } from "../core/db/repositories/clipboardRepository";
+import { prewarmImageCache } from "../core/db/imageRef";
 import statsService from "../statistics/statsService";
 
 /**
@@ -64,6 +65,27 @@ export async function startClipboardListener(): Promise<void> {
     unlisteners.push(await onSomethingUpdate(async (updated) => {
         if (!updated.image) return;
         try {
+            // ===== 快速通道（Windows）：单命令捕获 =====
+            // 旧链路 readImageBase64（数 MB IPC）→ save_clipboard_image（数 MB 回传落盘）→
+            // clipboard_image_thumb（重复读剪贴板）把原图跨进程搬运 3 次，串行排队是
+            // 截图后延迟入列的主因；快速通道剪贴板位图在 Rust 侧读一次，落盘/缩略图/
+            // 二维码一并完成，原图只随命令返回一次（预热解析缓存后列表刷新零读盘）。
+            // 捕获不可用（非 Windows/剪贴板锁冲突/格式不支持/超限）回退旧链路，行为不劣化。
+            const captured = await invoke<{ fileRef: string; thumb: string | null; qrText: string | null; original: string } | null>(
+                'clipboard_capture_image', { maxH: 384 },
+            ).catch(() => null);
+            if (captured?.fileRef && captured.original) {
+                prewarmImageCache(captured.fileRef, captured.original);
+                // 先派发岛事件（缩略图直显，不等写库）；content 保持原图语义（历史/出站不变），
+                // saveClipboard 写库后的二次派发按同内容去重跳过
+                bus.emit('island:copy', { content: captured.original, type: 'image', thumb: captured.thumb, qrText: captured.qrText });
+                // 落盘已由捕获命令完成，直接存 imgfile: 引用；QR 已扫：无码写 '' 哨兵不再补扫
+                await repo.saveClipboard(captured.fileRef, 'image', await queryForegroundApp(), captured.qrText ?? '', captured.original);
+                // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
+                bus.emit('clipboard:changed');
+                return;
+            }
+            // ===== 旧链路（回退） =====
             const base64 = await readImageBase64();
             if (!base64) return;
             // 拼上 data URL 前缀（无前缀时浏览器会把它当相对路径向 dev server 发请求导致 431）
