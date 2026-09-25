@@ -6,6 +6,7 @@ import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { writeText } from 'tauri-plugin-clipboard-api';
 import dbService from '~/src/db/dbService';
 import { useI18n } from '~/composables/useI18n';
+import DatePicker from '~/components/common/DatePicker.vue';
 import { useFormatDate } from '~/composables/useFormatDate';
 import { useColorScheme } from '~/composables/useColorScheme';
 import { notifyIsland, useIslandEnabled, makeImageThumb } from '~/composables/useCopyIsland';
@@ -17,7 +18,7 @@ import type { IslandKind } from '~/composables/useCopyIsland';
  * 灵动岛历史窗口（单例 label island-history，标题栏时钟图标打开；无边框透明窗口，主窗口同款自绘标题栏）：
  * - 展示全部弹岛来源（复制/粘贴/AI/设置操作/第三方 API）的最近 500 条记录；
  * - 打开时全量查询（表 FIFO 上限 500）；存活期间监听 island:show 实时把新消息插到列表头部（与岛同步收）；
- * - 流式渲染：首屏只渲染第一页（60 条），滚动到底 sentinel 触发渲染下一批（与待办列表同策略）；
+ * - 列表按日期分组吸顶 + 全量渲染（500 条上限下流式门控无收益，已移除）；
  * - 类型筛选：按消息类型即时过滤（下拉选择，附计数）；
  * - 导出：CSV / TXT 两种格式，范围可选「当前筛选 / 全部」，save 对话框选保存路径，
  *   完成后经灵动岛提示结果（尊重灵动岛开关设置）。
@@ -67,34 +68,65 @@ const filteredByKind = computed(() =>
   filter.value === 'all' ? items.value : items.value.filter((it) => it.kind === filter.value),
 );
 
-// ===== 日期筛选：全部时间 / 今天 / 昨天 / 近 7 天 / 指定日期（本地时区按日切界） =====
+// ===== 日期筛选：全部时间 / 今天 / 昨天 / 近 7 天 / 指定时间段（本地时区按日切界） =====
 type DateFilter = 'all' | 'today' | 'yesterday' | 'week' | 'date';
 const dateFilter = ref<DateFilter>('all');
-const pickedDate = ref(''); // YYYY-MM-DD（input[type=date] 值；仅 dateFilter==='date' 时参与过滤）
-
-const dateOptions = computed(() => [
-  { value: 'all' as DateFilter, label: t('island_history.date_all') },
-  { value: 'today' as DateFilter, label: t('island_history.today') },
-  { value: 'yesterday' as DateFilter, label: t('island_history.yesterday') },
-  { value: 'week' as DateFilter, label: t('island_history.date_week') },
-]);
-const dateFilterLabel = computed(() => {
-  if (dateFilter.value === 'date') return pickedDate.value || t('island_history.date_pick');
-  if (dateFilter.value === 'all') return t('island_history.date_all');
-  return dateOptions.value.find((o) => o.value === dateFilter.value)?.label ?? t('island_history.date_all');
-});
+// 指定时间段（DatePicker range 模式）：起点/终点 YYYY-MM-DD；终点为空=仅单日
+const pickedDate = ref('');
+const pickedDateEnd = ref('');
 
 /** 本地时区某天 00:00 的毫秒时间戳（'YYYY-MM-DD' 不能直接 new Date——那是 UTC 解析） */
 function localDayStart(y: number, m: number, d: number): number {
   return new Date(y, m - 1, d).getTime();
 }
+/** 今天 00:00 毫秒（本地时区） */
+function todayStartMs(): number {
+  const n = new Date();
+  return localDayStart(n.getFullYear(), n.getMonth() + 1, n.getDate());
+}
+/** 按类型过滤后的条目落在 [start, end) 的条数（日期下拉选项徽标） */
+function countBetween(start: number, end: number): number {
+  return filteredByKind.value.filter((it) => it.createdAt >= start && it.createdAt < end).length;
+}
+
+const dateOptions = computed(() => [
+  { value: 'all' as DateFilter, label: t('island_history.date_all'), count: filteredByKind.value.length },
+  { value: 'today' as DateFilter, label: t('island_history.today'), count: countBetween(todayStartMs(), todayStartMs() + DAY_MS) },
+  { value: 'yesterday' as DateFilter, label: t('island_history.yesterday'), count: countBetween(todayStartMs() - DAY_MS, todayStartMs()) },
+  { value: 'week' as DateFilter, label: t('island_history.date_week'), count: countBetween(todayStartMs() - 6 * DAY_MS, todayStartMs() + DAY_MS) },
+]);
+const dateFilterLabel = computed(() => {
+  if (dateFilter.value === 'date') {
+    if (!pickedDate.value) return t('island_history.date_pick');
+    if (!pickedDateEnd.value) return pickedDate.value;
+    // 区间显示缩写：同年 "09/08 ~ 09/30"，跨年保留完整 ISO（工具栏宽度友好）
+    const sy = pickedDate.value.slice(0, 4);
+    const short = (iso: string) => `${iso.slice(5, 7)}/${iso.slice(8, 10)}`;
+    return pickedDateEnd.value.startsWith(sy)
+      ? `${short(pickedDate.value)} ~ ${short(pickedDateEnd.value)}`
+      : `${pickedDate.value} ~ ${pickedDateEnd.value}`;
+  }
+  if (dateFilter.value === 'all') return t('island_history.date_all');
+  return dateOptions.value.find((o) => o.value === dateFilter.value)?.label ?? t('island_history.date_all');
+});
+
+/** 'YYYY-MM-DD' → 本地时区当天 00:00 毫秒；非法返回 null */
+function dayStartOf(iso: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  const [y = 0, m = 1, d = 1] = iso.split('-').map(Number);
+  return localDayStart(y, m, d);
+}
 const DAY_MS = 24 * 60 * 60 * 1000;
 const dateRange = computed<[number, number]>(() => {
   const now = new Date();
-  if (dateFilter.value === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(pickedDate.value)) {
-    const [y = 0, m = 1, d = 1] = pickedDate.value.split('-').map(Number);
-    const start = localDayStart(y, m, d);
-    return [start, start + DAY_MS];
+  if (dateFilter.value === 'date') {
+    const start = dayStartOf(pickedDate.value);
+    if (start !== null) {
+      const end = dayStartOf(pickedDateEnd.value);
+      // 终点有效且晚于起点 → 区间 [起点00:00, 终点次日00:00)；否则单日
+      const endInclusive = end !== null && end > start ? end + DAY_MS : start + DAY_MS;
+      return [start, endInclusive];
+    }
   }
   const todayStart = localDayStart(now.getFullYear(), now.getMonth() + 1, now.getDate());
   if (dateFilter.value === 'today') return [todayStart, todayStart + DAY_MS];
@@ -103,47 +135,18 @@ const dateRange = computed<[number, number]>(() => {
   return [0, Number.MAX_SAFE_INTEGER];
 });
 
-watch(pickedDate, (v) => {
-  if (v) dateFilter.value = 'date'; // 选了具体日期即切到日期模式
+watch([pickedDate, pickedDateEnd], ([s, e]) => {
+  if (s || e) dateFilter.value = 'date'; // 选了具体日期/区间即切到日期模式
 });
 
 const filteredItems = computed(() =>
   filteredByKind.value.filter((it) => it.createdAt >= dateRange.value[0] && it.createdAt < dateRange.value[1]),
 );
 
-// ===== 流式渲染（与待办列表同策略）：首屏只渲染第一页，列表底部 sentinel 进入视口
-// （提前 200px）再渲染下一批；类型/日期筛选变化重置回第一页。数据仍一次性查库
-// （表 FIFO 上限 500 条），流式的是渲染量——大列表首屏不卡、滚动渐进上屏 =====
-const RENDER_PAGE = 60;
-const renderLimit = ref(RENDER_PAGE);
-const sentinel = ref<HTMLElement | null>(null);
-const visibleItems = computed(() => filteredItems.value.slice(0, renderLimit.value));
-const hasMoreToRender = computed(() => renderLimit.value < filteredItems.value.length);
-
-function renderMore(): void {
-  if (!hasMoreToRender.value) return;
-  renderLimit.value = Math.min(renderLimit.value + RENDER_PAGE, filteredItems.value.length);
-}
-
-/** sentinel 挂载/卸载后重建观察（v-if 随 loading/hasMoreToRender 切换） */
-let renderObserver: IntersectionObserver | null = null;
-function setupRenderObserver(): void {
-  renderObserver?.disconnect();
-  renderObserver = null;
-  const el = sentinel.value;
-  if (!el) return;
-  renderObserver = new IntersectionObserver((entries) => {
-    if (entries[0]?.isIntersecting) renderMore();
-  }, { rootMargin: '200px 0px' });
-  renderObserver.observe(el);
-}
-watch(sentinel, () => setupRenderObserver());
-// 筛选变化从头渲染（组折叠/条目展开状态保留，不受影响）
-watch([filter, dateFilter, pickedDate], () => { renderLimit.value = RENDER_PAGE; });
-onBeforeUnmount(() => {
-  renderObserver?.disconnect();
-  renderObserver = null;
-});
+// ===== 列表渲染：直接全量渲染 filteredItems =====
+// 历史采用「表 FIFO 上限 500 条」硬约束，一次性查库 + 全量渲染（500 个简单节点的
+// 渲染成本 < 50ms）。此前的流式渲染门控（renderLimit + sentinel 观察）在 500 条
+// 上限下收益极小，反而引入"首屏外记录不渲染 → 看起来记录丢失"的风险，故移除。
 
 // ===== 日期分组：今天/昨天/日期 吸顶分隔（扫视 500 条流水的锚点） =====
 interface HistoryGroup { key: string; label: string; items: IslandHistoryItem[] }
@@ -165,7 +168,7 @@ function groupLabel(ts: number): string {
 const groupedItems = computed<HistoryGroup[]>(() => {
   const groups: HistoryGroup[] = [];
   const byKey = new Map<string, HistoryGroup>();
-  for (const it of visibleItems.value) {
+  for (const it of filteredItems.value) {
     const d = new Date(it.createdAt);
     const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     let g = byKey.get(key);
@@ -246,6 +249,19 @@ const exportOpen = ref(false);
 const exportFormat = ref<'csv' | 'txt'>('csv');
 const exportScope = ref<'filtered' | 'all'>('filtered');
 const exporting = ref(false);
+/** 成功闭环：按钮短暂显示「已导出」再收面板 */
+const exportDone = ref(false);
+/** 保存文件名预览：面板打开时生成快照，切换格式仅更新扩展名（所见即所得） */
+const exportFileName = ref('');
+watch(exportOpen, (v) => {
+  if (v) {
+    exportFileName.value = `island-history-${formatAbs(Date.now()).replace(/[: ]/g, '-')}.${exportFormat.value}`;
+    exportDone.value = false;
+  }
+});
+watch(exportFormat, (f) => {
+  exportFileName.value = exportFileName.value.replace(/\.\w+$/, `.${f}`);
+});
 
 /** 导出范围选项：计数单独成徽标（不塞进标签文案，避免 segmented/选项内换行） */
 const scopeOptions = computed(() => [
@@ -284,22 +300,27 @@ function buildTxt(rows: IslandHistoryItem[]): string {
 }
 
 async function doExport(close: () => void): Promise<void> {
-  if (exporting.value) return;
+  if (exporting.value || exportDone.value) return;
   const rows = exportScope.value === 'filtered' ? filteredItems.value : items.value;
   if (rows.length === 0) return;
   exporting.value = true;
   try {
     const path = await save({
       title: t('island_history.export'),
-      defaultPath: `island-history-${formatAbs(Date.now()).replace(/[: ]/g, '-')}.${exportFormat.value}`,
+      defaultPath: exportFileName.value || `island-history-${formatAbs(Date.now()).replace(/[: ]/g, '-')}.${exportFormat.value}`,
       filters: [exportFormat.value === 'csv'
         ? { name: 'CSV', extensions: ['csv'] }
         : { name: 'TXT', extensions: ['txt'] }],
     });
     if (!path) return; // 用户取消保存，静默
     await writeTextFile(path, exportFormat.value === 'csv' ? buildCsv(rows) : buildTxt(rows));
-    close();
+    // 成功闭环：按钮「已导出 ✓」短暂展示后收面板（灵动岛同步通知）
+    exportDone.value = true;
     notifyIsland({ kind: 'success', text: t('island_history.exported', { n: rows.length }) });
+    setTimeout(() => {
+      close();
+      exportDone.value = false;
+    }, 1200);
   } catch (e) {
     notifyIsland({ kind: 'error', text: t('island_history.export_failed', { error: String(e).slice(0, 120) }) });
   } finally {
@@ -366,9 +387,12 @@ onBeforeUnmount(() => dismissImagePreview());
 </script>
 
 <template>
-  <!-- 根容器不加背景：与主窗口同款——body 的三段渐变 + 双光晕氛围背景透出（main.css），
-       随配色主题联动；盖 bg-surface 实色会变成一块与主窗口风格割裂的纯色面板 -->
-  <div class="flex h-screen flex-col overflow-hidden rounded-2xl text-ink">
+  <!-- 根容器：透明无边框窗口下由容器 rounded-2xl 裁出圆角；body 已置透明，
+       三段渐变 + 双光晕氛围背景在内层 .island-atmosphere 重建并随容器圆角裁切。
+       isolate 建立层叠上下文，把氛围层的 z-index:-1 关在本窗口内 -->
+  <div class="relative isolate flex h-screen flex-col overflow-hidden rounded-2xl text-ink">
+    <!-- 氛围背景层（替代原 body 背景，颜色随配色主题联动） -->
+    <div aria-hidden="true" class="island-atmosphere pointer-events-none absolute inset-0" />
     <!-- 自绘标题栏：主窗口同款（拖拽区 + gold-bar 标题 + 窗口控制） -->
     <div class="drag-region flex h-10 shrink-0 items-center justify-between border-b border-line bg-surface px-3">
       <div class="gold-bar flex items-center gap-2 select-none">
@@ -407,7 +431,7 @@ onBeforeUnmount(() => dismissImagePreview());
           <button
               type="button"
               tabindex="-1"
-              class="flex h-7 items-center gap-1.5 rounded-lg px-2 text-xs text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:text-ink"
+              class="flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 text-xs text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:text-ink"
           >
             <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 4h18l-7 8.5V19l-4 2v-8.5L3 4z" />
@@ -447,13 +471,13 @@ onBeforeUnmount(() => dismissImagePreview());
           <button
               type="button"
               tabindex="-1"
-              class="flex h-7 items-center gap-1.5 rounded-lg px-2 text-xs text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:text-ink"
+              class="flex h-7 min-w-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 text-xs text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:text-ink"
           >
-            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="4" width="18" height="18" rx="2" />
               <path d="M16 2v4M8 2v4M3 10h18" />
             </svg>
-            <span :class="dateFilter === 'all' ? '' : 'text-ink'">{{ dateFilterLabel }}</span>
+            <span class="truncate" :class="dateFilter === 'all' ? '' : 'text-ink'">{{ dateFilterLabel }}</span>
             <svg class="h-3 w-3 opacity-60 transition-transform duration-200" :class="open ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m6 9 6 6 6-6" />
             </svg>
@@ -468,27 +492,40 @@ onBeforeUnmount(() => dismissImagePreview());
                 @click="dateFilter = opt.value"
             >
               {{ opt.label }}
-              <span v-if="dateFilter === opt.value" class="text-gold">✓</span>
+              <span class="flex items-center gap-1.5">
+                <span
+                    class="rounded-full px-1.5 py-px text-[10px] tabular-nums transition-colors duration-200"
+                    :class="dateFilter === opt.value ? 'bg-gold/20 text-gold' : 'bg-secondary text-ink-soft'"
+                >{{ opt.count }}</span>
+                <span v-if="dateFilter === opt.value" class="text-gold">✓</span>
+              </span>
             </button>
           </li>
           <li class="mt-1 border-t border-line/60 px-2.5 pt-2 pb-1">
             <p class="mb-1 text-[10px] text-ink-faint">{{ t('island_history.date_pick') }}</p>
-            <input
+            <!-- 自研 DatePicker（Teleport 面板自带 dd-keep-open 豁免）；触发按钮包
+                 data-dd-keep-open 防止选日期时整个下拉被 close-on-select 误收 -->
+            <div data-dd-keep-open>
+              <DatePicker
                 v-model="pickedDate"
-                type="date"
-                class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-            />
+                v-model:model-value-end="pickedDateEnd"
+                range
+                mode="date"
+                size="sm"
+                class="w-full"
+              />
+            </div>
           </li>
         </ul>
       </UiDropdown>
 
       <div class="flex-1" />
 
-      <!-- 导出：格式 + 范围选项面板 -->
+      <!-- 导出：格式 + 范围选项面板（触发器贴窗口顶部，必须向下展开：
+           向上展开时上方仅 ~50px 空间，面板会被钳成一条只露出标题） -->
       <UiDropdown
           v-model:open="exportOpen"
           align="end"
-          direction="up"
           :close-on-select="false"
           panel-class="glass-card w-60 rounded-2xl p-3"
           :aria-label="t('island_history.export')"
@@ -509,6 +546,14 @@ onBeforeUnmount(() => dismissImagePreview());
         </template>
         <template #default="{ close }">
           <div class="space-y-3">
+            <!-- 标题：导出 + 记录总数徽标 -->
+            <div class="flex items-center justify-between border-b border-line/60 pb-2.5">
+              <p class="text-sm font-semibold text-ink">{{ t('island_history.export') }}</p>
+              <span class="rounded-full bg-secondary px-2 py-0.5 text-[10px] tabular-nums text-ink-soft">
+                {{ items.length }} {{ t('island_history.records_unit') }}
+              </span>
+            </div>
+
             <div>
               <p class="mb-1.5 text-[11px] font-medium text-ink-soft">{{ t('island_history.export_format') }}</p>
               <UiSegmented
@@ -517,7 +562,11 @@ onBeforeUnmount(() => dismissImagePreview());
                   block
                   :options="[{ value: 'csv', label: 'CSV' }, { value: 'txt', label: 'TXT' }]"
               />
+              <p class="mt-1.5 text-[10px] leading-relaxed text-ink-faint">
+                {{ t(exportFormat === 'csv' ? 'island_history.export_desc_csv' : 'island_history.export_desc_txt') }}
+              </p>
             </div>
+
             <div>
               <p class="mb-1.5 text-[11px] font-medium text-ink-soft">{{ t('island_history.export_scope') }}</p>
               <div class="space-y-1">
@@ -536,20 +585,34 @@ onBeforeUnmount(() => dismissImagePreview());
                     <span v-if="exportScope === opt.value" class="h-1.5 w-1.5 rounded-full bg-gold" />
                   </span>
                   <span class="flex-1 text-left">{{ opt.label }}</span>
-                  <span class="tabular-nums text-[10px] text-ink-soft">{{ opt.count }}</span>
+                  <span
+                      class="rounded-full px-1.5 py-0.5 text-[10px] tabular-nums transition-colors duration-200"
+                      :class="exportScope === opt.value ? 'bg-gold/20 text-gold' : 'bg-secondary text-ink-soft'"
+                  >{{ opt.count }}</span>
                 </button>
               </div>
             </div>
+
+            <!-- 保存文件名预览（所见即所得） -->
+            <div class="rounded-lg border border-accent/60 bg-surface-field px-2.5 py-1.5">
+              <p class="text-[10px] text-ink-faint">{{ t('island_history.export_file') }}</p>
+              <p class="truncate font-mono text-[11px] text-ink-soft">{{ exportFileName }}</p>
+            </div>
+
             <button
                 type="button"
-                class="flex h-8 w-full items-center justify-center gap-1.5 rounded-xl bg-gold text-xs font-medium text-on-gold transition-all duration-300 ease-soft hover:shadow-xs disabled:pointer-events-none disabled:opacity-60"
-                :disabled="exporting || items.length === 0"
+                class="flex h-8 w-full items-center justify-center gap-1.5 rounded-xl text-xs font-medium transition-all duration-300 ease-soft hover:shadow-xs disabled:pointer-events-none disabled:opacity-60"
+                :class="exportDone ? 'bg-emerald-500 text-white' : 'bg-gold text-on-gold'"
+                :disabled="exporting || exportDone || items.length === 0"
                 @click="doExport(close)"
             >
               <svg v-if="exporting" class="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
                 <path d="M21 12a9 9 0 1 1-6.2-8.56" />
               </svg>
-              {{ exporting ? t('island_history.exporting') : t('island_history.export_do') }}
+              <svg v-else-if="exportDone" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+              {{ exportDone ? t('island_history.export_done') : exporting ? t('island_history.exporting') : t('island_history.export_do') }}
             </button>
           </div>
         </template>
@@ -557,7 +620,7 @@ onBeforeUnmount(() => dismissImagePreview());
 
       <!-- 清空（二次点击确认） -->
       <button
-          class="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs transition-all duration-300 ease-soft"
+          class="flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-xs transition-all duration-300 ease-soft"
           :class="confirmClear
               ? 'bg-danger/15 text-danger'
               : 'text-ink-soft hover:bg-secondary hover:text-ink'"
@@ -660,14 +723,52 @@ onBeforeUnmount(() => dismissImagePreview());
           </ul>
         </div>
       </section>
-
-      <!-- 流式渲染：sentinel 进入视口时渲染下一批；全部渲染完显示「没有更多了」 -->
-      <div
-          v-if="hasMoreToRender && visibleItems.length"
-          ref="sentinel"
-          class="py-4 text-center text-xs text-ink-faint"
-      >{{ t('island_history.scroll_more') }}</div>
-      <div v-else-if="visibleItems.length" class="py-4 text-center text-xs text-ink-faint">{{ t('island_history.no_more') }}</div>
     </div>
   </div>
 </template>
+
+<style>
+/* 透明无边框窗口：body 不透明背景与 fixed 光晕会铺满矩形、圆角外露底色，
+   页面级整体置空，氛围由根容器内 .island-atmosphere 重建（仅本窗口页面生效） */
+body {
+  background: transparent !important;
+}
+body::before,
+body::after {
+  display: none !important;
+}
+</style>
+
+<style scoped>
+/* 氛围背景层：三段渐变 + 双光晕（与 main.css body 同参数，fixed 改 absolute 随容器裁切）。
+   z-index:-1 必不可少：z-auto 的 absolute 元素会绘制在所有 static 内容（列表条目）之上，
+   不透明渐变直接盖住数据；-1 使其落在根容器 isolate 上下文的负层（内容之下、背景之上） */
+.island-atmosphere {
+  z-index: -1;
+  background: linear-gradient(135deg, rgb(var(--bg-a)) 0%, rgb(var(--bg-b)) 50%, rgb(var(--bg-c)) 100%);
+}
+.island-atmosphere::before,
+.island-atmosphere::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  border-radius: 9999px;
+  filter: blur(140px);
+  opacity: 0.65;
+  pointer-events: none;
+}
+.island-atmosphere::before {
+  width: 520px;
+  height: 520px;
+  top: -160px;
+  right: -120px;
+  background: radial-gradient(circle, rgb(var(--glow-a) / var(--glow-a-alpha)), transparent 70%);
+}
+.island-atmosphere::after {
+  width: 480px;
+  height: 480px;
+  bottom: -180px;
+  left: -140px;
+  background: radial-gradient(circle, rgb(var(--glow-b) / var(--glow-b-alpha)), transparent 70%);
+}
+</style>

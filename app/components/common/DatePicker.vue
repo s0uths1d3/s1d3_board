@@ -33,6 +33,13 @@ const props = withDefaults(defineProps<{
   /** 隐藏触发按钮：仅用作"面板"容器（典型场景：由父组件编程打开面板） */
   hideTrigger?: boolean;
   /**
+   * 区间模式：单击定起点、再点另一日期定终点；长按左键拖过多个日期连续选区间。
+   * 起点经 modelValue、终点经 modelValueEnd 双向绑定（两值为同格式 YYYY-MM-DD）。
+   */
+  range?: boolean;
+  /** 区间终点（range 模式，YYYY-MM-DD；v-model:model-value-end） */
+  modelValueEnd?: string;
+  /**
    * datetime 模式下，时分选择变化是否实时 emit（默认 true）。
    * 由外部编程控制面板（v-model:open）时建议 false，避免选小时/分钟时面板被父组件立即关闭。
    */
@@ -45,11 +52,14 @@ const props = withDefaults(defineProps<{
   size: 'sm',
   open: undefined,
   hideTrigger: false,
+  range: false,
+  modelValueEnd: '',
   liveEmit: true,
 });
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void;
+  (e: 'update:modelValueEnd', value: string): void;
   (e: 'update:open', value: boolean): void;
 }>();
 
@@ -172,6 +182,96 @@ function isSelected(d: Date): boolean {
   return fmtDate(d) === selectedDate.value;
 }
 
+// ===== 区间模式（range）：单击定端点 + 长按左键拖选连选 =====
+/** 区间终点（YYYY-MM-DD） */
+const selectedEnd = computed(() => props.modelValueEnd || '');
+/** 拖选锚点 / 悬停预览（YYYY-MM-DD）与按下状态 */
+const dragAnchor = ref('');
+const dragHover = ref('');
+const dragging = ref(false);
+
+/** 当前生效区间（规范化起终；拖选中以 hover 实时预览） */
+function rangeBounds(): { a: string; b: string } {
+  if (dragging.value && dragAnchor.value) {
+    const h = dragHover.value || dragAnchor.value;
+    return dragAnchor.value <= h ? { a: dragAnchor.value, b: h } : { a: h, b: dragAnchor.value };
+  }
+  if (selectedDate.value && selectedEnd.value) {
+    return selectedDate.value <= selectedEnd.value
+      ? { a: selectedDate.value, b: selectedEnd.value }
+      : { a: selectedEnd.value, b: selectedDate.value };
+  }
+  const only = selectedDate.value || dragAnchor.value;
+  return { a: only, b: only };
+}
+
+function inRange(d: Date): boolean {
+  if (!props.range) return false;
+  const r = rangeBounds();
+  if (!r.a) return false;
+  const s = fmtDate(d);
+  return s >= r.a && s <= r.b;
+}
+
+/** 区间端点（实心高亮） */
+function isRangeEdge(d: Date): boolean {
+  if (!props.range) return false;
+  const r = rangeBounds();
+  const s = fmtDate(d);
+  return !!r.a && (s === r.a || s === r.b);
+}
+
+/** 区间模式按下：两端已齐→开启新区间；已有单起点→以它为锚（本次决定终点）；无起点→设起点 */
+function onDayDown(d: Date) {
+  if (!props.range || isDisabled(d)) return;
+  dragging.value = true;
+  if (selectedDate.value && !selectedEnd.value) {
+    dragAnchor.value = selectedDate.value;
+  } else {
+    dragAnchor.value = fmtDate(d);
+    if (selectedDate.value && selectedEnd.value) {
+      emit('update:modelValue', dragAnchor.value);
+      emit('update:modelValueEnd', '');
+    }
+  }
+  dragHover.value = fmtDate(d);
+}
+
+/** 区间模式拖动经过：实时更新预览端 */
+function onDayEnter(d: Date) {
+  if (!props.range || !dragging.value || isDisabled(d)) return;
+  dragHover.value = fmtDate(d);
+}
+
+/** 区间模式松开：拖到不同日期 → 落定区间并收面板；原地单击 → 只定起点等下一次点选 */
+function onDayUp(d: Date) {
+  if (!props.range || !dragging.value || isDisabled(d)) return;
+  dragging.value = false;
+  const end = fmtDate(d);
+  if (end === dragAnchor.value) {
+    // 原地单击：确保单起点语义（两端已在 down 重置；无起点则设起点）
+    if (!selectedDate.value || selectedEnd.value) {
+      emit('update:modelValue', dragAnchor.value);
+      emit('update:modelValueEnd', '');
+    }
+    return;
+  }
+  const [a, b] = dragAnchor.value <= end ? [dragAnchor.value, end] : [end, dragAnchor.value];
+  emit('update:modelValue', a);
+  emit('update:modelValueEnd', b);
+  dragAnchor.value = '';
+  dragHover.value = '';
+  close();
+}
+
+/** 拖出面板/在禁用格上松开：丢弃预览，保留单起点状态 */
+function onWindowUp() {
+  if (!dragging.value) return;
+  dragging.value = false;
+  dragAnchor.value = '';
+  dragHover.value = '';
+}
+
 function isToday(d: Date): boolean {
   return fmtDate(d) === todayStr.value;
 }
@@ -237,6 +337,8 @@ watch([hour, minute], () => {
 
 function selectDate(d: Date) {
   if (isDisabled(d)) return;
+  // 区间模式：选择逻辑由 mousedown/mouseup（onDayDown/onDayUp）驱动，click 不重复处理
+  if (props.range) return;
   if (props.mode === 'datetime' && !selectedDate.value) initTime();
   emit('update:modelValue', props.mode === 'datetime'
     ? `${fmtDate(d)}T${pad(hour.value)}:${pad(minute.value)}`
@@ -247,6 +349,7 @@ function selectDate(d: Date) {
 
 function clearValue() {
   emit('update:modelValue', '');
+  if (props.range) emit('update:modelValueEnd', '');
 }
 
 // ===== 面板定位（Teleport 到 body + fixed，视口自适应）=====
@@ -329,6 +432,8 @@ watch(open, (v) => {
     // 外部 v-model:open 编程打开时不走 toggle()，这里统一初始化视图/时间
     syncView();
     initTime();
+    // 区间模式：拖选可能滑出面板松手，全局监听松开以复位拖选状态
+    window.addEventListener('mouseup', onWindowUp);
     // 触发元素在滚动容器可视区外时先滚入（nearest：已可见则不滚动），面板才能贴着它弹出
     rootEl.value?.scrollIntoView({ block: 'nearest' });
     positionPanel();
@@ -340,6 +445,7 @@ watch(open, (v) => {
     document.addEventListener('click', onDocClick);
     document.addEventListener('keydown', onEsc);
   } else {
+    window.removeEventListener('mouseup', onWindowUp);
     window.removeEventListener('resize', positionPanel);
     document.removeEventListener('scroll', positionPanel, true);
     document.removeEventListener('click', onDocClick);
@@ -348,6 +454,7 @@ watch(open, (v) => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('mouseup', onWindowUp);
   window.removeEventListener('resize', positionPanel);
   document.removeEventListener('scroll', positionPanel, true);
   document.removeEventListener('click', onDocClick);
@@ -358,6 +465,11 @@ onBeforeUnmount(() => {
 const hasValue = computed(() => !!selectedDate.value);
 
 const display = computed(() => {
+  if (props.range) {
+    if (!selectedDate.value) return props.placeholder || t('date.placeholder');
+    // 有起无终：等待选终点
+    return selectedEnd.value ? `${selectedDate.value} ~ ${selectedEnd.value}` : `${selectedDate.value} ~ …`;
+  }
   if (!hasValue.value) return props.placeholder || t('date.placeholder');
   return props.mode === 'datetime' && selectedTime.value
     ? `${selectedDate.value} ${selectedTime.value}`
@@ -440,8 +552,8 @@ const clearable = computed(() => hasValue.value);
                 <span v-for="w in weekHeaders" :key="w" class="py-1">{{ w }}</span>
               </div>
 
-              <!-- 日网格 -->
-              <div class="grid grid-cols-7 gap-0.5">
+              <!-- 日网格（select-none：区间拖选不触发原生文本选中） -->
+              <div class="grid grid-cols-7 select-none gap-0.5">
                 <button
                   v-for="(d, i) in cells"
                   :key="i"
@@ -450,10 +562,16 @@ const clearable = computed(() => hasValue.value);
                   :class="[
                     isInView(d) ? 'text-ink' : 'text-ink-faint/40',
                     isDisabled(d) ? 'cursor-not-allowed opacity-30' : 'hover:bg-secondary',
-                    isToday(d) && !isSelected(d) ? 'border border-gold text-gold' : '',
-                    isSelected(d) ? 'bg-gold font-semibold text-white shadow-soft' : '',
+                    isToday(d) && !isSelected(d) && !isRangeEdge(d) ? 'border border-gold text-gold' : '',
+                    // 区间模式：端点实心 + 区间中段浅金；普通模式：单值实心
+                    props.range && isRangeEdge(d) ? 'bg-gold font-semibold text-white shadow-soft' : '',
+                    props.range && inRange(d) && !isRangeEdge(d) ? 'rounded-none bg-gold/25 text-ink' : '',
+                    !props.range && isSelected(d) ? 'bg-gold font-semibold text-white shadow-soft' : '',
                   ]"
                   :disabled="isDisabled(d)"
+                  @mousedown="onDayDown(d)"
+                  @mouseenter="onDayEnter(d)"
+                  @mouseup="onDayUp(d)"
                   @click="selectDate(d)"
                 >
                   {{ d.getDate() }}
