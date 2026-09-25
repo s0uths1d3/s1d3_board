@@ -1,8 +1,8 @@
 <template>
   <div class="flex h-screen flex-col overflow-hidden rounded-2xl">
-    <!-- 图片查看器/tooltip/智能剪贴板气泡/灵动岛历史等子窗口不渲染主窗口的自定义 TitleBar
+    <!-- 图片查看器/tooltip/智能剪贴板气泡/灵动岛历史/便签配色卡片等子窗口不渲染主窗口的自定义 TitleBar
          （历史窗口为原生边框，自带标题栏与关闭按钮，不重复渲染导航与窗口控制） -->
-    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/tooltip' && route.path !== '/bubble' && route.path !== '/island-history'" />
+    <TitleBar v-if="route.path !== '/viewer' && route.path !== '/tooltip' && route.path !== '/bubble' && route.path !== '/island-history' && route.path !== '/note-colors'" />
     <!-- 相对定位包裹层：自绘滚动条滑块（ScrollIndicator）按此定位，只覆盖滚动区、不含标题栏。
          #app-main 由原 flex 项降为层内 h-full，盒子尺寸与原先一致。 -->
     <div class="relative min-h-0 flex-1">

@@ -39,50 +39,14 @@
             </div>
           </div>
 
-          <!-- 管理配色：名称 + 颜色选取器，增改删 -->
-          <div v-if="managingColors" class="max-h-72 space-y-1.5 overflow-y-auto border-t border-accent/60 pt-1.5" data-dd-keep-open>
-            <div v-for="(row, idx) in colorDrafts" :key="idx" class="rounded-lg border border-accent/50 p-1.5">
-              <div class="flex items-center gap-1.5">
-                <button
-                    type="button"
-                    v-tip="t('common.change_color_short')"
-                    class="h-5 w-5 shrink-0 rounded-full border border-white/60 shadow-xs transition-transform hover:scale-110"
-                    :class="colorRow === idx ? 'ring-2 ring-gold' : ''"
-                    :style="{ backgroundColor: row.color }"
-                    @click="colorRow = colorRow === idx ? null : idx"
-                />
-                <input
-                    type="text" maxlength="8" :placeholder="t('note.color_name_placeholder')"
-                    v-model="row.name"
-                    class="min-w-0 flex-1 rounded-md border border-accent bg-surface-field px-2 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
-                />
-                <button
-                    type="button"
-                    v-tip="t('common.delete_color')"
-                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
-                    @click="removeColorDraft(idx)"
-                >
-                  <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M18 6L6 18M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-              <div v-if="colorRow === idx" class="mt-1.5">
-                <UiColorPicker v-model="row.color" :presets="NOTE_COLOR_PRESETS" />
-              </div>
-            </div>
-            <p v-if="colorDrafts.length === 0" class="px-1 py-1 text-center text-xs text-ink-faint">{{ t('note.no_colors') }}</p>
-            <div class="flex items-center justify-between pt-0.5">
-              <button type="button" class="rounded-lg px-2 py-1 text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink" @click="addColorDraft">{{ t('note.add_color') }}</button>
-              <button type="button" class="btn-gold px-3 py-1 text-xs" @click="commitColors">{{ t('note.done') }}</button>
-            </div>
-          </div>
-          <div v-else class="border-t border-accent/60 pt-1.5">
+          <!-- 管理配色：独立窗口编辑（app/pages/note-colors.vue），不受主面板尺寸限制；
+               提交落库后广播 note-colors:changed，本窗口 useNoteColors 重载全局生效 -->
+          <div class="border-t border-accent/60 pt-1.5">
             <button
                 type="button"
                 data-dd-keep-open
                 class="w-full rounded-lg px-2 py-1 text-left text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
-                @click="openColorManager"
+                @click="openColorManager($event)"
             >
               {{ t('note.manage_colors') }}
             </button>
@@ -145,8 +109,8 @@
 
 <script setup lang="ts">
 import UiDropdown from '~/components/ui/UiDropdown.vue';
-import UiColorPicker from '~/components/ui/UiColorPicker.vue';
-import { useNoteColors, resolveNoteColor, adaptNoteColorToScheme, NOTE_COLOR_PRESETS, type NoteColor } from '~/composables/useNoteColors';
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { resolveNoteColor, adaptNoteColorToScheme, useNoteColors } from '~/composables/useNoteColors';
 import { useColorScheme } from '~/composables/useColorScheme';
 import { useI18n } from '~/composables/useI18n';
 import { notifyIsland } from '~/composables/useCopyIsland';
@@ -231,44 +195,110 @@ onBeforeUnmount(() => {
 })
 
 // ===== 配色：自定义名称 + 颜色（useNoteColors 统一管理，卡片背景由 hex 动态生成）=====
-const { colors: noteColors, replaceColors } = useNoteColors()
+// colors 供卡片快捷色点渲染；模块级跨窗口同步监听随首次调用挂载（独立窗口提交后重载）
+const { colors: noteColors } = useNoteColors()
 
 /** 卡片着色：低透明底 + 同色描边（旧名称存储自动解析为 hex）。
- *  颜色按主题适配：琥珀原色，浅色/暗黑自动转为灰彩/深色（见 adaptNoteColorToScheme）。
+ *  颜色按主题适配：琥珀原色，浅色转为粉彩纸、暗黑转为同相深彩，
+ *  透明度随主题由 adaptNoteColorToScheme 一并给出（浅色淡叠/暗黑近实色）。
  *  选中态的边框高亮由模板里的选中类（!border-gold + ring）统一处理，与待办选中样式一致 */
 const { resolvedScheme } = useColorScheme()
 const noteColorHex = computed(() => resolveNoteColor(props.note.color))
 const noteStyle = computed(() => {
-  const { bg, border } = adaptNoteColorToScheme(noteColorHex.value, resolvedScheme.value)
+  const { bg, border, bgAlpha, borderAlpha } = adaptNoteColorToScheme(noteColorHex.value, resolvedScheme.value)
   return {
-    backgroundColor: bg + '8c',
-    borderColor: border + '80',
+    backgroundColor: bg + bgAlpha,
+    borderColor: border + borderAlpha,
   }
 })
 
-// 管理器：本地草稿，完成后整表提交
-const managingColors = ref(false)
-const colorDrafts = ref<NoteColor[]>([])
-/** 当前展开取色器的行（默认全部收起，避免面板超高） */
-const colorRow = ref<number | null>(null)
-
-function openColorManager() {
-  colorDrafts.value = noteColors.value.map(c => ({ ...c }))
-  colorRow.value = null
-  managingColors.value = true
-}
-
-function addColorDraft() {
-  colorDrafts.value.push({ name: '', color: '#dcc88a' })
-}
-
-function removeColorDraft(idx: number) {
-  colorDrafts.value.splice(idx, 1)
-}
-
-async function commitColors() {
-  await replaceColors(colorDrafts.value)
-  managingColors.value = false
+// ===== 配色弹出卡片：无边框透明窗口（无原生窗口栏），锚定点击位置弹出， =====
+// 编辑/提交在 app/pages/note-colors.vue 完成，落库后广播事件由 useNoteColors 统一重载
+async function openColorManager(e: MouseEvent) {
+  // 子窗口打开豁免期：避免创建瞬间抢焦点触发主窗口失焦自动隐藏
+  (window as any).__childOpeningUntil = Date.now() + 600;
+  const existing = await WebviewWindow.getByLabel('note-colors').catch(() => null);
+  if (existing) {
+    void existing.show().catch(() => {});
+    void existing.setFocus().catch(() => {});
+    return;
+  }
+  // 点击元素矩形必须在同步阶段快照：本函数 async，await 之后按钮随 dropdown 关闭
+  // 而卸载（v-if），届时 getBoundingClientRect 全 0，弹窗会错位到主窗口原点。
+  // currentTarget 在事件晚到/元素已卸载时为 null → 兜底 target，再失效用点击坐标作锚点
+  const el = (e.currentTarget ?? e.target) as HTMLElement | null;
+  const rect = el && el.isConnected ? el.getBoundingClientRect() : null;
+  // 定位：全程物理像素（创建参数 x/y 存在逻辑/物理歧义，改用 PhysicalPosition 显式定位——
+  // 与 bubble 窗口先例同链路）。先隐藏创建，定位完成后再显示，避免闪现在默认位置。
+  // 贴点击元素弹出，空间不足时依次翻转到 上 → 左 → 右；弹窗是独立 OS 窗口可超出
+  // 主面板边界，空间判定按显示器工作区（而非主窗口视口）计算
+  const WIDTH = 320, HEIGHT = 420;
+  let px: number | null = null, py: number | null = null;
+  try {
+    const api = await import('@tauri-apps/api/window');
+    const win = api.getCurrentWindow();
+    const pos = await win.outerPosition(); // 物理像素
+    const scale = await win.scaleFactor();
+    const mon = (await api.currentMonitor().catch(() => null)) ?? null;
+    const size = await win.outerSize();    // 物理像素（monitor 拿不到时兜底）
+    const monX = mon?.position.x ?? pos.x;
+    const monY = mon?.position.y ?? pos.y;
+    const monW = mon?.size.width ?? size.width;
+    const monH = mon?.size.height ?? size.height;
+    const POP_W = Math.round(WIDTH * scale), POP_H = Math.round(HEIGHT * scale), GAP = Math.round(8 * scale);
+    // 元素矩形（视口逻辑坐标×scale）→ 物理屏幕坐标；rect 不可用时以点击坐标为锚点
+    const ax = rect?.left ?? e.clientX;
+    const ay = rect?.top ?? e.clientY;
+    const aw = rect?.width ?? 0;
+    const ah = rect?.height ?? 0;
+    const elL = pos.x + Math.round(ax * scale);
+    const elT = pos.y + Math.round(ay * scale);
+    const elR = pos.x + Math.round((ax + aw) * scale);
+    const elB = pos.y + Math.round((ay + ah) * scale);
+    const elCX = (elL + elR) / 2;
+    const clampX = (x: number) => Math.min(Math.max(x, monX + GAP), monX + monW - POP_W - GAP);
+    const clampY = (y: number) => Math.min(Math.max(y, monY + GAP), monY + monH - POP_H - GAP);
+    // 下 → 上 → 左 → 右：优先下方居中，该侧放不下才翻转，兜底贴下方并 clamp 进工作区
+    if (monY + monH - elB >= POP_H + GAP) {
+      px = clampX(elCX - POP_W / 2); py = elB + GAP;
+    } else if (elT - monY >= POP_H + GAP) {
+      px = clampX(elCX - POP_W / 2); py = elT - GAP - POP_H;
+    } else if (elL - monX >= POP_W + GAP) {
+      px = elL - GAP - POP_W; py = clampY(elT);
+    } else if (monX + monW - elR >= POP_W + GAP) {
+      px = elR + GAP; py = clampY(elT);
+    } else {
+      px = clampX(elCX - POP_W / 2); py = elB + GAP;
+    }
+  } catch { /* 坐标获取失败保持 null → 系统默认位置显示 */ }
+  const win = new WebviewWindow('note-colors', {
+    url: '/note-colors',
+    width: WIDTH,
+    height: HEIGHT,
+    minWidth: 288,
+    minHeight: 340,
+    visible: false,      // 先隐藏创建：PhysicalPosition 定位完成后再显示
+    resizable: true,
+    decorations: false,  // 无原生窗口栏：页面自绘圆角卡片与拖动把手（同 tooltip/查看器模式）
+    transparent: true,   // 透明窗口：卡片自绘圆角，规避 Win11 系统圆角残角
+    shadow: false,       // 关 DWM 阴影：无边框窗口阴影黑线难看，层次由卡片阴影承载
+    skipTaskbar: true,
+    focus: true,         // 需要键盘输入（配色名称编辑）
+  });
+  win.once('tauri://created', async () => {
+    (window as any).__childOpeningUntil = Date.now() + 400;
+    try {
+      const { PhysicalPosition } = await import('@tauri-apps/api/dpi');
+      if (px !== null && py !== null) {
+        await win.setPosition(new PhysicalPosition(px, py)).catch(() => {});
+      }
+      // 任务栏图标双保险：创建参数 skipTaskbar 之外再显式设置一次（Windows 下个别时机不生效）
+      await win.setSkipTaskbar(true).catch(() => {});
+    } finally {
+      void win.show().catch(() => {});
+      void win.setFocus().catch(() => {});
+    }
+  });
 }
 
 const saved = ref(false)

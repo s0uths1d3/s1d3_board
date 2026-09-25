@@ -29,8 +29,9 @@ export const DEFAULT_NOTE_COLORS: NoteColor[] = [
 /** 取色器预设色板：默认六色 + 全局暖色扩展（去重） */
 export const NOTE_COLOR_PRESETS: string[] = Array.from(new Set([
   ...DEFAULT_NOTE_COLORS.map(c => c.color),
+  // 9 个补充色 + 6 个默认色 = 15 个：取色器色板 grid-cols-5 恰好 3 行铺满（16 个会余 1 个孤块）
   '#b05c5c', '#d98b3f', '#d9b13f', '#6f8a55', '#4f8a7b',
-  '#4f6f9a', '#7b5f9a', '#b05f8a', '#8a6f5c', '#8a8a8a',
+  '#4f6f9a', '#7b5f9a', '#b05f8a', '#8a6f5c',
 ]))
 
 /** 旧版颜色名 → hex（老便签 note.color 存的是名称，读取时透明解析） */
@@ -102,23 +103,26 @@ function hslToHex(h: number, s: number, l: number): string {
 }
 
 /**
- * 便签颜色按主题适配：
+ * 便签颜色按主题适配（返回颜色 + 建议透明度，透明度为两位 hex 由调用方拼接）：
  * - 琥珀（default）：原样使用——暖彩色板与暖米色主题是最佳搭配；
- * - 浅色（黑白灰）：保留色相、去饱和约 65%，融入中性环境；
- * - 暗黑（Darcula）：去饱和 + 压暗为深色卡片底，描边用稍亮的同相灰，
- *   避免浅彩色块在深灰环境突兀、并保证浅色文字的可读性。
+ * - 浅色（黑白灰）：转为干净的粉彩纸（clean pastel）——色相保留、饱和适度收敛、
+ *   明度向 0.9 收拢：高明度的清透淡彩在纯白环境不浊不闷（低饱和中明度才是"脏"的来源），
+ *   描边用同相稍深一档保证边界清晰；
+ * - 暗黑（Darcula）：同相深彩卡片——彩度稍保留、明度抬到深灰区间上部，
+ *   避免低彩深底叠深灰环境发闷；描边用更清晰的同相亮线，近实色叠加。
  * 仅用于卡片着色；配色选中判断/色板展示仍用原色（resolveNoteColor）。
  */
-export function adaptNoteColorToScheme(hex: string, scheme: ColorScheme): { bg: string; border: string } {
-  if (scheme === 'default') return { bg: hex, border: hex }
+export function adaptNoteColorToScheme(hex: string, scheme: ColorScheme): { bg: string; border: string; bgAlpha: string; borderAlpha: string } {
+  if (scheme === 'default') return { bg: hex, border: hex, bgAlpha: '8c', borderAlpha: '80' }
   const { h, s, l } = hexToHsl(hex)
   if (scheme === 'light') {
-    const c = hslToHex(h, s * 0.35, l)
-    return { bg: c, border: c }
+    const bg = hslToHex(h, Math.min(s * 0.55, 0.5), Math.min(Math.max(l + (0.9 - l) * 0.65, 0.82), 0.92))
+    const border = hslToHex(h, Math.min(s * 0.55, 0.5), Math.max(Math.min(l + (0.9 - l) * 0.65, 0.92) - 0.1, 0.7))
+    return { bg, border, bgAlpha: 'e6', borderAlpha: 'cc' }
   }
-  const bg = hslToHex(h, s * 0.3, Math.min(Math.max(l * 0.3, 0.1), 0.2))
-  const border = hslToHex(h, s * 0.4, 0.3)
-  return { bg, border }
+  const bg = hslToHex(h, s * 0.45, Math.min(Math.max(l * 0.42, 0.14), 0.26))
+  const border = hslToHex(h, s * 0.55, 0.38)
+  return { bg, border, bgAlpha: 'f2', borderAlpha: 'd9' }
 }
 
 async function load(): Promise<void> {
@@ -143,6 +147,24 @@ function ensureLoaded(): Promise<void> {
   return loadPromise
 }
 
+/** 配色编辑窗口提交后广播的事件：主窗口重载最新配色 */
+const COLORS_CHANGED_EVENT = 'note-colors:changed'
+
+/** 跨窗口同步监听（模块级挂一次）：配色在独立窗口编辑并落库，
+ *  主窗口所有便签卡共用本模块的 colors ref，收到事件重载即全局生效 */
+let listenerStarted = false
+async function startCrossWindowListener(): Promise<void> {
+  if (listenerStarted) return
+  listenerStarted = true
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    await listen(COLORS_CHANGED_EVENT, () => {
+      loadPromise = null
+      void load()
+    })
+  } catch { /* 非 Tauri 环境（纯浏览器）无跨窗口场景，忽略 */ }
+}
+
 async function persist(): Promise<void> {
   try {
     await dbService.setKeyValue(STORAGE_KEY, JSON.stringify(colors.value))
@@ -153,6 +175,7 @@ export function useNoteColors() {
   if (!loaded) {
     loaded = true
     loadPromise = load()
+    void startCrossWindowListener()
   }
 
   /** 新增配色：重名返回 false */
