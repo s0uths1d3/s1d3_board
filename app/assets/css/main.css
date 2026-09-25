@@ -320,6 +320,13 @@ body::after {
 .page-curtain-leave-active {
   animation: pageFadeOut 0.18s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
+/* 动画锚点定在内容顶部：默认锚点是元素中心（50% 50%），剪贴板这类超高页面的中心
+   远在视口下方几屏之外，scale 会让可视区顶部产生几十像素位移，而短页面几乎不动——
+   同一套 keyframes 在长短页面上观感完全不同。锚定顶部后两者表现一致。 */
+.page-curtain-enter-active,
+.page-curtain-leave-active {
+  transform-origin: top center;
+}
 
 /* 滚动条美化 */
 ::-webkit-scrollbar {
@@ -332,6 +339,60 @@ body::after {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* ===== 主窗口内容区滚动条：槽位常驻 + 自绘滑块 =====
+   自定义 ::-webkit-scrollbar 使滚动条占据真实布局宽度（非 overlay），而主窗口各 Tab
+   内容长短不一（剪贴板列表要滚动、待办不滚动）；若让槽位随滚动条出现/消失，内容宽度就会
+   瞬间跳变。故槽位常驻，宽度改由 .page-pad 的右侧内边距过渡控制，从而能做出
+   "滚动条滑入 + 内容区左收 8px"的连贯动画。原生滑块设为透明，只保留槽位与滚轮/拖拽
+   命中区，可视滑块由 components/mainpage/ScrollIndicator.vue 自绘（原生滑块无法被动画）。
+   仅主窗口：查看器/tooltip/气泡等子窗口的画布是贴合窗口尺寸自绘的，常驻 8px 会压窄它。 */
+#app-main.is-main-window {
+  scrollbar-gutter: stable;
+}
+#app-main.is-main-window::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+/* 自绘滑块：配色圆角与原 ::-webkit-scrollbar-thumb 一致。位置/长度/透明度全部由
+   ScrollIndicator 逐帧写入（见该组件顶部注释），这里只给静态外观与初始不可见态，
+   刻意不加任何 transition——过渡交给脚本，才不会出现"两端互相抵消""中途改目标重启缓动"。
+   top 固定为 0，纵向位置走 transform：滚动时每帧只改 transform，不触发布局。 */
+.sb-thumb {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  border-radius: 9999px;
+  background: rgb(var(--c-gold) / 0.5);
+  opacity: 0;
+  transform: translateX(8px);
+  will-change: transform;
+  pointer-events: none;
+}
+
+/* 内容区水平内边距（index.vue 内层 main）：左侧固定 1rem；右侧无滚动条时为 0.5rem
+   —— 缺的 0.5rem 由常驻槽位补足，视觉同为 1rem；有滚动条时补到 1rem，使滚动条紧挨
+   1rem 边距而非贴着内容。过渡让滚动条出现/消失时内容区宽度平滑左收/右放。 */
+.page-pad {
+  --page-pad-r: 0.5rem;
+  padding-left: 1rem;
+  padding-right: var(--page-pad-r);
+  transition: padding-right 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+#app-main.has-scrollbar .page-pad {
+  --page-pad-r: 1rem;
+}
+
+/* 剪贴板吸顶搜索栏：反向扯出等量负边距铺满滚动区，内边距跟随 --page-pad-r
+   （自定义属性会继承，故与内容区同一时长同步过渡） */
+.page-pad-bleed {
+  margin-left: -1rem;
+  margin-right: calc(-1 * var(--page-pad-r, 0.5rem));
+  padding-left: 1rem;
+  padding-right: var(--page-pad-r, 0.5rem);
+  transition: margin-right 0.3s cubic-bezier(0.22, 1, 0.36, 1), padding-right 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* 隐藏滚动条但保留滚动能力（时间下拉等窄列表，滚动条视觉上多余） */
