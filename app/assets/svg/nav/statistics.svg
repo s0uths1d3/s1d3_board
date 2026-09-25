@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon" data-icon="statistics" aria-hidden="true">
+  <g data-part="body">
+    <g data-part="axis">
+      <path d="M3 3v18h18" />
+    </g>
+    <g data-part="bar0">
+      <g data-part="fill0" opacity="0">
+        <rect x="7" y="12" width="3" height="6" rx="0.5" fill="currentColor" stroke="none" />
+      </g>
+      <rect x="7" y="12" width="3" height="6" rx="0.5" />
+    </g>
+    <g data-part="bar1">
+      <g data-part="fill1" opacity="0">
+        <rect x="12.5" y="8" width="3" height="10" rx="0.5" fill="currentColor" stroke="none" />
+      </g>
+      <rect x="12.5" y="8" width="3" height="10" rx="0.5" />
+    </g>
+    <g data-part="bar2">
+      <g data-part="fill2" opacity="0">
+        <rect x="18" y="5" width="3" height="13" rx="0.5" fill="currentColor" stroke="none" />
+      </g>
+      <rect x="18" y="5" width="3" height="13" rx="0.5" />
+    </g>
+  </g>
+</svg>

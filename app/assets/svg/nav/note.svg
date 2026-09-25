@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon" data-icon="note" aria-hidden="true">
+  <g data-part="body">
+    <g data-part="sheet">
+      <path d="M4 4a2 2 0 0 1 2-2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+      <g data-part="fold">
+        <path d="M14 2v5h5" />
+      </g>
+      <g data-part="ink1">
+        <path d="M8 12h8" />
+      </g>
+      <g data-part="ink2">
+        <path d="M8 16h6" />
+      </g>
+    </g>
+  </g>
+</svg>
