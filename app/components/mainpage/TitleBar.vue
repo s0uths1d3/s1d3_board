@@ -2,7 +2,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "~/utils/env";
 import { activeTab, setActiveTab, getVisibleTabItems, reorderTab, persistNavConfig, type TabKey } from "~/composables/useTabs";
-import { computed, ref, onMounted, onBeforeUnmount } from "vue";
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
 import { useLongPressReorder } from "~/composables/useLongPressReorder";
 import { cycleColorScheme, useColorScheme, type ColorSchemeMode } from "~/composables/useColorScheme";
 import { useI18n } from "~/composables/useI18n";
@@ -21,7 +21,8 @@ const navReorder = useLongPressReorder({
   axis: 'x',
   onReorder: (from, to) => reorderTab(from as TabKey, to as TabKey),
   onDrop: () => { void persistNavConfig(); },
-  onStateChange: (k) => { draggingTabKey.value = k; },
+  // 拖拽排序开始时收掉按下态预拉伸：长按 0.5s 已进入排序，不该继续挂着"准备去某 Tab"的姿态
+  onStateChange: (k) => { draggingTabKey.value = k; if (k) clearPressed(); },
 });
 
 /** 点击导航图标：拖拽结束后的 click 抑制切换（长按拖动 ≠ 点击） */
@@ -29,6 +30,78 @@ function onNavTabClick(key: TabKey) {
   if (navReorder.consumeDragged()) return;
   setActiveTab(key);
 }
+
+// ===== 导航下划线：单元素在 Tab 间移动 =====
+const navEl = ref<HTMLElement | null>(null);
+/** 下划线区间（相对 nav 左缘 px）；按下目标时取"当前 Tab ∪ 目标 Tab"的并集 */
+const underlineSpan = ref({ left: 0, right: 0 });
+/** nav 宽度：下划线两端用 left/right 定位，右端点需换算成距 nav 右缘的距离 */
+const navWidth = ref(0);
+/** 按下但尚未放开的目标 Tab：此期间下划线先拉伸过去（松开/切换完成后清空） */
+const pressedTab = ref<string | null>(null);
+/** 首次摆放不加过渡，避免启动时从 0 长度长出来 */
+const underlineReady = ref(false);
+
+/** 某 Tab 相对 nav 左缘的水平区间（用 rect 相减，不依赖 offsetParent 链） */
+function tabSpan(key: string): { left: number; right: number } | null {
+  const nav = navEl.value;
+  const btn = nav?.querySelector<HTMLElement>(`[data-reorder-key="${key}"]`);
+  if (!nav || !btn) return null;
+  const navRect = nav.getBoundingClientRect();
+  const rect = btn.getBoundingClientRect();
+  return { left: rect.left - navRect.left, right: rect.right - navRect.left };
+}
+
+/**
+ * 重算下划线区间。按下态取当前与目标 Tab 的并集——左右两端谁外扩由两者位置决定，
+ * 于是"远侧那条边钉住、朝向目标那条边伸出去"，方向感来自几何本身，
+ * 不需要切换 transform-origin（origin 不参与插值，中途换边会跳）。
+ */
+function syncUnderline() {
+  const nav = navEl.value;
+  if (!nav) return;
+  navWidth.value = nav.getBoundingClientRect().width;
+  const current = tabSpan(activeTab.value);
+  if (!current) return;
+  const target = pressedTab.value && pressedTab.value !== activeTab.value ? tabSpan(pressedTab.value) : null;
+  underlineSpan.value = target
+    ? { left: Math.min(current.left, target.left), right: Math.max(current.right, target.right) }
+    : current;
+}
+
+const underlineStyle = computed(() => {
+  const { left, right } = underlineSpan.value;
+  // 两端各自给值：left 直接是左端点，右端点换算成距 nav 右缘的距离
+  return { left: `${left}px`, right: `${navWidth.value - right}px` };
+});
+
+/** 按下（未放开）：先把下划线朝目标拉伸过去——并集区间，远侧边钉住 */
+function onTabPressStart(key: string) {
+  if (key === activeTab.value) return;
+  pressedTab.value = key;
+  syncUnderline();
+}
+
+/** 结束预运动：收缩回当前 Tab（切换成功时由 activeTab watch 接管，这里是同义重算） */
+function clearPressed() {
+  if (!pressedTab.value) return;
+  pressedTab.value = null;
+  syncUnderline();
+}
+
+/** 松开鼠标：延后一帧再清，避免抢在 click 之前把下划线弹回旧 Tab */
+function onWindowPointerUp() {
+  requestAnimationFrame(clearPressed);
+}
+
+/** 切换 Tab（含 Ctrl+←/→、鼠标侧键等非点击路径）：收缩落位到新 Tab */
+watch(activeTab, () => {
+  pressedTab.value = null;
+  nextTick(() => syncUnderline());
+});
+
+/** 图标增删/拖动排序后位置全变，需重新丈量 */
+watch(visibleTabs, () => nextTick(() => syncUnderline()));
 
 // 窗口控制仅在 Tauri 桌面容器内可用；纯 Web 预览无窗口，按钮不显示
 async function minimize() {
@@ -84,11 +157,19 @@ onMounted(async () => {
   if (isTauri()) {
     unlistenResized = await getCurrentWindow().onResized(() => updateMaximized());
   }
+  // 下划线首次摆放：此刻各 Tab 的尺寸已可量；窗口缩放不需要重算——
+  // 区间是相对 nav 左缘取的，整条导航一起移动时相对位置不变
+  syncUnderline();
+  requestAnimationFrame(() => { underlineReady.value = true; });
+  window.addEventListener('pointerup', onWindowPointerUp);
+  window.addEventListener('pointercancel', onWindowPointerUp);
 });
 
 onBeforeUnmount(() => {
   unlistenResized?.();
   unlistenResized = null;
+  window.removeEventListener('pointerup', onWindowPointerUp);
+  window.removeEventListener('pointercancel', onWindowPointerUp);
 });
 </script>
 
@@ -103,63 +184,37 @@ onBeforeUnmount(() => {
 
     <!-- 中部：顶层导航（窗口之上）；左键长按 0.5s 可拖动图标调整顺序，松开自动持久化。
          no-drag 豁免 drag-region；图标 pointerdown 内 preventDefault 双保险阻止窗口拖拽启动 -->
-    <nav class="no-drag flex items-center gap-2" data-nav-bar>
+    <nav ref="navEl" class="no-drag relative flex items-center gap-2" data-nav-bar>
       <TransitionGroup name="reorder-nav" tag="div" class="flex items-center gap-2">
         <button
             v-for="tab in visibleTabs"
             :key="tab.key"
             v-tip="t('titlebar.' + tab.key)"
             :data-reorder-key="tab.key"
-            class="nav-tab gold-underline flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-all duration-300 ease-soft"
+            class="nav-tab flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-all duration-300 ease-soft"
             :class="[
               activeTab === tab.key ? 'is-active text-gold' : 'text-ink-soft hover:text-ink',
               draggingTabKey === tab.key ? 'relative z-10 scale-110 opacity-60 cursor-grabbing shadow-float' : ''
             ]"
-            @pointerdown="navReorder.pressStart(tab.key, $event)"
+            @pointerdown="navReorder.pressStart(tab.key, $event); onTabPressStart(tab.key)"
             @click="onNavTabClick(tab.key)"
         >
-        <!-- 剪贴板 -->
-        <svg v-if="tab.key === 'clip'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
-          <rect x="9" y="3" width="6" height="4" rx="1" />
-          <path d="M9 12h6M9 16h4" />
-        </svg>
-        <!-- 待办 -->
-        <svg v-else-if="tab.key === 'todo'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="4" width="18" height="17" rx="2" />
-          <path d="M8 2v4M16 2v4M3 10h18" />
-          <path d="M9 15l2 2 4-4" />
-        </svg>
-        <!-- 便签 -->
-        <svg v-else-if="tab.key === 'note'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 4a2 2 0 0 1 2-2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
-          <path d="M14 2v5h5" />
-          <path d="M8 12h8M8 16h6" />
-        </svg>
-        <!-- 常用剪贴板 -->
-        <svg v-else-if="tab.key === 'pinned'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 4h6M10 4v6l-4 5a1 1 0 0 0 .8 1.6h10.4a1 1 0 0 0 .8-1.6l-4-5V4" />
-          <path d="M5 21h14" />
-        </svg>
-        <!-- 设置 -->
-        <svg v-else-if="tab.key === 'setting'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
-        <!-- 统计 -->
-        <svg v-else-if="tab.key === 'statistics'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 3v18h18" />
-          <rect x="7" y="12" width="3" height="6" rx="0.5" />
-          <rect x="12.5" y="8" width="3" height="10" rx="0.5" />
-          <rect x="18" y="5" width="3" height="13" rx="0.5" />
-        </svg>
-        <!-- 应用时长 -->
-        <svg v-else-if="tab.key === 'app_usage'" class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 7v5l3.5 2" />
-        </svg>
+        <!-- 图标：通用动效组件，按 tab.key 从 assets/svg/nav/ 取分层 SVG。
+             长按进入拖拽排序时 interrupt 置真，图标原路退回而不是顺势转完 -->
+        <NavMotionIcon
+            :icon="tab.key"
+            class="h-3.5 w-3.5 shrink-0"
+            :interrupt="draggingTabKey === tab.key"
+        />
         </button>
       </TransitionGroup>
+      <!-- 单元素下划线：位置/长度由脚本按 Tab 实际几何写入（见 syncUnderline） -->
+      <div
+        class="nav-underline"
+        :class="{ 'is-instant': !underlineReady, 'is-pressing': pressedTab !== null }"
+        :style="underlineStyle"
+        aria-hidden="true"
+      ></div>
     </nav>
 
     <!-- 右侧：快速切换配色（跟随系统→琥珀→浅色→深色循环）+ 窗口控制按钮 -->

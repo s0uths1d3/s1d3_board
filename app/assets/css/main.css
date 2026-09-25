@@ -208,15 +208,27 @@ body::after {
   }
 
   /* 金色激活指示线（导航 tab、按钮） */
-  .gold-underline {
-    @apply relative;
+  /* 导航下划线：单个元素在 Tab 间移动（原先是每个 Tab 各自 w-0 → w-full 从左侧长出来，
+     只能单向生长、也不会位移）。位置与长度由 TitleBar 按 Tab 实际几何写入：
+     普通切换 = 整体平移到位；按下未放开 = 先拉伸成"当前 Tab ∪ 目标 Tab"的区间——
+     远侧那条边钉住、朝向目标那条边伸出去，于是有被"拉"过去的方向感，松开后再收缩落位。 */
+  .nav-underline {
+    @apply pointer-events-none absolute h-[2px] bg-gold;
+    left: 0;
+    right: 100%;                  /* 惰性初始态：0 长度；首次摆放由 is-instant 直接覆盖 */
+    bottom: -4px;                 /* 与按钮底边间距对齐原来的 ::after */
+    /* 两端各自过渡。不能用 left + width：width 是相对量，与 left 同帧变化会互相抵消，
+       朝向目标那条边因此走不动（点击远端 Tab 时表现为"停在半路顿一下再过去"）。 */
+    transition: left 0.6s cubic-bezier(0.34, 1.36, 0.5, 1), right 0.6s cubic-bezier(0.34, 1.36, 0.5, 1);
   }
-  .gold-underline::after {
-    content: "";
-    @apply absolute -bottom-1 left-0 h-[2px] w-0 bg-gold transition-all duration-300 ease-soft;
+  /* 按下目标 Tab、尚未放开：先把线朝那边拽过去。更快且不回弹，
+     与随后的"收缩落位"区分开，预运动才像预运动 */
+  .nav-underline.is-pressing {
+    transition: left 0.26s cubic-bezier(0.22, 1, 0.36, 1), right 0.26s cubic-bezier(0.22, 1, 0.36, 1);
   }
-  .gold-underline.is-active::after {
-    @apply w-full;
+  /* 首次摆放不加过渡，避免启动时从 0 长度长出来（须在最后，覆盖上面两条） */
+  .nav-underline.is-instant {
+    transition: none;
   }
 
   /* 标题竖条（金色） */
@@ -308,6 +320,13 @@ body::after {
 .page-curtain-leave-active {
   animation: pageFadeOut 0.18s cubic-bezier(0.4, 0, 0.2, 1) both;
 }
+/* 动画锚点定在内容顶部：默认锚点是元素中心（50% 50%），剪贴板这类超高页面的中心
+   远在视口下方几屏之外，scale 会让可视区顶部产生几十像素位移，而短页面几乎不动——
+   同一套 keyframes 在长短页面上观感完全不同。锚定顶部后两者表现一致。 */
+.page-curtain-enter-active,
+.page-curtain-leave-active {
+  transform-origin: top center;
+}
 
 /* 滚动条美化 */
 ::-webkit-scrollbar {
@@ -320,6 +339,60 @@ body::after {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* ===== 主窗口内容区滚动条：槽位常驻 + 自绘滑块 =====
+   自定义 ::-webkit-scrollbar 使滚动条占据真实布局宽度（非 overlay），而主窗口各 Tab
+   内容长短不一（剪贴板列表要滚动、待办不滚动）；若让槽位随滚动条出现/消失，内容宽度就会
+   瞬间跳变。故槽位常驻，宽度改由 .page-pad 的右侧内边距过渡控制，从而能做出
+   "滚动条滑入 + 内容区左收 8px"的连贯动画。原生滑块设为透明，只保留槽位与滚轮/拖拽
+   命中区，可视滑块由 components/mainpage/ScrollIndicator.vue 自绘（原生滑块无法被动画）。
+   仅主窗口：查看器/tooltip/气泡等子窗口的画布是贴合窗口尺寸自绘的，常驻 8px 会压窄它。 */
+#app-main.is-main-window {
+  scrollbar-gutter: stable;
+}
+#app-main.is-main-window::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+/* 自绘滑块：配色圆角与原 ::-webkit-scrollbar-thumb 一致。位置/长度/透明度全部由
+   ScrollIndicator 逐帧写入（见该组件顶部注释），这里只给静态外观与初始不可见态，
+   刻意不加任何 transition——过渡交给脚本，才不会出现"两端互相抵消""中途改目标重启缓动"。
+   top 固定为 0，纵向位置走 transform：滚动时每帧只改 transform，不触发布局。 */
+.sb-thumb {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  border-radius: 9999px;
+  background: rgb(var(--c-gold) / 0.5);
+  opacity: 0;
+  transform: translateX(8px);
+  will-change: transform;
+  pointer-events: none;
+}
+
+/* 内容区水平内边距（index.vue 内层 main）：左侧固定 1rem；右侧无滚动条时为 0.5rem
+   —— 缺的 0.5rem 由常驻槽位补足，视觉同为 1rem；有滚动条时补到 1rem，使滚动条紧挨
+   1rem 边距而非贴着内容。过渡让滚动条出现/消失时内容区宽度平滑左收/右放。 */
+.page-pad {
+  --page-pad-r: 0.5rem;
+  padding-left: 1rem;
+  padding-right: var(--page-pad-r);
+  transition: padding-right 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+#app-main.has-scrollbar .page-pad {
+  --page-pad-r: 1rem;
+}
+
+/* 剪贴板吸顶搜索栏：反向扯出等量负边距铺满滚动区，内边距跟随 --page-pad-r
+   （自定义属性会继承，故与内容区同一时长同步过渡） */
+.page-pad-bleed {
+  margin-left: -1rem;
+  margin-right: calc(-1 * var(--page-pad-r, 0.5rem));
+  padding-left: 1rem;
+  padding-right: var(--page-pad-r, 0.5rem);
+  transition: margin-right 0.3s cubic-bezier(0.22, 1, 0.36, 1), padding-right 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* 隐藏滚动条但保留滚动能力（时间下拉等窄列表，滚动条视觉上多余） */

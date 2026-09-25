@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="nav-icon" data-icon="pinned" aria-hidden="true">
+  <g data-part="body">
+    <g data-part="pin">
+      <path d="M9 4h6M10 4v6l-4 5a1 1 0 0 0 .8 1.6h10.4a1 1 0 0 0 .8-1.6l-4-5V4" />
+    </g>
+    <g data-part="base">
+      <path d="M5 21h14" />
+    </g>
+  </g>
+</svg>

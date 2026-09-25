@@ -922,14 +922,17 @@ async function openImageViewer(item: ClipboardData) {
 
 <template>
   <div class="min-h-full flex flex-col">
-    <main class="flex-1 px-4 pb-12 pt-4">
+    <!-- page-pad：左右内边距与滚动条槽位联动，见 main.css -->
+    <main class="flex-1 page-pad pb-12 pt-4">
       <div class="mx-auto max-w-6xl">
         <Transition name="page-curtain" mode="out-in">
-          <div :key="activeTab">
+          <!-- data-tab-key：供 ScrollIndicator 判断当前挂载的是哪个 Tab 的内容
+               （切换过渡的退场阶段 DOM 里还是旧 Tab，其高度不代表新 Tab 是否需要滚动条） -->
+          <div :key="activeTab" :data-tab-key="activeTab">
             <!-- 剪贴板 -->
             <div v-if="activeTab === 'clip'" class="space-y-4">
               <!-- 常驻搜索框：始终悬浮在列表最上方 -->
-              <div class="sticky top-0 z-30 -mx-4 bg-[linear-gradient(135deg,var(--bg-grad-1),var(--bg-grad-3))] px-4 pt-1 pb-2">
+              <div class="sticky top-0 z-30 page-pad-bleed bg-[linear-gradient(135deg,var(--bg-grad-1),var(--bg-grad-3))] pt-1 pb-2">
                 <div class="glass-card flex items-center gap-2 rounded-2xl px-3 py-2 text-ink">
                   <svg
                       class="h-5 w-5 shrink-0 text-ink-faint"
