@@ -34,7 +34,8 @@ let showTimer: ReturnType<typeof setTimeout> | null = null;
 let listenersBound = false;
 
 const GAP = 10;
-const SHOW_DELAY = 120;
+/** 悬停多久才弹出提示：偏长一些，避免鼠标路过图标时被连续弹出的气泡打断 */
+const SHOW_DELAY = 1000;
 
 /** 任意矩形（CSS 像素，当前窗口视口坐标系） */
 interface Rect {
