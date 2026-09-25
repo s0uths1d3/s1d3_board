@@ -1470,8 +1470,9 @@ onMounted(async () => {
   <!-- 边距与宽度由外壳统一提供（main px-4 + max-w-6xl），各模块保持一致 -->
   <div>
     <div class="flex">
-      <div class="w-1/5 pr-4 sticky top-4 self-start" data-setting-nav>
-        <!-- 左侧分类列表：长按 1s 可拖动调整顺序，松开自动持久化；TransitionGroup 提供平滑让位 -->
+      <!-- 左侧分类列表：长按 1s 可拖动调整顺序，松开自动持久化；TransitionGroup 提供平滑让位。
+           容器空白处 data-tauri-drag-region 可拖动主窗口（按钮点击不受影响） -->
+      <div class="w-1/5 pr-4 sticky top-4 self-start" data-setting-nav data-tauri-drag-region>
         <TransitionGroup name="reorder-list" tag="div">
           <div
               v-for="setting in orderedSettings"
@@ -1486,7 +1487,15 @@ onMounted(async () => {
                 :class="{ 'border-gold bg-secondary text-gold': activeSetting === setting }"
                 @click="onSettingClick(setting)"
             >
-              {{ t(setting.title) }}
+              <!-- 文字左侧 grip：提示分组按钮可长按拖动排序；grip 固定列对齐，文字在其右侧左对齐 -->
+              <span class="flex items-center gap-1.5">
+                <svg class="h-3 w-3 shrink-0 opacity-45" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <circle cx="9" cy="5" r="1.8" /><circle cx="15" cy="5" r="1.8" />
+                  <circle cx="9" cy="12" r="1.8" /><circle cx="15" cy="12" r="1.8" />
+                  <circle cx="9" cy="19" r="1.8" /><circle cx="15" cy="19" r="1.8" />
+                </svg>
+                <span class="text-left">{{ t(setting.title) }}</span>
+              </span>
             </button>
           </div>
         </TransitionGroup>

@@ -90,8 +90,16 @@ onBeforeUnmount(() => {
   <div class="flex min-h-screen items-start justify-center p-1.5">
     <div class="w-full max-w-[352px] rounded-2xl border border-accent/60 bg-surface p-3 shadow-2xl">
       <!-- 标题行：data-tauri-drag-region 无边框窗口拖动把手 -->
-      <div class="mb-2.5 flex items-center justify-between" data-tauri-drag-region>
+      <div class="relative mb-2.5 flex items-center justify-between" data-tauri-drag-region>
         <p class="cursor-grab text-sm font-medium select-none" data-tauri-drag-region>{{ t('note.manage_colors') }}</p>
+        <!-- 拖动把手视觉提示：居中 grip SVG（两列三点 ⠿，整行可拖动） -->
+        <div class="absolute left-1/2 flex -translate-x-1/2 cursor-grab select-none text-ink-soft opacity-60" data-tauri-drag-region aria-hidden="true">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="9" cy="5" r="1.8" /><circle cx="15" cy="5" r="1.8" />
+            <circle cx="9" cy="12" r="1.8" /><circle cx="15" cy="12" r="1.8" />
+            <circle cx="9" cy="19" r="1.8" /><circle cx="15" cy="19" r="1.8" />
+          </svg>
+        </div>
         <button
             type="button"
             class="flex h-6 w-6 items-center justify-center rounded-md text-ink-soft transition-colors hover:bg-secondary hover:text-ink"
