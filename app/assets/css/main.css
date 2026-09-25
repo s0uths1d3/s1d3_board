@@ -208,15 +208,27 @@ body::after {
   }
 
   /* 金色激活指示线（导航 tab、按钮） */
-  .gold-underline {
-    @apply relative;
+  /* 导航下划线：单个元素在 Tab 间移动（原先是每个 Tab 各自 w-0 → w-full 从左侧长出来，
+     只能单向生长、也不会位移）。位置与长度由 TitleBar 按 Tab 实际几何写入：
+     普通切换 = 整体平移到位；按下未放开 = 先拉伸成"当前 Tab ∪ 目标 Tab"的区间——
+     远侧那条边钉住、朝向目标那条边伸出去，于是有被"拉"过去的方向感，松开后再收缩落位。 */
+  .nav-underline {
+    @apply pointer-events-none absolute h-[2px] bg-gold;
+    left: 0;
+    right: 100%;                  /* 惰性初始态：0 长度；首次摆放由 is-instant 直接覆盖 */
+    bottom: -4px;                 /* 与按钮底边间距对齐原来的 ::after */
+    /* 两端各自过渡。不能用 left + width：width 是相对量，与 left 同帧变化会互相抵消，
+       朝向目标那条边因此走不动（点击远端 Tab 时表现为"停在半路顿一下再过去"）。 */
+    transition: left 0.6s cubic-bezier(0.34, 1.36, 0.5, 1), right 0.6s cubic-bezier(0.34, 1.36, 0.5, 1);
   }
-  .gold-underline::after {
-    content: "";
-    @apply absolute -bottom-1 left-0 h-[2px] w-0 bg-gold transition-all duration-300 ease-soft;
+  /* 按下目标 Tab、尚未放开：先把线朝那边拽过去。更快且不回弹，
+     与随后的"收缩落位"区分开，预运动才像预运动 */
+  .nav-underline.is-pressing {
+    transition: left 0.26s cubic-bezier(0.22, 1, 0.36, 1), right 0.26s cubic-bezier(0.22, 1, 0.36, 1);
   }
-  .gold-underline.is-active::after {
-    @apply w-full;
+  /* 首次摆放不加过渡，避免启动时从 0 长度长出来（须在最后，覆盖上面两条） */
+  .nav-underline.is-instant {
+    transition: none;
   }
 
   /* 标题竖条（金色） */

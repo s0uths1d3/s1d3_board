@@ -2,7 +2,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isTauri } from "~/utils/env";
 import { activeTab, setActiveTab, getVisibleTabItems, reorderTab, persistNavConfig, type TabKey } from "~/composables/useTabs";
-import { computed, ref, onMounted, onBeforeUnmount } from "vue";
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
 import { useLongPressReorder } from "~/composables/useLongPressReorder";
 import { cycleColorScheme, useColorScheme, type ColorSchemeMode } from "~/composables/useColorScheme";
 import { useI18n } from "~/composables/useI18n";
@@ -21,7 +21,8 @@ const navReorder = useLongPressReorder({
   axis: 'x',
   onReorder: (from, to) => reorderTab(from as TabKey, to as TabKey),
   onDrop: () => { void persistNavConfig(); },
-  onStateChange: (k) => { draggingTabKey.value = k; },
+  // 拖拽排序开始时收掉按下态预拉伸：长按 0.5s 已进入排序，不该继续挂着"准备去某 Tab"的姿态
+  onStateChange: (k) => { draggingTabKey.value = k; if (k) clearPressed(); },
 });
 
 /** 点击导航图标：拖拽结束后的 click 抑制切换（长按拖动 ≠ 点击） */
@@ -29,6 +30,78 @@ function onNavTabClick(key: TabKey) {
   if (navReorder.consumeDragged()) return;
   setActiveTab(key);
 }
+
+// ===== 导航下划线：单元素在 Tab 间移动 =====
+const navEl = ref<HTMLElement | null>(null);
+/** 下划线区间（相对 nav 左缘 px）；按下目标时取"当前 Tab ∪ 目标 Tab"的并集 */
+const underlineSpan = ref({ left: 0, right: 0 });
+/** nav 宽度：下划线两端用 left/right 定位，右端点需换算成距 nav 右缘的距离 */
+const navWidth = ref(0);
+/** 按下但尚未放开的目标 Tab：此期间下划线先拉伸过去（松开/切换完成后清空） */
+const pressedTab = ref<string | null>(null);
+/** 首次摆放不加过渡，避免启动时从 0 长度长出来 */
+const underlineReady = ref(false);
+
+/** 某 Tab 相对 nav 左缘的水平区间（用 rect 相减，不依赖 offsetParent 链） */
+function tabSpan(key: string): { left: number; right: number } | null {
+  const nav = navEl.value;
+  const btn = nav?.querySelector<HTMLElement>(`[data-reorder-key="${key}"]`);
+  if (!nav || !btn) return null;
+  const navRect = nav.getBoundingClientRect();
+  const rect = btn.getBoundingClientRect();
+  return { left: rect.left - navRect.left, right: rect.right - navRect.left };
+}
+
+/**
+ * 重算下划线区间。按下态取当前与目标 Tab 的并集——左右两端谁外扩由两者位置决定，
+ * 于是"远侧那条边钉住、朝向目标那条边伸出去"，方向感来自几何本身，
+ * 不需要切换 transform-origin（origin 不参与插值，中途换边会跳）。
+ */
+function syncUnderline() {
+  const nav = navEl.value;
+  if (!nav) return;
+  navWidth.value = nav.getBoundingClientRect().width;
+  const current = tabSpan(activeTab.value);
+  if (!current) return;
+  const target = pressedTab.value && pressedTab.value !== activeTab.value ? tabSpan(pressedTab.value) : null;
+  underlineSpan.value = target
+    ? { left: Math.min(current.left, target.left), right: Math.max(current.right, target.right) }
+    : current;
+}
+
+const underlineStyle = computed(() => {
+  const { left, right } = underlineSpan.value;
+  // 两端各自给值：left 直接是左端点，右端点换算成距 nav 右缘的距离
+  return { left: `${left}px`, right: `${navWidth.value - right}px` };
+});
+
+/** 按下（未放开）：先把下划线朝目标拉伸过去——并集区间，远侧边钉住 */
+function onTabPressStart(key: string) {
+  if (key === activeTab.value) return;
+  pressedTab.value = key;
+  syncUnderline();
+}
+
+/** 结束预运动：收缩回当前 Tab（切换成功时由 activeTab watch 接管，这里是同义重算） */
+function clearPressed() {
+  if (!pressedTab.value) return;
+  pressedTab.value = null;
+  syncUnderline();
+}
+
+/** 松开鼠标：延后一帧再清，避免抢在 click 之前把下划线弹回旧 Tab */
+function onWindowPointerUp() {
+  requestAnimationFrame(clearPressed);
+}
+
+/** 切换 Tab（含 Ctrl+←/→、鼠标侧键等非点击路径）：收缩落位到新 Tab */
+watch(activeTab, () => {
+  pressedTab.value = null;
+  nextTick(() => syncUnderline());
+});
+
+/** 图标增删/拖动排序后位置全变，需重新丈量 */
+watch(visibleTabs, () => nextTick(() => syncUnderline()));
 
 // 窗口控制仅在 Tauri 桌面容器内可用；纯 Web 预览无窗口，按钮不显示
 async function minimize() {
@@ -84,11 +157,19 @@ onMounted(async () => {
   if (isTauri()) {
     unlistenResized = await getCurrentWindow().onResized(() => updateMaximized());
   }
+  // 下划线首次摆放：此刻各 Tab 的尺寸已可量；窗口缩放不需要重算——
+  // 区间是相对 nav 左缘取的，整条导航一起移动时相对位置不变
+  syncUnderline();
+  requestAnimationFrame(() => { underlineReady.value = true; });
+  window.addEventListener('pointerup', onWindowPointerUp);
+  window.addEventListener('pointercancel', onWindowPointerUp);
 });
 
 onBeforeUnmount(() => {
   unlistenResized?.();
   unlistenResized = null;
+  window.removeEventListener('pointerup', onWindowPointerUp);
+  window.removeEventListener('pointercancel', onWindowPointerUp);
 });
 </script>
 
@@ -103,19 +184,19 @@ onBeforeUnmount(() => {
 
     <!-- 中部：顶层导航（窗口之上）；左键长按 0.5s 可拖动图标调整顺序，松开自动持久化。
          no-drag 豁免 drag-region；图标 pointerdown 内 preventDefault 双保险阻止窗口拖拽启动 -->
-    <nav class="no-drag flex items-center gap-2" data-nav-bar>
+    <nav ref="navEl" class="no-drag relative flex items-center gap-2" data-nav-bar>
       <TransitionGroup name="reorder-nav" tag="div" class="flex items-center gap-2">
         <button
             v-for="tab in visibleTabs"
             :key="tab.key"
             v-tip="t('titlebar.' + tab.key)"
             :data-reorder-key="tab.key"
-            class="nav-tab gold-underline flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-all duration-300 ease-soft"
+            class="nav-tab flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-all duration-300 ease-soft"
             :class="[
               activeTab === tab.key ? 'is-active text-gold' : 'text-ink-soft hover:text-ink',
               draggingTabKey === tab.key ? 'relative z-10 scale-110 opacity-60 cursor-grabbing shadow-float' : ''
             ]"
-            @pointerdown="navReorder.pressStart(tab.key, $event)"
+            @pointerdown="navReorder.pressStart(tab.key, $event); onTabPressStart(tab.key)"
             @click="onNavTabClick(tab.key)"
         >
         <!-- 图标：通用动效组件，按 tab.key 从 assets/svg/nav/ 取分层 SVG。
@@ -127,6 +208,13 @@ onBeforeUnmount(() => {
         />
         </button>
       </TransitionGroup>
+      <!-- 单元素下划线：位置/长度由脚本按 Tab 实际几何写入（见 syncUnderline） -->
+      <div
+        class="nav-underline"
+        :class="{ 'is-instant': !underlineReady, 'is-pressing': pressedTab !== null }"
+        :style="underlineStyle"
+        aria-hidden="true"
+      ></div>
     </nav>
 
     <!-- 右侧：快速切换配色（跟随系统→琥珀→浅色→深色循环）+ 窗口控制按钮 -->
