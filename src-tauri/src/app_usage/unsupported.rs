@@ -8,6 +8,9 @@ None
 pub fn foreground_name(_app: &tauri::AppHandle) -> Option<String> {
 None
 }
+pub fn icon_of_app(_name: &str) -> Option<String> {
+None
+}
 pub fn idle_secs() -> u64 {
 0
 }

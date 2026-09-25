@@ -13,6 +13,7 @@ import {
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {isTauri} from "~/utils/env";
 import clipboardService from "~/src/db/dbService";
+import statsService from "~/src/statistics/statsService";
 import { writeText } from 'tauri-plugin-clipboard-api';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -39,6 +40,29 @@ import AppUsagePage from "~/components/appusage/AppUsagePage.vue";
 const listElement = ref<HTMLElement | null>(null);
 /** 是否开启悬停提示窗口（tooltip），受设置页「提示窗口」开关控制 */
 const { tooltipEnabled } = useTooltipEnabled();
+
+/** 来源应用图标缓存（app_name → app_icons 表的 PNG data URL / 按名实时提取）。
+ *  列表数据变化时增量查询新出现的应用名；提取失败的（应用未在运行等）负缓存 5 分钟，
+ *  到期随下次列表刷新重试（应用可能已启动），避免每次刷新重复进程枚举。 */
+const sourceIcons = ref<Map<string, string>>(new Map());
+const sourceIconFailAt = new Map<string, number>();
+const SOURCE_ICON_RETRY_MS = 5 * 60_000;
+watch(data, (items) => {
+  const now = Date.now();
+  const names = [...new Set(items.map(i => i.source_app).filter((s): s is string => !!s
+    && !sourceIcons.value.has(s)
+    && (sourceIconFailAt.get(s) ?? 0) + SOURCE_ICON_RETRY_MS < now))];
+  if (names.length === 0) return;
+  void statsService.fetchAppIcons(names).then((got) => {
+    const next = new Map(sourceIcons.value);
+    for (const n of names) {
+      const icon = got.get(n);
+      if (icon) next.set(n, icon);
+      else sourceIconFailAt.set(n, Date.now());
+    }
+    sourceIcons.value = next;
+  });
+});
 const { t } = useI18n();
 const formatDateLocalized = useFormatDate();
 const searchInput = ref<HTMLElement | null>(null);
@@ -1067,6 +1091,14 @@ async function openImageViewer(item: ClipboardData) {
                     </div>
                     <!-- 基础信息固定显示在容器最后一行；收藏项前置金色徽标 -->
                     <div class="mt-1 flex flex-wrap items-center gap-x-2 shrink-0 text-xs uppercase font-semibold text-ink-soft">
+                      <!-- 来源应用：真实程序图标（app_icons 采样库；未命中时 Rust 按名提取运行中进程
+                           的图标并写回缓存，与前台采样同一链路）。悬浮显示程序名气泡（v-tip）；
+                           提取失败（应用未运行/平台不支持）回退显示程序名文本，不显示占位图形。
+                           信息行不在 tooltip 窗口触发区内，悬浮图标只出名称气泡、不弹详情窗 -->
+                      <img v-if="item.source_app && sourceIcons.get(item.source_app)"
+                           :src="sourceIcons.get(item.source_app)" :alt="item.source_app"
+                           class="h-3.5 w-3.5 rounded-[4px] opacity-80" v-tip="item.source_app">
+                      <span v-else-if="item.source_app" class="opacity-60">{{ t('clip.source_app') }} {{ item.source_app }}</span>
                       <span
                         v-if="item.is_favorite === 1"
                         class="inline-flex items-center gap-1 rounded-full bg-gold/15 px-1.5 py-px text-gold"
@@ -1078,7 +1110,6 @@ async function openImageViewer(item: ClipboardData) {
                       </span>
                       <span class="opacity-60">{{ t(item.type === 'image' ? 'common.image' : 'common.text') }}
                       {{ t('clip.created_at') }}{{ formatDateLocalized(parseInt(item.created_at)) }}</span>
-                      <span v-if="item.source_app" class="opacity-60">{{ t('clip.source_app') }} {{ item.source_app }}</span>
                       <span class="opacity-60">{{ t('clip.use_count') }}{{ item.count }}</span>
                       <span class="opacity-60">{{ t('clip.last_used_at') }}{{ formatDateLocalized(parseInt(item.updated_at)) }}</span>
                     </div>

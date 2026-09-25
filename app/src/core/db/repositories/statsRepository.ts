@@ -22,6 +22,8 @@ export interface StatsRepository {
     fetchDailySeries(from: string, to: string, fields: string[], downsample: boolean): Promise<any[]>;
     /** 区间内按应用聚合的使用时长（总时长降序；含图标） */
     fetchAppUsageRange(from: string, to: string): Promise<{ app_name: string; total: number; active: number; icon: string | null }[]>;
+    /** 按应用名批量查图标（app_icons 表；未跟踪过的应用无记录不出现在结果中） */
+    fetchAppIconsByNames(names: string[]): Promise<{ app_name: string; icon: string }[]>;
     /** 最常复制的文本项原始行（趣味数据"复制之王"） */
     fetchTopClipboardRow(): Promise<any[]>;
     /** 区间内活跃天数（有统计记录的天数） */
@@ -63,6 +65,16 @@ export function createStatsRepository({ conn }: { conn: DatabaseConnection }): S
                 `INSERT INTO app_icons (app_name, icon) VALUES ($1, $2)
                  ON CONFLICT(app_name) DO UPDATE SET icon = excluded.icon`,
                 [app, icon],
+            );
+        },
+
+        async fetchAppIconsByNames(names: string[]): Promise<{ app_name: string; icon: string }[]> {
+            if (names.length === 0) return [];
+            const db = await conn.ready();
+            const placeholders = names.map((_, i) => `$${i + 1}`).join(', ');
+            return await db.select<{ app_name: string; icon: string }[]>(
+                `SELECT app_name, icon FROM app_icons WHERE app_name IN (${placeholders})`,
+                names,
             );
         },
 

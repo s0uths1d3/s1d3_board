@@ -6,10 +6,13 @@ use super::{state, AppUsageState, Sample};
 use base64::Engine;
 use std::io::Cursor;
 use std::sync::OnceLock;
-use windows_sys::Win32::Foundation::{CloseHandle, HWND};
+use windows_sys::Win32::Foundation::{CloseHandle, HWND, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Graphics::Gdi::{
 CreateCompatibleDC, GetDC, GetDIBits, GetObjectW, ReleaseDC, DeleteDC, DeleteObject,
 BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
+};
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::System::Threading::{
@@ -74,21 +77,12 @@ fn sample_of_hwnd(hwnd: HWND) -> Option<Sample> {
 unsafe {
     let mut pid: u32 = 0;
     GetWindowThreadProcessId(hwnd, &mut pid);
-    if pid == 0 {
-        return Some(Sample { name: "system".to_string(), icon: None });
-    }
-    let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-    if handle.is_null() {
-        return Some(Sample { name: "system".to_string(), icon: None });
-    }
-    let mut buf = [0u16; 1024];
-    let mut len = buf.len() as u32;
-    let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len);
-    CloseHandle(handle);
-    if ok == 0 || len == 0 {
-        return Some(Sample { name: "system".to_string(), icon: None });
-    }
-    let path = String::from_utf16_lossy(&buf[..len as usize]);
+    let path = exe_full_path(pid);
+    let path = match path {
+        Some(p) => p,
+        // 取不到进程路径（系统进程/已退出）归入 "system" 桶，不丢时长
+        None => return Some(Sample { name: "system".to_string(), icon: None }),
+    };
     let name = path.rsplit(['\\', '/']).next().unwrap_or(&path);
     let name = name.strip_suffix(".exe").unwrap_or(name).to_lowercase();
     let name = if name.is_empty() { "system".to_string() } else { name };
@@ -99,6 +93,62 @@ unsafe {
         icon_data_url_of_path(&path)
     };
     Some(Sample { name, icon })
+}
+}
+/// pid → 进程可执行文件全路径（QueryFullProcessImageNameW；pid 无效/打开失败/查询失败返回 None）
+fn exe_full_path(pid: u32) -> Option<String> {
+if pid == 0 {
+    return None;
+}
+unsafe {
+    let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+    if handle.is_null() {
+        return None;
+    }
+    let mut buf = [0u16; 1024];
+    let mut len = buf.len() as u32;
+    let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len);
+    CloseHandle(handle);
+    if ok == 0 || len == 0 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&buf[..len as usize]))
+}
+}
+/// 按进程名（source_app 命名：exe 去后缀小写）提取运行中应用的真实图标：
+/// 枚举系统进程找同名进程 → exe 全路径 → SHGetFileInfo 提取。
+/// 应用未在运行或提取失败返回 None（与前台采样同一图标链路，结果一致）。
+pub fn icon_of_app(name: &str) -> Option<String> {
+unsafe {
+    let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if snap == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    let want = name.to_lowercase();
+    let mut found: Option<String> = None;
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..std::mem::zeroed()
+    };
+    if Process32FirstW(snap, &mut entry) != 0 {
+        loop {
+            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+            let exe = String::from_utf16_lossy(&entry.szExeFile[..len]);
+            // 与前台采样命名对齐：szExeFile 是带 .exe 的文件名，去掉后缀再比
+            let exe_name = exe.strip_suffix(".exe").unwrap_or(&exe).to_lowercase();
+            if exe_name == want {
+                if let Some(path) = exe_full_path(entry.th32ProcessID) {
+                    found = icon_data_url_of_path(&path);
+                    break;
+                }
+            }
+            if Process32NextW(snap, &mut entry) == 0 {
+                break;
+            }
+        }
+    }
+    CloseHandle(snap);
+    found
 }
 }
 /// exe 路径 → 图标 PNG data URL（SHGetFileInfo 取大图标 → GetDIBits 转 RGBA → PNG）

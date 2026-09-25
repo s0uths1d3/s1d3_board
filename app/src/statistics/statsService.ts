@@ -332,6 +332,37 @@ await this.ensureDbInitialized();
   return [...out.values()].sort((a, b) => b.total - a.total);
 }
 
+/** 按应用名批量查图标（app_icons 表的 PNG data URL；查询失败返回空 Map 不阻塞调用方）。
+ *  缓存未命中的应用：实时 invoke 按名提取运行中进程的真实图标（与前台采样同一链路），
+ *  提取成功后写回 app_icons 表（下次直接命中）；应用未运行/平台不支持则无记录。 */
+public async fetchAppIcons(names: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const uniq = [...new Set(names.filter(n => !!n))];
+  if (uniq.length === 0) return out;
+  let missing: string[] = [];
+  try {
+    await this.ensureDbInitialized();
+    const rows = await this.repo.fetchAppIconsByNames(uniq);
+    for (const r of rows ?? []) out.set(r.app_name, r.icon);
+    missing = uniq.filter(n => !out.has(n));
+  } catch (e) {
+    console.error('[stats] app_icons 查询失败:', e);
+    missing = uniq;
+  }
+  if (missing.length > 0 && isTauri()) {
+    await Promise.all(missing.map(async (name) => {
+      try {
+        const icon = await invoke<string | null>('app_icon_by_name', { name });
+        if (icon) {
+          out.set(name, icon);
+          await this.repo.upsertAppIcon(name, icon);
+        }
+      } catch { /* 提取失败：该应用无图标，调用方回退展示 */ }
+    }));
+  }
+  return out;
+}
+
   /** 把 pending 中落在 [from, to] 区间内的增量合并到聚合结果（§14.7，纯内存加法） */
   private mergePending(target: Record<string, number>, from?: string, to?: string): void {
     for (const [date, acc] of this.pending) {

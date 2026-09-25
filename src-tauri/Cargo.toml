@@ -73,6 +73,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_DataExchange",
     "Win32_System_Memory",
+    "Win32_System_Diagnostics_ToolHelp",
 ] }
 
 # 应用使用时长：macOS 前台应用名/图标与切换通知（AppKit）

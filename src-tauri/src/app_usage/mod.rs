@@ -244,6 +244,18 @@ pub fn foreground_app_name(
     source.0.foreground_name(&app)
 }
 
+/// 按应用名提取运行中应用的真实图标（PNG data URL）：供剪贴板来源图标（clip.source_app
+/// 无 app_icons 缓存时实时补取）等按名查询场景。与前台采样同一图标链路。
+/// 应用未在运行 / 平台不支持 / 提取失败返回 None（前端回退展示）。
+#[tauri::command]
+pub fn app_icon_by_name(name: String) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    platform::icon_of_app(trimmed)
+}
+
 // ===================== trait 实现（lib.rs 装配注入） =====================
 
 /// traits::ForegroundSource 的平台实现：委托当前编译目标的 platform 模块前台采样。

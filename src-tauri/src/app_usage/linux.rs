@@ -113,6 +113,10 @@ active_window_sample(&conn, root, net_active_atom, net_wm_pid_atom)
 pub fn foreground_name(app: &tauri::AppHandle) -> Option<String> {
 foreground_sample(app).map(|s| s.name)
 }
+/// 按应用名查图标：复用 desktop 入口 / hicolor 主题查找（与采样同一链路，按名直接查询）
+pub fn icon_of_app(name: &str) -> Option<String> {
+linux_icon::icon_data_url_of_app(name)
+}
 pub fn idle_secs() -> u64 {
 // XScreenSaver 扩展：ms_since_user_input 为距上次输入的毫秒数；
 // 扩展不可用（Wayland 等）时按 0 处理（全算活跃）

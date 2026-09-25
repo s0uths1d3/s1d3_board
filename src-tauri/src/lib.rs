@@ -76,6 +76,7 @@ pub fn run() {
             app_usage::set_app_usage_enabled,
             app_usage::pull_app_usage,
             app_usage::foreground_app_name,
+            app_usage::app_icon_by_name,
             clipboard::thumb::clipboard_image_thumb,
             clipboard::thumb::clipboard_capture_image,
             clipboard::thumb::clipboard_qr_from_data_url,

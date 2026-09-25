@@ -63,6 +63,11 @@ unsafe {
     app.localizedName().map(|n| n.to_string())
 }
 }
+/// 按应用名查图标：macOS 暂不支持（localizedName 与进程名不一致，按名反查
+/// 需要 LSCopyApplicationURLsForBundleIdentifier 等额外链路），返回 None 由前端回退展示
+pub fn icon_of_app(_name: &str) -> Option<String> {
+None
+}
 pub fn idle_secs() -> u64 {
 // CoreGraphics 手动绑定：kCGEventSourceStateHIDSystemState = 1，kCGAnyInputEventType = u64::MAX
 unsafe { CGEventSourceSecondsSinceLastEventType(1, u64::MAX) as u64 }
