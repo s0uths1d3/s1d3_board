@@ -9,6 +9,7 @@ import {
 import {
   data, filter, dataLength, hasMore, loadingMore,
   fetchData, getSelectedItem, moveSelection, loadMoreClips, resetClips,
+  restoreAdvancedSearch, setAdvancedSearch,
 } from '~/src/commands/local/clipboardStore';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {isTauri} from "~/utils/env";
@@ -99,7 +100,7 @@ watch(() => filter.value.searchContent, () => {
   if (searchResetTimer) clearTimeout(searchResetTimer);
   searchResetTimer = setTimeout(() => void resetClips(), 300);
 });
-watch(() => [filter.value.favorite, filter.value.type], () => {
+watch(() => [filter.value.favorite, filter.value.type, filter.value.advanced], () => {
   void resetClips();
 });
 
@@ -464,6 +465,11 @@ function handleTypeFilter() {
   filter.value.type = filter.value.type === 'image' ? 'all' : 'image'
 }
 
+/** 切换高级搜索（空格拆词 + 引号整句 ⇄ 整串字面匹配），开关状态持久化到 settings */
+function handleAdvancedSearch() {
+  void setAdvancedSearch(!filter.value.advanced);
+}
+
 /** 鼠标侧键导航：后退键(XButton1, button=3)=上一个标签，前进键(XButton2, button=4)=下一个标签。
  *  复用 SwitchTabCommand 的循环切换（与 Ctrl+←/→ 一致，统计页未解锁自动跳过）。
  *  mousedown 阶段即响应（跟手）并 preventDefault，阻止 WebView2 把侧键当浏览器历史导航；
@@ -484,6 +490,8 @@ onMounted(async () => {
   // 剪贴板列表更新改为事件驱动：dbService 剪贴板监听写库成功后派发
   // clipboard:changed，这里去抖后立即刷新（不再每秒轮询；Web 端无该事件无影响）
   bus.on('clipboard:changed', onClipboardChanged);
+  // 恢复高级搜索开关（上次使用状态；DB 未就绪等失败保持默认开启）
+  void restoreAdvancedSearch();
   if (searchInput.value) {
     searchInput.value.focus();
   }
@@ -1005,6 +1013,19 @@ async function openImageViewer(item: ClipboardData) {
                   <button
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
+                      :class="filter.advanced ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+                      v-tip="t(filter.advanced ? 'clip.advanced_off' : 'clip.advanced_on')"
+                      @click="handleAdvancedSearch"
+                  >
+                    <!-- 高级搜索：空格拆词 AND + 引号整句；关闭后整串按字面匹配 -->
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
+                      <path d="M19 15l.9 2.4L22 18l-2.1.6L19 21l-.9-2.4L16 18l2.1-.6L19 15z" />
+                    </svg>
+                  </button>
+                  <button
+                      type="button"
+                      class="btn-soft btn-circle p-0 ml-1"
                       v-tip="t('clip.clear_search')"
                       @click="highlightContent = ''"
                   >
@@ -1084,7 +1105,7 @@ async function openImageViewer(item: ClipboardData) {
                       >
                         <HighlightText
                           :text="getFirstTwoLines(item.content)"
-                          :highlightString="highlightContent"
+                          :highlightString="highlightContent" :advanced="filter.advanced"
                           :active="searchHighlightEnabled"
                         />
                       </span>
@@ -1099,6 +1120,25 @@ async function openImageViewer(item: ClipboardData) {
                            :src="sourceIcons.get(item.source_app)" :alt="item.source_app"
                            class="h-3.5 w-3.5 rounded-[4px] opacity-80" v-tip="item.source_app">
                       <span v-else-if="item.source_app" class="opacity-60">{{ t('clip.source_app') }} {{ item.source_app }}</span>
+                      <!-- 搜索中的图片条目：显示二维码识别结果并高亮命中词
+                          （图片本体无文本，搜索命中必经 qr_text；展示片段让"为什么搜到这张图"可感知） -->
+                      <span
+                        v-if="item.type === 'image' && item.qr_text && highlightContent"
+                        class="inline-flex max-w-[16em] items-center gap-1 rounded-full bg-surface-field px-1.5 py-px normal-case"
+                        v-tip="t('clip.qr_content')"
+                      >
+                        <svg class="h-3 w-3 shrink-0 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" />
+                          <path d="M14 14h3v3h-3z" /><path d="M21 14v.01" /><path d="M14 21v.01" /><path d="M21 21v.01" />
+                        </svg>
+                        <span class="truncate">
+                          <HighlightText
+                            :text="item.qr_text"
+                            :highlightString="highlightContent" :advanced="filter.advanced"
+                            :active="searchHighlightEnabled"
+                          />
+                        </span>
+                      </span>
                       <span
                         v-if="item.is_favorite === 1"
                         class="inline-flex items-center gap-1 rounded-full bg-gold/15 px-1.5 py-px text-gold"

@@ -3,7 +3,7 @@ import type { DatabaseConnection } from '../connection';
 import type { ClipboardData } from '../../../entities';
 import { bus } from '../../events';
 import { resolveImageRows, deleteImageFileByRef, invalidateImageCache } from '../imageRef';
-import { escapeLike, withPage, type PageQuery } from '../sql';
+import { escapeLike, withPage, parseSearchTokens, likePatternFromToken, type PageQuery } from '../sql';
 import type { RecordStats } from './noteRepository';
 
 /** 剪贴板默认保留上限：设置项 max_save_count 未设置/无效时生效（防 DB 无限膨胀） */
@@ -341,6 +341,13 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
             const content: string = filter.value.searchContent;
             const type: string = filter.value.type ?? 'all';
 
+            // 搜索关键词：高级搜索开启时空白拆分多词 AND、双引号短语为整句词元、`*` 为任意串通配符；
+            // 关闭时整串按字面单词元（advanced 缺省视为开启，兼容旧调用）
+            const advanced = filter.value.advanced !== false;
+            const keywords = parseSearchTokens(content, advanced);
+            // 词元 → LIKE 模式：高级搜索下 `*` 映射通配符 %，其余字面；关闭高级搜索则全字面
+            const patterns = keywords.map(kw => `%${advanced ? likePatternFromToken(kw) : escapeLike(kw)}%`);
+
             // 统一收集 WHERE 条件，按 $1/$2… 顺序编号参数
             const conds: string[] = [];
             const params: any[] = [];
@@ -353,16 +360,32 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
             }
 
             if (type === 'image') {
-                // 仅图片：图片无文本内容，忽略搜索关键字
+                // 仅图片：图片本体无文本内容，按二维码识别结果检索（未识别/无码 qr_text 为 NULL/''）
                 conds.push("type = 'image'");
+                for (const pattern of patterns) {
+                    paramIdx += 1;
+                    conds.push(`qr_text LIKE $${paramIdx} ESCAPE '\\'`);
+                    params.push(pattern);
+                }
             } else if (type === 'text') {
+                // 仅文本：按内容逐词匹配
                 conds.push("type = 'text'");
-            } else if (content) {
-                // 默认（全部）：图片不参与文本搜索，仅在文本中匹配；
-                // 搜索词转义 % _ \，保证按字面匹配
-                paramIdx += 1;
-                conds.push(`content LIKE $${paramIdx} ESCAPE '\\' AND type = 'text'`);
-                params.push(`%${escapeLike(content)}%`);
+                for (const pattern of patterns) {
+                    paramIdx += 1;
+                    conds.push(`content LIKE $${paramIdx} ESCAPE '\\'`);
+                    params.push(pattern);
+                }
+            } else {
+                // 默认（全部）：文本条目按内容匹配、图片条目按二维码识别结果匹配，
+                // 每个词命中任一即可；搜索词转义 % _ \，保证按字面匹配
+                for (const pattern of patterns) {
+                    paramIdx += 1;
+                    const pContent = paramIdx;
+                    paramIdx += 1;
+                    const pQr = paramIdx;
+                    conds.push(`((type = 'text' AND content LIKE $${pContent} ESCAPE '\\') OR qr_text LIKE $${pQr} ESCAPE '\\')`);
+                    params.push(pattern, pattern);
+                }
             }
 
             const whereSql = conds.length ? `WHERE ${conds.join(' AND ')}` : 'WHERE 1=1';

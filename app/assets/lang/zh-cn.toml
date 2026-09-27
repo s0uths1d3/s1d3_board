@@ -30,7 +30,7 @@ maximize = "最大化"
 restore = "还原"
 
 [clip]
-search_placeholder = "输入以搜索 · ↑/↓ 选择 · Enter 粘贴"
+search_placeholder = "输入以搜索 · 引号包整句 · ↑/↓ 选择 · Enter 粘贴"
 clear_search = "清空搜索"
 favorite_only = "仅看收藏"
 favorite_on = "仅显示收藏"
@@ -84,6 +84,9 @@ last_used_at = "最后使用:"
 copy_qr = "复制二维码内容"
 qr_copied = "二维码内容已复制"
 qr_copy_failed = "复制二维码内容失败"
+qr_content = "二维码内容"
+advanced_on = "开启高级搜索：空格拆词 · 引号包整句"
+advanced_off = "高级搜索已开启（点击关闭，整串按字面匹配）"
 
 [note]
 title = "便签"

@@ -30,7 +30,7 @@ maximize = "Maximize"
 restore = "Restore"
 
 [clip]
-search_placeholder = "Search · ↑/↓ select · Enter paste"
+search_placeholder = "Search · quotes for exact phrase · ↑/↓ select · Enter paste"
 clear_search = "Clear search"
 favorite_only = "Favorites only"
 favorite_on = "Favorites only"
@@ -82,6 +82,9 @@ source_app = "Source"
 use_count = "Used: "
 last_used_at = "Last used: "
 copy_qr = "Copy QR code content"
+qr_content = "QR code content"
+advanced_on = "Advanced search: split by spaces, quotes for exact phrase"
+advanced_off = "Advanced search on (click to turn off, literal phrase match)"
 qr_copied = "QR code content copied"
 qr_copy_failed = "Failed to copy QR code content"
 

@@ -32,12 +32,40 @@ export const hasMore = ref(true);
 /** 加载下一页进行中（sentinel 显示"加载中…"） */
 export const loadingMore = ref(false);
 
-/** 过滤条件：是否仅收藏 + 搜索关键字 + 类型筛选（all 全部 / image 仅图片） */
+/** 过滤条件：是否仅收藏 + 搜索关键字 + 类型筛选（all 全部 / image 仅图片）+ 高级搜索开关 */
 export const filter = ref({
   favorite: 0,
   searchContent: '',
   type: 'all' as 'all' | 'image',
+  // 高级搜索：true = 空格拆词 AND + 引号整句；false = 整串按字面单词元匹配
+  advanced: true,
 });
+
+/** 高级搜索开关持久化键（settings KV）：'1' 开 / '0' 关 */
+const ADVANCED_SEARCH_KEY = 'advanced_search';
+
+/** 用户已显式切换过开关：挂载恢复的晚到响应不得覆盖用户操作（防点击开启后被恢复结果关闭） */
+let advancedTouched = false;
+
+/** 恢复高级搜索开关（剪贴板页挂载时调用；读取失败保持默认开启） */
+export async function restoreAdvancedSearch(): Promise<void> {
+  try {
+    const raw = await clipboardService.getKeyValue(ADVANCED_SEARCH_KEY);
+    if (advancedTouched) return; // 恢复请求发起后用户已手动切换：本次结果作废
+    filter.value.advanced = raw !== '0';
+  } catch { /* DB 未就绪等异常：保持默认值 */ }
+}
+
+/** 设置高级搜索开关并持久化（状态即时生效驱动重查；持久化失败仅记日志） */
+export async function setAdvancedSearch(v: boolean): Promise<void> {
+  advancedTouched = true;
+  filter.value.advanced = v;
+  try {
+    await clipboardService.setKeyValue(ADVANCED_SEARCH_KEY, v ? '1' : '0');
+  } catch (e) {
+    console.error('保存高级搜索开关失败:', e);
+  }
+}
 
 /**
  * 上一次拉取结果的指纹（id:updated_at:count:is_favorite 拼接）。

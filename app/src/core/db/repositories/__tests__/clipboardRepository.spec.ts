@@ -90,15 +90,45 @@ describe('clipboardRepository', () => {
         expect(selects.at(-1)?.sql).toContain('LIMIT 100');
     });
 
-    it('fetchClipboardData：搜索词 LIKE 转义 % _ \\ 并仅匹配文本', async () => {
+    it('fetchClipboardData：搜索词 LIKE 转义 % _ \\，文本与图片二维码均可命中', async () => {
         const { db, selects } = stubDb();
         const conn = await connWith(db);
         const { repo } = makeRepo(conn);
 
         await repo.fetchClipboardData({ value: { favorite: 0, searchContent: 'a%b_c', type: 'all' } });
 
-        expect(selects.at(-1)?.sql).toContain("content LIKE $1 ESCAPE '\\' AND type = 'text'");
-        expect(selects.at(-1)?.params).toEqual(['%a\\%b\\_c%']);
+        expect(selects.at(-1)?.sql).toContain("((type = 'text' AND content LIKE $1 ESCAPE '\\') OR qr_text LIKE $2 ESCAPE '\\')");
+        expect(selects.at(-1)?.params).toEqual(['%a\\%b\\_c%', '%a\\%b\\_c%']);
+    });
+
+    it('fetchClipboardData：双引号短语为整句词元（内部空格不拆分）', async () => {
+        const { db, selects } = stubDb();
+        const conn = await connWith(db);
+        const { repo } = makeRepo(conn);
+
+        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '会议 "项目 周报"', type: 'text' } });
+
+        expect(selects.at(-1)?.params).toEqual(['%会议%', '%项目 周报%']);
+    });
+
+    it('fetchClipboardData：高级搜索关闭时整串按字面单词元（不分词、引号不生效）', async () => {
+        const { db, selects } = stubDb();
+        const conn = await connWith(db);
+        const { repo } = makeRepo(conn);
+
+        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '会议 "项目 周报"', type: 'text', advanced: false } });
+
+        expect(selects.at(-1)?.params).toEqual(['%会议 "项目 周报"%']);
+    });
+
+    it('fetchClipboardData：高级搜索下 * 映射为任意串通配符（*小曲 命中 空城计の小曲）', async () => {
+        const { db, selects } = stubDb();
+        const conn = await connWith(db);
+        const { repo } = makeRepo(conn);
+
+        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '*小曲', type: 'text' } });
+
+        expect(selects.at(-1)?.params).toEqual(['%%小曲%']);
     });
 
     it('increaseUseCountByContent：命中按 id 递增，未命中不写库', async () => {
