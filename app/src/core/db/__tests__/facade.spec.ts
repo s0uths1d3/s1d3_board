@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('~/src/statistics/statsService', () => ({
     default: {
         record: vi.fn(async () => {}),
+        revoke: vi.fn(async () => {}),
         clearAll: vi.fn(async () => {}),
         flush: vi.fn(async () => {}),
     },
@@ -21,7 +22,8 @@ const PUBLIC_METHODS = [
     'ensureDbInitialized', 'startClipboardListener', 'suppressUseCountBump',
     // 剪贴板
     'decodeQrText', 'fetchClipboardData', 'fetchClipboardSingleData', 'updateFavorite',
-    'increaseUseCount', 'increaseUseCountByContent', 'deleteClipboardData',
+    'increaseUseCount', 'increaseUseCountByContent', 'deleteClipboardData', 'purgeClipboardData',
+    'cleanupImageStorage', 'undoImageCleanup', 'finalizeImageCleanup',
     // 常用剪贴
     'fetchPinnedClips', 'fetchPinnedClip', 'insertPinnedClip', 'isPinnedContentExist',
     'updatePinnedClip', 'pinPinnedClip', 'deletePinnedClip',
@@ -41,8 +43,8 @@ const PUBLIC_METHODS = [
 ] as const;
 
 describe('dbService 门面兼容性', () => {
-    it('保留全部原公有方法（44 个）', () => {
-        expect(PUBLIC_METHODS).toHaveLength(44);
+    it('保留全部原公有方法（48 个）', () => {
+        expect(PUBLIC_METHODS).toHaveLength(48);
         for (const name of PUBLIC_METHODS) {
             expect(dbService, name).toHaveProperty(name);
             expect(typeof (dbService as unknown as Record<string, unknown>)[name], name).toBe('function');
