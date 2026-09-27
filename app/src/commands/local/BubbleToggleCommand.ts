@@ -700,6 +700,12 @@ async function openRing(): Promise<void> {
     await closeRing();
     return;
   }
+  // 本地无拆分增益（仅原文单段）且 AI 链路不可用（未配置/跳过/缓存无产出）：
+  // 环盘只剩一个原文气泡、无任何分析价值 → 不开启环盘（灵动岛已给出跳过原因提示）
+  if (ring.segments.length <= 1 && plan?.type !== 'ai') {
+    await closeRing();
+    return;
+  }
   void ensurePageBubbles(0); // 并行建窗：气泡 ready 握手即上屏（shown 门控），与 AI 等待重叠
   // 环盘立刻进入显示流程：此后控制盘失焦才触发整环自动退场。
   // 气泡各自握手后显示（错过广播有握手补发状态兜底），环心由收尾任务浮现
@@ -713,7 +719,13 @@ async function openRing(): Promise<void> {
   // ---- 阶段二：AI 分析完成 → 新增气泡立刻补上环 ----
   if (base.parseError) return; // 解析失败已弹错误岛：AI 链路大概率同源失败，直接跳过
   const extra = await runRingAnalysis(plan, ring.segments);
-  if (!ring || extra.length === 0) return;
+  if (!ring) return;
+  if (extra.length === 0) {
+    // AI 无产出（失败/无新增）：基础片段仅原文单段时环盘无分析价值 → 整环退场
+    // （灵动岛已给出失败原因）；本地多段拆分仍有效则保留环盘
+    if (ring.segments.length <= 1) await closeRing();
+    return;
+  }
   ring.segments = [...ring.segments, ...extra];
   void ensurePageBubbles(0); // 仅补建新增槽位（ensureBubble 内按槽位去重，已有窗口不动）
   await broadcastState(); // 控制盘计数刷新（总片段数变化）
