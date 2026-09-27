@@ -677,6 +677,8 @@ function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
   ctxMenuY.value = e.clientY;
   ctxMenuItems.value = [
     { label: t('clip.add_to_pinned'), action: () => addToPinned(item) },
+    // 永久抹除：条目 + 统计字符计数一起清（敏感内容防护闭环，danger 红字警示）
+    { label: t('clip.purge'), danger: true, action: () => requestPurge(item) },
   ];
   ctxMenuVisible.value = true;
   ctxMenuTarget = item;
@@ -746,10 +748,13 @@ const deleteConfirmVisible = ref(false);
 const deleteConfirmMessage = ref('');
 const deleteConfirmAnchor = ref<DOMRect | null>(null);
 const deleteConfirmTarget = ref<ClipboardData | null>(null);
+/** 确认框模式：delete=普通删除（统计保留），purge=永久抹除（数据 + 统计字符计数一起清） */
+const deleteConfirmMode = ref<'delete' | 'purge'>('delete');
 
 /** 点击删除按钮：弹出内联删除确认框（就近定位，不创建子窗口） */
 function handleDelete(target: ClipboardData, e?: MouseEvent) {
   if (!target) return;
+  deleteConfirmMode.value = 'delete';
   deleteConfirmTarget.value = target;
   deleteConfirmMessage.value = t(target.type === 'image' ? 'clip.delete_confirm_image' : 'clip.delete_confirm_text');
   const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null;
@@ -757,21 +762,38 @@ function handleDelete(target: ClipboardData, e?: MouseEvent) {
   deleteConfirmVisible.value = true;
 }
 
-/** 确认删除：执行删除并刷新列表 */
+/** 右键「永久抹除」：敏感内容防护闭环——条目与统计字符计数一起清，弹同款确认框 */
+function requestPurge(target: ClipboardData) {
+  if (!target) return;
+  deleteConfirmMode.value = 'purge';
+  deleteConfirmTarget.value = target;
+  deleteConfirmMessage.value = t(target.type === 'image' ? 'clip.purge_confirm_image' : 'clip.purge_confirm_text');
+  deleteConfirmAnchor.value = null;
+  deleteConfirmVisible.value = true;
+}
+
+/** 确认删除/抹除：执行并刷新列表 */
 async function confirmDelete() {
   const target = deleteConfirmTarget.value;
+  const mode = deleteConfirmMode.value;
   deleteConfirmVisible.value = false;
   deleteConfirmTarget.value = null;
   deleteConfirmAnchor.value = null;
   if (target) {
     try {
-      await clipboardService.deleteClipboardData(target.id);
-      await fetchData();
-      showPinnedHint(t('clip.deleted'));
+      if (mode === 'purge') {
+        await clipboardService.purgeClipboardData(target.id);
+        await fetchData();
+        showPinnedHint(t('clip.purged'));
+      } else {
+        await clipboardService.deleteClipboardData(target.id);
+        await fetchData();
+        showPinnedHint(t('clip.deleted'));
+      }
     } catch (e) {
       // 失败不再静默：此前确认框已关、无任何提示、列表也不刷新
       console.error('删除失败:', e);
-      showPinnedHint(t('clip.delete_failed'), 'error');
+      showPinnedHint(t(mode === 'purge' ? 'clip.purge_failed' : 'clip.delete_failed'), 'error');
     }
   }
   refocusList();
@@ -1194,6 +1216,14 @@ async function openImageViewer(item: ClipboardData) {
                   :anchor="deleteConfirmAnchor"
                   @confirm="confirmDelete"
                   @cancel="cancelDelete"
+              />
+              <!-- 批量删除确认：与单条删除同款内联组件（无锚点，居中弹出） -->
+              <DeleteConfirm
+                  :visible="batchDeleteConfirmVisible"
+                  :message="t('clip.batch_delete_confirm', { n: batchCount })"
+                  :anchor="null"
+                  @confirm="confirmBatchDelete"
+                  @cancel="batchDeleteConfirmVisible = false"
               />
             </div>
 

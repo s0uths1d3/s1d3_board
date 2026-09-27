@@ -48,6 +48,8 @@ export interface AppEventMap {
     'todo:delete-request': void;
     'delete-request': void;
     'focus-search': FocusSearchDetail;
+    /** 隐私模式（暂停记录）开关变化：托盘菜单重建勾选态（设置页/托盘任一入口切换后派发） */
+    'privacy-pause-changed': void;
 }
 
 export type AppEventName = keyof AppEventMap;

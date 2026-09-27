@@ -7,6 +7,7 @@ import {WebviewWindow} from '@tauri-apps/api/webviewWindow';
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import {isTauri} from "~/utils/env";
 import statsService from "~/src/statistics/statsService";
+import { ensurePrivacyLoaded, isPrivacyPaused, setPrivacyPaused } from "~/composables/usePrivacySettings";
 import {bus} from "~/src/core/events";
 import {closeTooltipWindows} from "~/composables/useTooltipEnabled";
 
@@ -32,6 +33,16 @@ async function createTrayMenu(): Promise<Menu> {
                         await new Promise(r => setTimeout(r, 50));
                         await main.setFocus();
                     }
+                }
+            },
+            {
+                id: 'privacy-pause',
+                text: '隐私模式（暂停记录）',
+                checked: isPrivacyPaused(),
+                action: async () => {
+                    // 托盘一键暂停记录：与设置页共用同一布尔设置；
+                    // 勾选态刷新由 setPrivacyPaused 派发的 privacy-pause-changed 事件驱动（统一入口）
+                    await setPrivacyPaused(!isPrivacyPaused());
                 }
             },
             {
@@ -83,9 +94,17 @@ export default defineNuxtPlugin(async (nuxtApp) => {
         return;
     }
 
+    // 隐私开关状态落定后再构建菜单（菜单项勾选态读取该状态；失败按默认关闭渲染）
+    await ensurePrivacyLoaded().catch(() => {});
+
     // 先挂监听再创建托盘：useColorScheme 的 watch immediate 可能在托盘创建完成前触发，
     // 事件不能丢（trayIconRef 未就绪时 rebuild 会跳过，创建完成后的主动重建会兜底）
     bus.on('resolved-scheme-changed', () => {
+        void rebuildTrayMenu();
+    });
+
+    // 隐私模式开关变化（设置页/托盘任一入口）→ 重建菜单同步勾选态
+    bus.on('privacy-pause-changed', () => {
         void rebuildTrayMenu();
     });
 

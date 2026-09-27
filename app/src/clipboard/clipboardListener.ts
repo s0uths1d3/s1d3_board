@@ -7,6 +7,11 @@ import { createSettingsRepository } from "../core/db/repositories/settingsReposi
 import { createClipboardRepository, type ClipboardRepository } from "../core/db/repositories/clipboardRepository";
 import { prewarmImageCache } from "../core/db/imageRef";
 import statsService from "../statistics/statsService";
+import {
+    ensurePrivacyLoaded, isPrivacyPaused,
+    ensureSensitiveFilterLoaded, isSensitiveFilterEnabled,
+} from "../../composables/usePrivacySettings";
+import { isSensitiveText } from "../privacy/sensitive";
 
 /**
  * 剪贴板监听管道（自 dbService.startClipboardListener 平移，逻辑不重写）：
@@ -24,6 +29,7 @@ const repo: ClipboardRepository = createClipboardRepository({
     conn: appConnection,
     getKeyValue: (key) => settings.getKeyValue(key),
     recordStats: (partial) => statsService.record(partial),
+    revokeStats: (date, partial) => statsService.revoke(date, partial),
 });
 
 /** 已注册的监听反挂函数（stop 时反挂；start 前为空） */
@@ -41,6 +47,10 @@ export function suppressUseCountBump(ms?: number): void {
 export async function startClipboardListener(): Promise<void> {
     await runDatabaseMigrations(appConnection);
 
+    // 隐私开关状态落定后再挂监听：回调内同步读取开关值才有意义
+    // （隐私模式 / 敏感防护；读取失败保持默认值，不阻断监听启动）
+    await Promise.all([ensurePrivacyLoaded(), ensureSensitiveFilterLoaded()]).catch(() => {});
+
     // 复制瞬间的来源应用：查询当前前台进程名（复制不切换焦点，监听回调触发时前台仍是复制方）。
     // 查询失败不阻断入库（来源留空，UI 不显示）。
     const queryForegroundApp = async (): Promise<string | null> => {
@@ -52,6 +62,10 @@ export async function startClipboardListener(): Promise<void> {
     // 文本更新
     unlisteners.push(await onTextUpdate(async (newText) => {
         try {
+            // 隐私模式：暂停一切记录（不落库 / 不弹岛 / 不解析）
+            if (isPrivacyPaused()) return;
+            // 敏感内容防护：命中卡号 / 验证码 / 密码形态的文本不落库（默认开启，设置页可关）
+            if (isSensitiveFilterEnabled() && isSensitiveText(newText)) return;
             await repo.saveClipboard(newText, 'text', await queryForegroundApp());
             // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
             bus.emit('clipboard:changed');
@@ -64,6 +78,8 @@ export async function startClipboardListener(): Promise<void> {
     // 改用 onSomethingUpdate 判定类型后主动 readImageBase64() 获取真实数据。
     unlisteners.push(await onSomethingUpdate(async (updated) => {
         if (!updated.image) return;
+        // 隐私模式：暂停一切记录（快速通道捕获也不做，应用对剪贴板「失明」）
+        if (isPrivacyPaused()) return;
         try {
             // ===== 快速通道（Windows）：单命令捕获 =====
             // 旧链路 readImageBase64（数 MB IPC）→ save_clipboard_image（数 MB 回传落盘）→

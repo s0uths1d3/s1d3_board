@@ -43,6 +43,7 @@ class DatabaseService {
             conn: appConnection,
             getKeyValue: (key) => this.settings.getKeyValue(key),
             recordStats: (partial) => statsService.record(partial),
+            revokeStats: (date, partial) => statsService.revoke(date, partial),
         });
         this.pinnedClip = createPinnedClipRepository({ conn: appConnection });
         this.todo = createTodoRepository({ conn: appConnection, recordStats: (partial) => statsService.record(partial) });
@@ -122,6 +123,12 @@ class DatabaseService {
     public async deleteClipboardData(id: number): Promise<void> {
         await this.ensureDbInitialized();
         return this.clipboard.deleteClipboardData(id);
+    }
+
+    /** 永久抹除：删除条目 + 联动原图文件 + 统计回冲（敏感内容防护闭环，见仓储同名方法） */
+    public async purgeClipboardData(id: number): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.clipboard.purgeClipboardData(id);
     }
 
     // ===== 常用剪贴（pinned_clip）=====

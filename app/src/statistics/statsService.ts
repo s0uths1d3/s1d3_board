@@ -165,6 +165,28 @@ class StatsService {
     }
   }
 
+  /**
+   * 永久抹除回冲：把已删除条目当初计入的统计量从 daily_stat 扣回。
+   * 先 flush 落库全部 pending——规避「先扣库、后 flush 把旧增量写回」的双写竞态
+   * （flush 的 UPSERT 是累加语义）；再对指定日期按列做 MAX(0, col - n) 扣减
+   * （不为负：历史统计口径可能已含其他来源的累加，扣到 0 止步）。
+   */
+  public async revoke(date: string, partial: Partial<Record<StatField, number>>): Promise<void> {
+    try {
+      await this.flush();
+      const cols = Object.keys(partial).filter(k => DEFAULT_RANGE_FIELDS.includes(k as StatField));
+      if (cols.length === 0) return;
+      const db = await this.getRawDb();
+      const sets = cols.map((c, i) => `${c} = MAX(0, ${c} - $${i + 2})`).join(', ');
+      await db.execute(
+        `UPDATE daily_stat SET ${sets} WHERE stat_date = $1`,
+        [date, ...cols.map(c => partial[c as StatField] ?? 0)],
+      );
+    } catch (e) {
+      console.error('[stats] revoke failed:', e);
+    }
+  }
+
   /** 2) 强制落库内存累加器（定时 flush / 退出前共用，§14.1 / §14.1.1），daily_stat 与 app_usage 一并落库 */
   public async flush(): Promise<void> {
     if (this.flushTimer != null) {

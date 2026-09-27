@@ -123,6 +123,8 @@ export interface ClipboardRepository {
     increaseUseCount(id: number): Promise<void>;
     increaseUseCountByContent(content: string): Promise<void>;
     deleteClipboardData(id: number): Promise<void>;
+    /** 永久抹除：删除条目 + 联动原图文件 + 统计回冲（文本条目按 created_at 当日扣回 clip_chars） */
+    purgeClipboardData(id: number): Promise<void>;
     /** 区间内按来源应用聚合的复制条数 Top N（统计页"来源应用"榜；startMs 含、endMs 不含） */
     fetchSourceAppTop(startMs: number, endMs: number, limit: number): Promise<{ app: string; cnt: number }[]>;
     /**
@@ -139,6 +141,8 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
     getKeyValue: (key: string) => Promise<string>;
     /** 统计埋点（fire-and-forget）——注入统计服务，仓储不直接依赖统计实现 */
     recordStats: RecordStats;
+    /** 统计回冲（永久抹除用，可缺省：测试桩未注入时跳过回冲） */
+    revokeStats?: (date: string, partial: Record<string, number>) => Promise<void>;
 }): ClipboardRepository {
     /** 本应用粘贴写入抑制窗口：窗口内 saveClipboard 的 ON CONFLICT 不递增 count
      *  （粘贴流程已由命令层显式 increaseUseCount，剪贴板监听再 bump 会双计） */
@@ -460,6 +464,26 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
             ) as { type: string; content: string }[];
             await db.execute("DELETE FROM clipboard WHERE id = $1", [id]);
             if (rows[0]?.type === 'image') deleteImageFileByRef(rows[0].content);
+        },
+
+        /**
+         * 永久抹除（区别于普通删除）：敏感内容防护的闭环——条目本体删除之外，
+         * 还要清掉统计痕迹：文本条目把当初计入的 clip_chars 从 created_at 当日扣回
+         * （普通删除不影响统计，永久抹除=数据+统计一起消失）。
+         * 图片条目照常联动删除原图文件（clip_image 计数不回冲，仅字符计数参与抹除）。
+         */
+        async purgeClipboardData(id: number): Promise<void> {
+            const db = await conn.ready();
+            const rows = await db.select(
+                "SELECT type, content, created_at FROM clipboard WHERE id = $1", [id]
+            ) as { type: string; content: string; created_at: number }[];
+            const row = rows[0];
+            if (!row) return;
+            await db.execute("DELETE FROM clipboard WHERE id = $1", [id]);
+            if (row.type === 'image') deleteImageFileByRef(row.content);
+            if (row.type === 'text' && typeof row.content === 'string' && row.content.length > 0) {
+                await revokeStats?.(toDateString(new Date(row.created_at)), { clip_chars: row.content.length });
+            }
         },
 
         async fetchSourceAppTop(startMs: number, endMs: number, limit: number): Promise<{ app: string; cnt: number }[]> {

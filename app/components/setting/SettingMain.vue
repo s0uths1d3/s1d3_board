@@ -36,6 +36,10 @@ import { useI18n, setLocaleMode, LOCALES, type LocaleMode } from '~/composables/
 import { briefAiError, parseAiError } from '~/utils/aiError';
 import { useTodoSmartRemind, setTodoSmartRemindEnabled } from '~/composables/useTodoSmartRemind';
 import { useTodoSystemNotify, setTodoSystemNotifyEnabled } from '~/composables/useTodoSystemNotify';
+import {
+    usePrivacyPause, setPrivacyPaused,
+    useSensitiveFilter, setSensitiveFilterEnabled,
+} from '~/composables/usePrivacySettings';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
 import { appUsageEnabled, setAppUsageEnabled } from '~/composables/useAppUsage';
 import { navRows, reorderTab, persistNavConfig, setTabEnabled } from '~/composables/useTabs';
@@ -178,6 +182,20 @@ async function onAppUsageToggle(val: boolean) {
   } catch {
     showHint(t('setting.general.app_usage_failed'), 'error');
   }
+}
+
+/** 隐私模式（暂停记录）开关：开启后监听管道不处理任何剪贴板更新（托盘菜单同款开关，共用状态源） */
+const { privacyPaused } = usePrivacyPause();
+async function onPrivacyPauseToggle(val: boolean) {
+  await setPrivacyPaused(val);
+  showHint(val ? t('setting.general.privacy_pause_on') : t('setting.general.privacy_pause_off'));
+}
+
+/** 敏感内容防护开关：命中卡号/验证码/密码形态的文本不落库（检测规则见 src/privacy/sensitive.ts） */
+const { sensitiveFilterEnabled } = useSensitiveFilter();
+async function onSensitiveFilterToggle(val: boolean) {
+  await setSensitiveFilterEnabled(val);
+  showHint(val ? t('setting.general.sensitive_on') : t('setting.general.sensitive_off'));
 }
 watch(searchHighlightEnabled, async (val) => {
   await dbService.setKeyValue('search_highlight_enabled', val ? '1' : '0');
@@ -1015,6 +1033,16 @@ const settings: SettingGroup[] = [
       },
       {
         label: 'setting.general.todo_system_notify',
+        value: '',
+        type: 'checkbox'
+      },
+      {
+        label: 'setting.general.privacy_pause',
+        value: '',
+        type: 'checkbox'
+      },
+      {
+        label: 'setting.general.sensitive_filter',
         value: '',
         type: 'checkbox'
       },
@@ -2071,6 +2099,22 @@ onMounted(async () => {
                       :tip-on="t('setting.general.todo_notify_tip_on')" :tip-off="t('setting.general.todo_notify_tip_off')"
                       :label="t('setting.general.todo_system_notify')"
                       @change="onTodoSystemNotifyToggle"
+                  />
+                  <!-- 隐私模式：一键暂停剪贴板记录（托盘菜单同款开关；开启后复制内容不入库不弹岛） -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.privacy_pause'"
+                      :model-value="privacyPaused"
+                      :tip-on="t('setting.general.privacy_pause_tip_on')" :tip-off="t('setting.general.privacy_pause_tip_off')"
+                      :label="t('setting.general.privacy_pause')"
+                      @change="onPrivacyPauseToggle"
+                  />
+                  <!-- 敏感内容防护：命中卡号/验证码/密码形态的文本不落库 -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.sensitive_filter'"
+                      :model-value="sensitiveFilterEnabled"
+                      :tip-on="t('setting.general.sensitive_tip_on')" :tip-off="t('setting.general.sensitive_tip_off')"
+                      :label="t('setting.general.sensitive_filter')"
+                      @change="onSensitiveFilterToggle"
                   />
                   <!-- 应用使用时长记录：默认关闭（隐私），开启后 Rust 侧监听前台应用并按天累计 -->
                   <UiToggleSwitch
