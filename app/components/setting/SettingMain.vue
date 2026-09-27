@@ -15,6 +15,9 @@ import { getOsTypeFromNavigator } from "~/utils/systemOS";
 import dbService from '~/src/db/dbService';
 import { invoke } from '@tauri-apps/api/core';
 import { DEFAULT_IMAGE_CACHE_MB, type ImageFileInfo } from '~/src/core/db/repositories/clipboardRepository';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import type { DataBundle } from '~/src/core/db/repositories/dataTransferRepository';
 import type { ClipExtractor, ClipScheme } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
 import { updateSmartClipConfig } from '~/src/smart-clip/smartClip';
@@ -1069,6 +1072,62 @@ onBeforeUnmount(() => {
   }
 });
 
+// ===== 数据备份：导出/导入 JSON（剪贴历史换机迁移；图片以 dataUrl 自包含） =====
+const exportingData = ref(false);
+const showImportConfirm = ref(false);
+const importingData = ref(false);
+
+/** 导出全部业务与统计数据为 JSON 文件（系统保存对话框选位置） */
+async function exportData() {
+  if (exportingData.value) return;
+  exportingData.value = true;
+  try {
+    const bundle = await dbService.exportData();
+    const path = await save({
+      defaultPath: `s1de-board-backup-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (!path) return;
+    await writeTextFile(path, JSON.stringify(bundle));
+    showHint(t('setting.general.export_data_done'));
+  } catch (e) {
+    console.error('导出数据失败:', e);
+    showHint(t('setting.general.export_data_failed') + (e as Error).message, 'error');
+  } finally {
+    exportingData.value = false;
+  }
+}
+
+/** 导入备份：选择 JSON 文件，替换式恢复全部数据（二次确认后触发） */
+async function importDataConfirmed() {
+  if (importingData.value) return;
+  showImportConfirm.value = false;
+  importingData.value = true;
+  try {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (!path || typeof path !== 'string') return;
+    const bundle = JSON.parse(await readTextFile(path)) as DataBundle;
+    if (!bundle || typeof bundle !== 'object' || !bundle.tables) {
+      throw new Error('invalid backup bundle');
+    }
+    await dbService.importData(bundle);
+    // 触发剪贴板列表刷新（若在其他页已挂载），待办/统计由各自 Tab 重新挂载时拉取
+    try {
+      const { fetchData } = await import('~/src/commands/local/clipboardStore');
+      await fetchData();
+    } catch (_) { /* 列表未挂载时忽略 */ }
+    showHint(t('setting.general.import_data_done'));
+  } catch (e) {
+    console.error('导入数据失败:', e);
+    showHint(t('setting.general.import_data_failed') + (e as Error).message, 'error');
+  } finally {
+    importingData.value = false;
+  }
+}
+
 const settings: SettingGroup[] = [
   {
     title: 'setting.categories.shortcuts',
@@ -1206,6 +1265,16 @@ const settings: SettingGroup[] = [
       },
       {
         label: 'setting.general.clear_database',
+        value: '',
+        type: 'action'
+      },
+      {
+        label: 'setting.general.export_data',
+        value: '',
+        type: 'action'
+      },
+      {
+        label: 'setting.general.import_data',
         value: '',
         type: 'action'
       }
@@ -2127,6 +2196,30 @@ onMounted(async () => {
                       </button>
                       <button type="button" class="btn-soft flex-1"
                               :disabled="clearing" @click="showClearConfirm = false">
+                        {{ t('common.cancel') }}
+                      </button>
+                    </div>
+                  </template>
+                  <!-- 数据备份：导出 JSON（图片以 dataUrl 自包含），一键换机迁移 -->
+                  <template v-else-if="item.type === 'action' && item.label === 'setting.general.export_data'">
+                    <button type="button" class="btn-soft w-full"
+                            :disabled="exportingData" @click="exportData">
+                      {{ exportingData ? t('setting.general.export_data_doing') : t('setting.general.export_data') }}
+                    </button>
+                  </template>
+                  <!-- 导入备份：二次确认（替换式恢复）→ 系统文件对话框 -->
+                  <template v-else-if="item.type === 'action' && item.label === 'setting.general.import_data'">
+                    <button v-if="!showImportConfirm" type="button" class="btn-soft w-full"
+                            @click="showImportConfirm = true">
+                      {{ t('setting.general.import_data') }}
+                    </button>
+                    <div v-else class="flex gap-2">
+                      <button type="button" class="btn-soft flex-1"
+                              :disabled="importingData" @click="importDataConfirmed">
+                        {{ importingData ? t('setting.general.import_data_doing') : t('setting.general.import_confirm_btn') }}
+                      </button>
+                      <button type="button" class="btn-soft flex-1"
+                              :disabled="importingData" @click="showImportConfirm = false">
                         {{ t('common.cancel') }}
                       </button>
                     </div>

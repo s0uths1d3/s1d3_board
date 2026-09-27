@@ -9,6 +9,7 @@ import { createNoteRepository, type NoteRepository } from "../core/db/repositori
 import { createSchemeRepository, type SchemeRepository } from "../core/db/repositories/schemeRepository";
 import { createIslandHistoryRepository, type IslandHistoryRepository } from "../core/db/repositories/islandHistoryRepository";
 import { createBackupRepository, type BackupRepository } from "../core/db/repositories/backupRepository";
+import { createDataTransferRepository, type DataTransferRepository, type DataBundle } from "../core/db/repositories/dataTransferRepository";
 import type { PageQuery } from "../core/db/sql";
 import statsService from "~/src/statistics/statsService";
 import { dateRangeToMs } from "~/src/statistics/chartMath";
@@ -34,6 +35,7 @@ class DatabaseService {
     private readonly scheme: SchemeRepository;
     private readonly islandHistory: IslandHistoryRepository;
     private readonly backup: BackupRepository;
+    private readonly dataTransfer: DataTransferRepository;
 
     private constructor() {
         // 仓储装配（组合根）：统一走 appConnection 单例（WAL/busy_timeout/quick_check/execWithRetry）；
@@ -51,6 +53,7 @@ class DatabaseService {
         this.scheme = createSchemeRepository({ conn: appConnection });
         this.islandHistory = createIslandHistoryRepository({ conn: appConnection });
         this.backup = createBackupRepository({ conn: appConnection });
+        this.dataTransfer = createDataTransferRepository({ conn: appConnection });
     }
 
     public static getInstance(): DatabaseService {
@@ -292,6 +295,20 @@ class DatabaseService {
     public async setAiCache(key: string, output: string): Promise<void> {
         await this.ensureDbInitialized();
         return this.scheme.setAiCache(key, output);
+    }
+
+    // ===== 数据备份（导出/导入 JSON，见 dataTransferRepository 设计取舍）=====
+
+    /** 导出全部数据表（剪贴板/便签/待办/常用剪贴/统计；图片条目自包含 dataUrl） */
+    public async exportData(): Promise<DataBundle> {
+        await this.ensureDbInitialized();
+        return this.dataTransfer.exportData();
+    }
+
+    /** 替换式导入：重建图片文件 → 清空 6 表 → 整批写入 */
+    public async importData(bundle: DataBundle): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.dataTransfer.importData(bundle);
     }
 
     public async insertNote(note: Note): Promise<void> {
