@@ -101,8 +101,8 @@ function isTimeTag(tag: string): boolean {
 function tryLogLine(content: string): string[] | null {
     const m = content.match(/^((?:\[[^\[\]]+\]){2,})\s*([\s\S]+)$/);
     if (!m) return null;
-    const tags = (m[1].match(/\[([^\[\]]+)\]/g) ?? []).map((t) => t.slice(1, -1));
-    const message = m[2].trim();
+    const tags = (m[1]!.match(/\[([^\[\]]+)\]/g) ?? []).map((t) => t.slice(1, -1));
+    const message = m[2]!.trim();
     if (tags.length < 2 || !message) return null;
 
     const times: string[] = [];

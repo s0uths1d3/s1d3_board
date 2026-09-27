@@ -14,9 +14,9 @@ import { formatShortcutForDisplay, parseKeyEvent } from "~/utils/shortcutFormat"
 import { getOsTypeFromNavigator } from "~/utils/systemOS";
 import dbService from '~/src/db/dbService';
 import { invoke } from '@tauri-apps/api/core';
-import { DEFAULT_IMAGE_CACHE_MB, type ImageFileInfo } from '~/src/core/db/repositories/clipboardRepository';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { DEFAULT_IMAGE_CACHE_MB, type ImageFileInfo } from '~/src/core/db/repositories/clipboardRepository';
 import type { DataBundle } from '~/src/core/db/repositories/dataTransferRepository';
 import type { ClipExtractor, ClipScheme } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
@@ -887,9 +887,9 @@ const webhookTargets = ref<WebhookTarget[]>([]);
 const webhookTesting = ref(false);
 // 恢复填充门控：进入设置页时把 ref 填到存储值不应触发持久化下发与「已开启」提示
 const webhookLoading = ref(true);
-// 卡片折叠态（标题行点击切换，开关独立于折叠不受影响）
-const islandApiOpen = ref(true);
-const webhookOpen = ref(true);
+// 卡片折叠态（标题行点击切换，开关独立于折叠不受影响）；默认折叠，需要配置时再展开
+const islandApiOpen = ref(false);
+const webhookOpen = ref(false);
 const editingWebhookTargets = computed(() =>
   webhookTargets.value.filter((tg) => tg.url.trim() && validateWebhookUrl(tg.url.trim())),
 );
@@ -2542,8 +2542,8 @@ onMounted(async () => {
             <!-- 灵动岛 API：第三方应用集成入口（本地 HTTP/SSE，接入文档 .docs/island-api.md）。
                  仅通用标签渲染：本分支为 通用/API设置 共用，不守卫会两边重复出现。
                  标题行点击折叠/展开（chevron 指示），开关独立于折叠 -->
-            <div v-if="activeSetting.type === 'general'" class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
-              <div class="mb-3 flex items-center justify-between">
+            <div v-if="activeSetting.type === 'general'" class="glass-card mt-3 rounded-2xl p-4 shadow-soft">
+              <div class="flex items-center justify-between">
                 <button type="button" class="flex select-none items-center gap-1.5 text-ink-faint transition-colors hover:text-ink"
                         :aria-expanded="islandApiOpen" @click="islandApiOpen = !islandApiOpen">
                   <svg class="h-3 w-3 transition-transform duration-200" :class="islandApiOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -2553,7 +2553,8 @@ onMounted(async () => {
                 </button>
                 <UiToggleSwitch v-model="islandApiEnabled" :label="''" />
               </div>
-              <div v-show="islandApiOpen">
+              <!-- 间距放内容区而非标题行：折叠时标题行零余量，与 Webhook 卡片同高同居中 -->
+              <div v-show="islandApiOpen" class="mt-3">
                 <div class="flex items-center gap-2">
                   <input v-model="islandApiPort" class="w-28 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
                          :placeholder="t('island_api.port')" @change="islandApiPort = String(Number(islandApiPort) || ISLAND_API_DEFAULT_PORT)" />
@@ -2579,8 +2580,9 @@ onMounted(async () => {
                 </button>
                 <UiToggleSwitch v-model="webhookEnabled" :label="''" />
               </div>
-              <div v-show="webhookOpen">
-                <ul v-if="webhookTargets.length" class="mt-2 flex flex-col gap-2">
+              <!-- 间距放内容区（与灵动岛 API 卡片同款）：折叠时标题行零余量 -->
+              <div v-show="webhookOpen" class="mt-3">
+                <ul v-if="webhookTargets.length" class="flex flex-col gap-2">
                   <li v-for="tg in webhookTargets" :key="tg.id" class="flex items-center gap-2">
                     <input v-model="tg.url" :placeholder="t('island_webhook.url')"
                            class="min-w-0 flex-1 rounded-lg border bg-surface-field px-2 py-1 text-xs text-ink"

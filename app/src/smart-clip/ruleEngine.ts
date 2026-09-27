@@ -28,7 +28,8 @@ function extractByRegex(content: string, pattern: string): string[] {
         if (captureGroups === -1) captureGroups = Math.max(0, m.length - 1);
         if (captureGroups > 0) {
             for (let g = 1; g <= captureGroups; g++) {
-                if (m[g] !== undefined && m[g] !== '') out.push(m[g]);
+                const cap = m[g];
+                if (cap !== undefined && cap !== '') out.push(cap);
             }
         } else if (m[0] !== '') {
             out.push(m[0]);

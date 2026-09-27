@@ -59,7 +59,7 @@
             </span>
 
             <span class="rounded-full border border-accent px-2 py-0.5 text-xs text-ink-soft">
-              {{ categoryName(todo.category) }}
+              {{ categoryName(todo.category ?? '') }}
             </span>
 
             <!-- 已逾期标签：截止时间已过。未完成=红色"已逾期"，已完成=金色"逾期完成" -->

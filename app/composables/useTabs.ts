@@ -49,9 +49,10 @@ const disabledTabs = ref<TabKey[]>([])
 async function loadNavConfig(): Promise<void> {
   try {
     const raw = await dbService.getKeyValue(NAV_CONFIG_KEY)
+    // 函数作用域：下方"恢复上次激活 Tab"分支在 if (raw) 之外也要使用
+    const validKeys = new Set(tabItems.map(t => t.key))
     if (raw) {
       const parsed = JSON.parse(raw)
-      const validKeys = new Set(tabItems.map(t => t.key))
       if (Array.isArray(parsed.order)) {
         tabOrder.value = parsed.order.filter((k: unknown) => typeof k === 'string' && validKeys.has(k as TabKey))
       }
