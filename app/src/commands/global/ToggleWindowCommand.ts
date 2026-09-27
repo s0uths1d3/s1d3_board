@@ -3,6 +3,7 @@ import {getCurrentWebview} from '@tauri-apps/api/webview';
 import type {Command} from '../Command';
 import {bus} from '../../core/events';
 import {applyPopupPosition, savePopupLastPosition} from '~/composables/usePopupPosition';
+import {closeTooltipWindows} from '~/composables/useTooltipEnabled';
 
 export class ToggleWindowCommand implements Command {
     async execute(event?: { state: string }): Promise<void> {
@@ -20,6 +21,8 @@ export class ToggleWindowCommand implements Command {
             if (visible && focused) {
                 // 隐藏前记录当前位置（含用户拖动过的新位置），供「上次位置」模式恢复
                 await savePopupLastPosition().catch(() => {});
+                // 主窗口收起前关闭 tooltip 子窗口：否则 tooltip 仍置顶残留在屏幕上
+                await closeTooltipWindows().catch(() => {});
                 await win.hide();
             } else {
                 // 按设置的弹出位置模式定位（光标处 / 上次位置 / 屏幕中央）后再显示

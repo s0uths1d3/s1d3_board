@@ -23,6 +23,7 @@ import {isTauri} from "~/utils/env";
 import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
 import statsService from "~/src/statistics/statsService";
 import { savePopupLastPosition } from "~/composables/usePopupPosition";
+import { closeTooltipWindows } from "~/composables/useTooltipEnabled";
 import { createAppRegistry, appContext } from "~/src/modules";
 
 // Tauri 2.11 注入脚本缺陷补丁：unregisterListener 读本地表不判空
@@ -83,10 +84,23 @@ async function tryHideMainWindow() {
     if (typeof window !== 'undefined' && (window as any).__ringActive) {
       return;
     }
-    // tooltip 正在使用（显示中）期间，跳过失焦自动隐藏；
-    // 用 tooltip:active 生命周期信号（而非短命 interacting 标志），覆盖点击/拖动等全部交互场景
+    // tooltip 显示中：区分「焦点在 tooltip 子窗口（点击/拖动滚动条等交互中）」与
+    // 「焦点已切到外部应用」。交互中保持豁免（不打断用户操作）；
+    // 焦点在外部时 tooltip 已失去悬停上下文，继续豁免会残留在屏幕最前
+    // （tooltip 每次 show 都 setAlwaysOnTop）——关闭它（close 使单例失效，hover 重建）
+    // 后继续走正常隐藏判定。
     if (typeof window !== 'undefined' && (window as any).__tooltipActive) {
-      return;
+      let tooltipFocused = false;
+      for (const w of await getAllWindows()) {
+        try {
+          if (w.label.startsWith('tooltip-') && await w.isFocused()) {
+            tooltipFocused = true;
+            break;
+          }
+        } catch { /* 忽略单窗查询失败 */ }
+      }
+      if (tooltipFocused) return; // 用户正在 tooltip 内交互：保持显示与主窗口
+      await closeTooltipWindows().catch(() => {});
     }
     const windows = await getAllWindows();
     let childFocused = false;

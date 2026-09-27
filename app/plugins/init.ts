@@ -8,6 +8,7 @@ import {getCurrentWindow} from "@tauri-apps/api/window";
 import {isTauri} from "~/utils/env";
 import statsService from "~/src/statistics/statsService";
 import {bus} from "~/src/core/events";
+import {closeTooltipWindows} from "~/composables/useTooltipEnabled";
 
 /** 托盘菜单创建（独立函数）：Windows 原生菜单窗口在创建时快照进程主题
  *  （SetPreferredAppMode 对已存在的菜单不生效），因此切换配色后需要整体
@@ -22,6 +23,8 @@ async function createTrayMenu(): Promise<Menu> {
                     const main = await WebviewWindow.getByLabel('main');
                     if (!main) return;
                     if (await main.isVisible()) {
+                        // 主窗口收起前关闭 tooltip 子窗口：否则 tooltip 仍置顶残留在屏幕上
+                        await closeTooltipWindows().catch(() => {});
                         await main.hide();
                     } else {
                         await main.show();
