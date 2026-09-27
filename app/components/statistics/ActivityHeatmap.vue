@@ -3,7 +3,7 @@
  * 活跃热力图（ActivityHeatmap）
  *
  * GitHub 风格贡献格：区间每日总操作量按五档金色深度着色（列数随跨度自适应，
- * 仅当所选区间跨度大于一年时由页面层展示）；数据由页面层用
+ * 由页面层在年度/全部历史/跨度大于一年时展示）；数据由页面层用
  * chartMath.buildHeatmapCells 预计算（纯函数，本组件不查询）。
  * - hover 任意格显示「日期 · 次数」（v-tip）；
  * - 点击某格 emit('select-day', date)，页面层把范围切换为该日的自定义区间；
@@ -73,23 +73,27 @@ function cellTip(cell: HeatmapCell | null): string {
     <div v-if="weeks.length === 0" class="text-sm text-ink-faint">{{ t('statistics.no_stats_data') }}</div>
     <!-- 区间跨度可大于一年（列数 >53）：内容超宽时整体横向滚动 -->
     <div v-else class="min-w-0 overflow-x-auto">
-      <!-- 月份标注行：列宽固定 11px 与主体严格一致（固定宽同时关闭 flex 拉伸——
-           列数少时 flex-1 会把唯一一列拉满整行，aspect-square 放大成全屏巨块），
-           标签不截断、溢出绘制到后续列（GitHub 式——月份间隔 ≥4 列不会碰撞） -->
-      <div class="mb-1 flex gap-[2px] pl-6">
-        <div v-for="(week, wi) in weeks" :key="`m-${wi}`" class="w-[11px] shrink-0 whitespace-nowrap text-[10px] leading-3 text-ink-faint">
+      <!-- 弹性铺满：列 flex-1 均分容器宽度（宽屏不留右侧空白），min-w 保底防巨块，
+           min-w-[640px] 使列数过多（跨年）时整体出横向滚动；
+           月份标注行与主体列宽严格同构（同 flex-1 + 同 min-width），标签不截断、
+           溢出绘制到后续列（GitHub 式——月份间隔 ≥4 列不会碰撞） -->
+      <div class="mb-1 flex min-w-[640px] gap-[2px] pl-6">
+        <div v-for="(week, wi) in weeks" :key="`m-${wi}`" class="min-w-[11px] flex-1 whitespace-nowrap text-[10px] leading-3 text-ink-faint">
           {{ monthByWeek.get(wi) ?? '' }}
         </div>
       </div>
-      <!-- 主体：列宽固定 11px（≤1 年约 53 列在宽屏铺开，跨年横向滚动，列数少时靠左排列），每列 7 格；末列未来占位格灰显且不可交互 -->
-      <div class="flex gap-[2px] pl-6">
-        <div v-for="(week, wi) in weeks" :key="wi" class="flex w-[11px] shrink-0 flex-col gap-[2px]">
+      <!-- 主体：每列 7 格，列宽随容器均分（格子 aspect-square 跟随列宽保持正方形）；
+           末列未来占位格灰显且不可交互 -->
+      <div class="flex min-w-[640px] gap-[2px] pl-6">
+        <div v-for="(week, wi) in weeks" :key="wi" class="flex min-w-[11px] flex-1 flex-col gap-[2px]">
           <div
             v-for="(cell, di) in week"
             :key="di"
             class="aspect-square rounded-[3px] transition-all duration-200 ease-soft"
             :class="[
-              cell && !isFuture(cell) ? LEVEL_CLASS[cell.level] : 'bg-transparent',
+              // null 为骨架补位格（保持透明）；未来日期格显示为空档浅色（与无数据一致，
+              // 年度视图需画满 12 个月，未来季度不能整块透明留白），仅禁用交互
+              cell ? (isFuture(cell) ? 'bg-accent' : LEVEL_CLASS[cell.level]) : 'bg-transparent',
               cell && !isFuture(cell) ? 'cursor-pointer hover:scale-110' : '',
               // 里程碑日（区间峰值）：金色描边 + 外扩，与普通格区分
               cell && cell.date === props.highlightDate ? 'ring-2 ring-gold ring-offset-1' : '',

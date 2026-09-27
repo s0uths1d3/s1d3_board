@@ -611,8 +611,10 @@ function ghostBarAt(idx: number): number {
 
 // ===== 热力图 / 星期节奏 / 来源应用（§7.9 深度优化）=====
 
-/** 热力图显示门槛：全部历史（包含所有功能）或自定义跨度大于一年时展示；月/年度固定不展示 */
-const heatmapVisible = computed(() => range.value === 'all' || daySpan(rangeDates.value.from, rangeDates.value.to) > 365);
+/** 热力图显示门槛：全部历史（包含所有功能）、年度（整年跨度）或自定义跨度大于一年时展示；月度固定不展示 */
+const heatmapVisible = computed(() =>
+  range.value === 'all' || range.value === 'year' || daySpan(rangeDates.value.from, rangeDates.value.to) > 365,
+);
 
 /** 全库最早统计日（相伴开篇用；'' = 无数据） */
 const companionFrom = ref('');
