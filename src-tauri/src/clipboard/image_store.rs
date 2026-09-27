@@ -16,6 +16,7 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::core::traits::{ImageStore, ImageStoreHandle, ImageFileEntry};
 
@@ -217,6 +218,16 @@ impl ImageStore for FsImageStore {
 }
 
 // ===================== Tauri 命令（State 注入，前端 invoke 签名不变） =====================
+
+/// 打开图片缓存目录（系统资源管理器）：设置页「打开缓存」入口。
+/// 目录不存在时 images_dir 内部会先建；打开失败经 Err 传回前端提示。
+#[tauri::command]
+pub fn open_image_cache_dir(app: AppHandle) -> Result<(), String> {
+    let dir = images_dir(&app).ok_or_else(|| "images dir unavailable".to_string())?;
+    app.opener()
+        .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
 
 /// 保存图片：解码 → sha256 内容寻址命名 → 写盘（已存在直接复用，天然去重）。
 /// 返回 `imgfile:<文件名>` 引用（DB content 直接存此值）；解码失败/超限返回 None。

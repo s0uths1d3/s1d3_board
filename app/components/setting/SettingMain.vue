@@ -14,6 +14,7 @@ import { formatShortcutForDisplay, parseKeyEvent } from "~/utils/shortcutFormat"
 import { getOsTypeFromNavigator } from "~/utils/systemOS";
 import dbService from '~/src/db/dbService';
 import { invoke } from '@tauri-apps/api/core';
+import { DEFAULT_IMAGE_CACHE_MB, type ImageFileInfo } from '~/src/core/db/repositories/clipboardRepository';
 import type { ClipExtractor, ClipScheme } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
 import { updateSmartClipConfig } from '~/src/smart-clip/smartClip';
@@ -225,6 +226,138 @@ watch(maxLimit, async (val) => {
 watch(imageLimit, async (val) => {
   debouncePersist('image_cache_max_mb', () => dbService.setKeyValue('image_cache_max_mb', val ?? ''));
 });
+
+// ===== 图片缓存占用可视化 + 手动清理（上次做的磁盘清理策略缺闭环：填了上限但看不到实际占用）=====
+const imageCacheUsedBytes = ref<number | null>(null);
+const imageCacheCleaning = ref(false);
+/** 操作区（立即清理/打开缓存）折叠态：默认折叠，避免按钮挤出设置面板右缘 */
+const imageCacheOpsOpen = ref(false);
+
+/** 上限标签：未设置/无效时按默认 256MB 显示（与仓储清理口径一致） */
+const imageCacheLimitLabel = computed(() => {
+  const parsed = parseInt(imageLimit.value ?? '', 10);
+  return String(Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_IMAGE_CACHE_MB);
+});
+
+/** 占用进度百分比（上限钳制 100%；未知时 0） */
+const imageCachePercent = computed(() => {
+  if (imageCacheUsedBytes.value === null) return 0;
+  const limitBytes = Number(imageCacheLimitLabel.value) * 1024 * 1024;
+  if (limitBytes <= 0) return 0;
+  return Math.min(100, (imageCacheUsedBytes.value / limitBytes) * 100);
+});
+
+const imageCacheUsageText = computed(() => {
+  const limit = imageCacheLimitLabel.value;
+  if (imageCacheUsedBytes.value === null) return t('setting.general.image_cache_usage_unknown', { limit });
+  const mb = imageCacheUsedBytes.value / 1024 / 1024;
+  const used = mb < 10 ? mb.toFixed(1) : String(Math.round(mb));
+  return t('setting.general.image_cache_usage', { used, limit });
+});
+
+/** 查询磁盘图片目录实际占用（Rust list_clipboard_image_files 返回文件名+字节数） */
+async function refreshImageCacheUsage(): Promise<void> {
+  try {
+    const files = await invoke<ImageFileInfo[]>('list_clipboard_image_files');
+    imageCacheUsedBytes.value = (files ?? []).reduce((s, f) => s + (f.size ?? 0), 0);
+  } catch {
+    imageCacheUsedBytes.value = null;
+  }
+}
+
+/** 打开缓存：系统资源管理器查看图片缓存目录（%APPDATA%/S1d3Board/images，路径由 Rust 命令解析） */
+async function openImageCacheFolder(): Promise<void> {
+  try {
+    await invoke('open_image_cache_dir');
+  } catch (e) {
+    console.error('打开图片缓存目录失败:', e);
+    showHint(t('setting.general.image_cache_open_failed'), 'error');
+  }
+}
+
+/** 立即清理（与清空数据库同款交互）：两步确认 → 清理（只删行，文件延迟）→ 5 秒撤回窗口 → 真删文件 */
+const showCacheCleanConfirm = ref(false);
+const cacheMsg = ref('');
+// ===== 5 秒撤回窗口：清理只删条目行（备份到 image_cleanup_backup），文件待窗口结束才删除，期间可整体恢复 =====
+const cacheUndoActive = ref(false);
+const cacheUndoRemaining = ref(5);
+const cacheFreedMb = ref('0');
+let cacheUndoCountdownTimer: ReturnType<typeof setInterval> | null = null;
+let cacheUndoExpireTimer: ReturnType<typeof setTimeout> | null = null;
+
+const stopCacheUndoTimers = () => {
+  if (cacheUndoCountdownTimer) {
+    clearInterval(cacheUndoCountdownTimer);
+    cacheUndoCountdownTimer = null;
+  }
+  if (cacheUndoExpireTimer) {
+    clearTimeout(cacheUndoExpireTimer);
+    cacheUndoExpireTimer = null;
+  }
+};
+
+/** 窗口自然结束：真正删除待删文件 + 丢弃备份（失败无碍：下次启动迁移兜底清理遗留备份） */
+async function expireCacheUndoWindow() {
+  try {
+    await dbService.finalizeImageCleanup();
+  } catch { /* 下次启动兜底 */ }
+}
+
+/** 撤回清理：恢复被淘汰的条目、丢弃待删文件清单（文件从未离开原位，无需恢复文件） */
+async function undoImageCleanup() {
+  if (!cacheUndoActive.value) return;
+  stopCacheUndoTimers();
+  cacheUndoActive.value = false;
+  try {
+    await dbService.undoImageCleanup();
+    cacheMsg.value = t('setting.general.image_cache_undo_done');
+    await refreshImageCacheUsage();
+  } catch (e) {
+    console.error('撤回图片缓存清理失败:', e);
+    cacheMsg.value = t('setting.general.image_cache_failed');
+  }
+}
+
+/** 确认清理（两步确认后）：复用启动/新图入库同款清理实现，完成后按结果差异化反馈 */
+async function confirmCleanImageCache(): Promise<void> {
+  if (imageCacheCleaning.value) return;
+  imageCacheCleaning.value = true;
+  showCacheCleanConfirm.value = false;
+  cacheMsg.value = '';
+  try {
+    // 连续清理：终结上一轮未过期的撤回窗口（本轮清理会覆盖备份表与待删清单，语义与清空数据库一致）
+    stopCacheUndoTimers();
+    cacheUndoActive.value = false;
+    const result = await dbService.cleanupImageStorage();
+    await refreshImageCacheUsage();
+    if (result.failed) {
+      showHint(t('setting.general.image_cache_failed'), 'error');
+      return;
+    }
+    if (result.freedBytes <= 0) {
+      // 无孤儿且未超上限：清理合法地无事可做——带占用/上限数字说明原因，避免「按钮没效果」的困惑
+      showHint(t('setting.general.image_cache_clean_noop', { usage: imageCacheUsageText.value }));
+      return;
+    }
+    // 开启 5 秒撤回窗口：文件尚未删除，倒计时归零后统一删除并丢弃备份
+    cacheFreedMb.value = (result.freedBytes / 1024 / 1024).toFixed(1);
+    cacheUndoRemaining.value = 5;
+    cacheUndoActive.value = true;
+    cacheUndoCountdownTimer = setInterval(() => {
+      cacheUndoRemaining.value = Math.max(0, cacheUndoRemaining.value - 1);
+    }, 1000);
+    cacheUndoExpireTimer = setTimeout(() => {
+      void expireCacheUndoWindow().then(() => {
+        cacheUndoActive.value = false;
+        cacheMsg.value = t('setting.general.image_cache_clean_done');
+      });
+    }, 5000);
+  } catch {
+    showHint(t('setting.general.image_cache_failed'), 'error');
+  } finally {
+    imageCacheCleaning.value = false;
+  }
+}
 
 // ===== AI 通道配置（设计文档 §4.2）：提供商 / 地址 / 模型 + 连接测试 =====
 // custom = 自定义 JSON 模板（path/headers/body/responsePath，支持 {{model}}/{{apiKey}}/{{system}}/{{content}} 占位符），
@@ -1417,6 +1550,8 @@ onMounted(async () => {
   osType.value = getOsTypeFromNavigator();
   maxLimit.value = await dbService.getKeyValue('max_save_count');
   imageLimit.value = await dbService.getKeyValue('image_cache_max_mb');
+  // 图片缓存磁盘占用查询（失败显示统计中占位，不阻塞其余设置恢复）
+  void refreshImageCacheUsage();
   apiKey.value = await dbService.getKeyValue('api_key');
   // AI 通道配置恢复（设计文档 §4.2）：提供商缺省 openai-compat
   aiProvider.value = ((await dbService.getKeyValue('ai_provider')) || 'openai-compat') as AiProviderKind;
@@ -1947,7 +2082,20 @@ onMounted(async () => {
                   class="p-4"
                   :class="isWideSettingItem(item) ? 'flex flex-col items-stretch gap-2' : 'flex flex-wrap items-center justify-between gap-4'">
                 <div>
-                  <div class="text-ink">{{ t(item.label) }}</div>
+                  <!-- 图片缓存折叠：label 行本身即点击区（与其他设置行同构，箭头内联在名称前，不引入额外按钮盒撑高行距） -->
+                  <div
+                      v-if="item.type === 'input' && item.label === 'setting.general.image_limit'"
+                      class="flex cursor-pointer select-none items-center gap-1.5"
+                      :aria-expanded="imageCacheOpsOpen"
+                      v-tip="t('setting.general.image_cache_ops')"
+                      @click="imageCacheOpsOpen = !imageCacheOpsOpen"
+                  >
+                    <svg class="size-3 shrink-0 text-ink-faint transition-transform duration-300 ease-soft" :class="imageCacheOpsOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
+                    <div class="text-ink">{{ t(item.label) }}</div>
+                  </div>
+                  <div v-else class="text-ink">{{ t(item.label) }}</div>
                   <div v-if="item.type === 'action' && item.label === 'setting.general.clear_database' && (clearMsg || undoActive)"
                        class="mt-1 flex flex-wrap items-center gap-2 text-xs">
                     <span class="text-ink-faint">
@@ -2052,6 +2200,7 @@ onMounted(async () => {
                       :placeholder="t('setting.general.clipboard_limit_placeholder')"
                       @save="showHint(t('setting.general.clipboard_limit_saved'))"
                   />
+                  <!-- 图片缓存上限：输入框与名称同行；占用进度条/操作按钮收进名称前箭头的折叠区 -->
                   <SettingInput
                       v-else-if="item.type === 'input' && item.label === 'setting.general.image_limit'"
                       v-model="imageLimit"
@@ -2212,6 +2361,71 @@ onMounted(async () => {
                       </li>
                     </ul>
                   </UiDropdown>
+                </div>
+                <!-- 图片缓存展开区：名称前箭头切换（默认折叠）；跨全行布局，进度条不再被右列宽度挤压 -->
+                <div
+                    v-if="item.type === 'input' && item.label === 'setting.general.image_limit' && imageCacheOpsOpen"
+                    class="flex w-full min-w-0 basis-full flex-wrap items-center gap-x-3 gap-y-2"
+                >
+                  <div class="h-1.5 min-w-40 flex-1 overflow-hidden rounded-full bg-secondary">
+                    <div
+                        class="h-full rounded-full bg-gold transition-[width] duration-500"
+                        :style="{ width: imageCachePercent + '%' }"
+                    />
+                  </div>
+                  <span class="whitespace-nowrap text-xs text-ink-soft">{{ imageCacheUsageText }}</span>
+                  <!-- 立即清理：两步确认（与清空数据库同款），确认后进入 5 秒撤回窗口 -->
+                  <button
+                      v-if="!showCacheCleanConfirm"
+                      type="button"
+                      class="btn-soft whitespace-nowrap rounded-full px-3 py-1 text-xs text-danger"
+                      @click="showCacheCleanConfirm = true"
+                  >
+                    {{ t('setting.general.image_cache_clean_now') }}
+                  </button>
+                  <div v-else class="flex gap-2">
+                    <button
+                        type="button"
+                        class="btn-soft whitespace-nowrap rounded-full px-3 py-1 text-xs text-danger disabled:opacity-50"
+                        :disabled="imageCacheCleaning"
+                        @click="confirmCleanImageCache"
+                    >
+                      {{ imageCacheCleaning ? t('setting.general.image_cache_cleaning') : t('setting.general.image_cache_clean_confirm') }}
+                    </button>
+                    <button
+                        type="button"
+                        class="btn-soft whitespace-nowrap rounded-full px-3 py-1 text-xs disabled:opacity-50"
+                        :disabled="imageCacheCleaning"
+                        @click="showCacheCleanConfirm = false"
+                    >
+                      {{ t('common.cancel') }}
+                    </button>
+                  </div>
+                  <!-- 打开缓存：资源管理器查看图片缓存目录 -->
+                  <button
+                      type="button"
+                      class="btn-soft whitespace-nowrap rounded-full px-3 py-1 text-xs"
+                      @click="openImageCacheFolder"
+                  >
+                    {{ t('setting.general.image_cache_open') }}
+                  </button>
+                  <!-- 清理结果 / 5 秒撤回窗口提示（与清空数据库同款：倒计时 + 撤回按钮） -->
+                  <div
+                      v-if="cacheUndoActive || cacheMsg"
+                      class="flex w-full min-w-0 basis-full flex-wrap items-center gap-2 text-xs"
+                  >
+                    <span class="text-ink-faint">
+                      {{ cacheUndoActive ? t('setting.general.image_cache_undo_hint', { mb: cacheFreedMb, n: cacheUndoRemaining }) : cacheMsg }}
+                    </span>
+                    <button
+                        v-if="cacheUndoActive"
+                        type="button"
+                        class="btn-soft px-2 py-0.5 text-xs text-gold"
+                        @click="undoImageCleanup"
+                    >
+                      {{ t('setting.general.clear_undo_btn') }}
+                    </button>
+                  </div>
                 </div>
                 <!-- AI 连接测试结果：显示在测试按钮下方（跨全行），错误格式化为状态行 + 可读原因 -->
                 <div v-if="item.type === 'action' && item.label === 'setting.general.ai_test' && aiTestState !== 'idle'"

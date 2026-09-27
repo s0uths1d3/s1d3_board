@@ -18,8 +18,11 @@ export const clipboardModule: AppModule = {
             console.error('❌ 初始化失败:', error);
         }
         // 启动时按「图片缓存上限」做一次磁盘清理（孤儿文件 + 不常用原图优先淘汰；
-        // 方法内部自带 try/catch 与 DB 等待，fire-and-forget 不阻塞启动）
-        void clipboardService.cleanupImageStorage();
+        // 方法内部自带 try/catch 与 DB 等待，fire-and-forget 不阻塞启动）。
+        // 启动清理无撤回交互，清理后立即 finalize 真删文件
+        void clipboardService.cleanupImageStorage().then((r) => {
+            if (!r.failed) return clipboardService.finalizeImageCleanup();
+        });
     },
     async stop() {
         await stopClipboardListener();

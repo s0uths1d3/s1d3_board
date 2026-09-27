@@ -189,6 +189,8 @@ export function runDatabaseMigrations(conn: DatabaseConnection): Promise<void> {
         for (const { backup } of CLEAR_BACKUP_TABLES) {
             await db.execute(`DROP TABLE IF EXISTS ${backup}`).catch(() => {});
         }
+        // 图片缓存清理的条目备份（image_cleanup_backup）：同理随进程失效，直接丢弃（幂等）
+        await db.execute('DROP TABLE IF EXISTS image_cleanup_backup').catch(() => {});
         // 存量图片迁移（fire-and-forget 后台任务）：旧 base64 条目分批落盘换 imgfile: 引用，
         // 失败/超限保留原样下次重试，不阻塞启动
         void migrateClipboardImagesToFiles(db);

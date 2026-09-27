@@ -2,7 +2,7 @@ import type { ClipboardData,Note,Todo,PinnedClip,ClipScheme } from "../entities"
 import { appConnection } from "../core/db/appConnection";
 import { runDatabaseMigrations } from "../core/db/migrator";
 import { createSettingsRepository, type SettingsRepository } from "../core/db/repositories/settingsRepository";
-import { createClipboardRepository, type ClipboardRepository } from "../core/db/repositories/clipboardRepository";
+import { createClipboardRepository, type ClipboardRepository, type ImageCleanupResult } from "../core/db/repositories/clipboardRepository";
 import { createPinnedClipRepository, type PinnedClipRepository } from "../core/db/repositories/pinnedClipRepository";
 import { createTodoRepository, type TodoRepository } from "../core/db/repositories/todoRepository";
 import { createNoteRepository, type NoteRepository } from "../core/db/repositories/noteRepository";
@@ -99,10 +99,24 @@ class DatabaseService {
         return this.clipboard.fetchSourceAppTop(startMs, endMs, limit);
     }
 
-    /** 磁盘图片缓存清理（图片缓存上限可设置，默认 256MB；孤儿文件 + 不常用原图优先淘汰） */
-    public async cleanupImageStorage(): Promise<void> {
+    /** 磁盘图片缓存清理（图片缓存上限可设置，默认 256MB；孤儿文件 + 不常用原图优先淘汰）。
+     * 可撤回第一阶段：只删 DB 行（victim 行备份到 image_cleanup_backup），文件延迟到 finalizeImageCleanup 删除；
+     * 返回清理结果：设置页手动「立即清理」按结果开启撤回窗口，启动/入库联动场景忽略返回值 */
+    public async cleanupImageStorage(): Promise<ImageCleanupResult> {
         await this.ensureDbInitialized();
         return this.clipboard.cleanupImageStorage();
+    }
+
+    /** 撤回图片缓存清理：恢复被淘汰条目行 + 丢弃待删文件清单（文件窗口期内未删，无需恢复）。返回是否执行了撤回 */
+    public async undoImageCleanup(): Promise<boolean> {
+        await this.ensureDbInitialized();
+        return this.clipboard.undoImageCleanup();
+    }
+
+    /** 图片缓存清理撤回窗口结束：删除待删文件（窗口内重新被引用的自动豁免）并丢弃备份表（幂等） */
+    public async finalizeImageCleanup(): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.clipboard.finalizeImageCleanup();
     }
 
     public async updateFavorite(id: number, value: number): Promise<void> {

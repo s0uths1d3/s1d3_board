@@ -4,6 +4,7 @@ import type { ClipboardData } from '../../../entities';
 import { bus } from '../../events';
 import { resolveImageRows, deleteImageFileByRef, invalidateImageCache } from '../imageRef';
 import { escapeLike, withPage, parseSearchTokens, likePatternFromToken, type PageQuery } from '../sql';
+import { toDateString } from '../../../../utils/datetime';
 import type { RecordStats } from './noteRepository';
 
 /** 剪贴板默认保留上限：设置项 max_save_count 未设置/无效时生效（防 DB 无限膨胀） */
@@ -19,6 +20,18 @@ export const DEFAULT_IMAGE_CACHE_MB = 256;
 export interface ImageFileInfo {
     name: string;
     size: number;
+}
+
+/** 图片缓存清理结果：手动「立即清理」的差异化反馈依据（启动/入库联动场景忽略返回值） */
+export interface ImageCleanupResult {
+    /** 本次释放的磁盘字节数（孤儿文件 + 被淘汰条目的原图） */
+    freedBytes: number;
+    /** 删除的孤儿文件个数（无任何 DB 引用） */
+    orphanCount: number;
+    /** 超限淘汰的剪贴板条目数（行 + 原图一并删除） */
+    victimCount: number;
+    /** 清理过程出错（尽力而为语义：错误不外抛，仅标记结果） */
+    failed?: boolean;
 }
 
 /** 剪贴板图片条目的清理候选字段（DB 行裁剪） */
@@ -128,14 +141,23 @@ export interface ClipboardRepository {
     /** 区间内按来源应用聚合的复制条数 Top N（统计页"来源应用"榜；startMs 含、endMs 不含） */
     fetchSourceAppTop(startMs: number, endMs: number, limit: number): Promise<{ app: string; cnt: number }[]>;
     /**
-     * 磁盘图片缓存清理：总占用超出「图片缓存上限」（image_cache_max_mb，默认 256MB）时，
-     * 孤儿文件直接清、引用行按「使用次数少 → 最久未用」淘汰（行+文件+内存缓存一并处理）。
-     * 触发点：新图片入库后（fire-and-forget）与应用启动时。
+     * 磁盘图片缓存清理（可撤回清理的第一阶段，与「清空数据库」同款交互）：
+     * 总占用超出「图片缓存上限」（image_cache_max_mb，默认 256MB）时，孤儿文件直接清、
+     * 引用行按「使用次数少 → 最久未用」淘汰。本阶段只删 DB 行（victim 行先整行备份到
+     * image_cleanup_backup 表），**文件一律不删**——待删清单暂存内存；5 秒窗口内
+     * undoImageCleanup 可整行恢复（文件从未离开原位），窗口结束 finalizeImageCleanup
+     * 才真正删除文件并丢弃备份。触发点：新图片入库后（fire-and-forget，等效即时 finalize）
+     * 与设置页手动清理（前端驱动撤回窗口）。
+     * 返回清理结果（预计释放字节/孤儿数/淘汰条目数，failed 标记过程出错）。
      */
-    cleanupImageStorage(): Promise<void>;
+    cleanupImageStorage(): Promise<ImageCleanupResult>;
+    /** 撤回图片缓存清理：从备份表恢复被淘汰的条目行、丢弃待删文件清单（文件未删，无需恢复）。返回是否执行了撤回 */
+    undoImageCleanup(): Promise<boolean>;
+    /** 撤回窗口结束：删除待删清单中的文件（窗口内重新被引用的自动豁免）并丢弃备份表（幂等，可在无清理时安全调用） */
+    finalizeImageCleanup(): Promise<void>;
 }
 
-export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
+export function createClipboardRepository({ conn, getKeyValue, recordStats, revokeStats }: {
     conn: DatabaseConnection;
     /** 读取设置 KV（裁剪上限 max_save_count / 全量查询动态上限）——注入设置仓储，避免反向依赖 */
     getKeyValue: (key: string) => Promise<string>;
@@ -147,6 +169,9 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
     /** 本应用粘贴写入抑制窗口：窗口内 saveClipboard 的 ON CONFLICT 不递增 count
      *  （粘贴流程已由命令层显式 increaseUseCount，剪贴板监听再 bump 会双计） */
     let useCountSuppressUntil = 0;
+
+    /** 上次可撤回清理的待删文件清单（imgfile 文件名）：窗口期内文件保留在磁盘，finalizeImageCleanup 才删除；null = 无进行中的可撤回清理 */
+    let pendingImageCleanupFiles: string[] | null = null;
 
     /**
      * 按设置项「剪贴板最大存储数量」（max_save_count）裁剪剪贴板：
@@ -202,14 +227,15 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
      * 任何失败仅记日志（清理是尽力而为的维护操作，不影响主流程）。
      * 提升到工厂作用域：saveClipboard 的新图入库联动触发与本方法共用同一实现。
      */
-    async function cleanupImageStorage(): Promise<void> {
+    async function cleanupImageStorage(): Promise<ImageCleanupResult> {
+        const noop: ImageCleanupResult = { freedBytes: 0, orphanCount: 0, victimCount: 0 };
         try {
             const raw = await getKeyValue('image_cache_max_mb');
             const parsed = parseInt(raw ?? '', 10);
             const limitBytes = (Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_IMAGE_CACHE_MB) * 1024 * 1024;
 
             const files = await invoke<ImageFileInfo[]>('list_clipboard_image_files');
-            if (!files || files.length === 0) return;
+            if (!files || files.length === 0) return noop;
             const totalBytes = files.reduce((s, f) => s + (f.size ?? 0), 0);
 
             const db = await conn.ready();
@@ -229,10 +255,20 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
             const freedBytes =
                 plan.orphanFiles.reduce((s, n) => s + (files.find(f => f.name === n)?.size ?? 0), 0)
                 + plan.victimFiles.reduce((s, n) => s + (files.find(f => f.name === n)?.size ?? 0), 0);
-            if (plan.orphanFiles.length === 0 && plan.victimRowIds.length === 0) return;
+            if (plan.orphanFiles.length === 0 && plan.victimRowIds.length === 0) return noop;
 
-            // ① 孤儿文件：只删文件（DB 本就无引用）
-            // ② 超限淘汰：先删行（分批防参数上限，与 trimClipboard 同策略）再删文件
+            // 与「清空数据库」同款可撤回语义：victim 行先整行备份（撤回时恢复），文件一律不删——
+            // 待删清单暂存内存，窗口结束（finalizeImageCleanup）才真正删除；撤回时丢弃清单即可
+            await db.execute("DROP TABLE IF EXISTS image_cleanup_backup");
+            if (plan.victimRowIds.length > 0) {
+                await db.execute(
+                    "CREATE TABLE image_cleanup_backup AS SELECT * FROM clipboard WHERE id IN ("
+                    + plan.victimRowIds.map((_, j) => `$${j + 1}`).join(',') + ")",
+                    plan.victimRowIds,
+                );
+            }
+            // ① 孤儿文件：只进待删清单（DB 本就无引用，撤回 = 丢弃清单，无需恢复任何状态）
+            // ② 超限淘汰：删行（分批防参数上限，与 trimClipboard 同策略）；文件同样进待删清单
             for (let i = 0; i < plan.victimRowIds.length; i += 500) {
                 const chunk = plan.victimRowIds.slice(i, i + 500);
                 await conn.executeWithRetry(
@@ -240,26 +276,67 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
                     chunk,
                 );
             }
-            const allFiles = [...plan.orphanFiles, ...plan.victimFiles];
-            if (allFiles.length > 0) {
-                await invoke('delete_clipboard_image_files', { files: allFiles });
-            }
             // 淘汰行的内存解析缓存一并失效：引用与文件都不复存在，缓存命中会展示幽灵图
+            // （撤回场景文件仍在磁盘，行恢复后内存缓存按需重新解析即可）
             if (plan.victimFiles.length > 0) {
                 invalidateImageCache(plan.victimFiles.map(n => `imgfile:${n}`));
             }
+            pendingImageCleanupFiles = [...plan.orphanFiles, ...plan.victimFiles];
             console.info(
-                `图片缓存清理：释放 ${(freedBytes / 1024 / 1024).toFixed(1)}MB`
+                `图片缓存清理（可撤回）：预计释放 ${(freedBytes / 1024 / 1024).toFixed(1)}MB`
                 + `（孤儿 ${plan.orphanFiles.length} 个 / 淘汰条目 ${plan.victimRowIds.length} 条，`
                 + `上限 ${Math.round(limitBytes / 1024 / 1024)}MB，原占用 ${(totalBytes / 1024 / 1024).toFixed(1)}MB）`,
             );
+            return { freedBytes, orphanCount: plan.orphanFiles.length, victimCount: plan.victimRowIds.length };
         } catch (e) {
             console.error('图片缓存清理失败:', e);
+            // 尽力而为语义：错误不外抛（启动/入库联动场景无消费方），failed 标记供手动清理提示失败
+            return { ...noop, failed: true };
         }
+    }
+
+    /**
+     * 撤回图片缓存清理：恢复被淘汰的条目行 + 丢弃待删文件清单。
+     * 文件在窗口期内从未离开磁盘，撤回无需任何文件操作；孤儿文件本就无引用，同样只丢清单。
+     */
+    async function undoImageCleanup(): Promise<boolean> {
+        if (!pendingImageCleanupFiles) return false;
+        pendingImageCleanupFiles = null;
+        const db = await conn.ready();
+        // 窗口内用户可能重新复制了同一图片（同 content 新行已插入）：OR IGNORE 保留新行，备份旧行让位
+        await db.execute("INSERT OR IGNORE INTO clipboard SELECT * FROM image_cleanup_backup").catch(() => { /* 备份表不存在（纯孤儿清理）= 无行可恢复 */ });
+        await db.execute("DROP TABLE IF EXISTS image_cleanup_backup");
+        return true;
+    }
+
+    /**
+     * 撤回窗口结束：真正删除待删清单中的文件 + 丢弃备份表。
+     * 窗口内同内容图片可能重新入库（save_clipboard_image 内容寻址复用同名文件），
+     * 删除前按 clipboard 表当前引用豁免，避免误删在用原图。
+     */
+    async function finalizeImageCleanup(): Promise<void> {
+        const files = pendingImageCleanupFiles;
+        pendingImageCleanupFiles = null;
+        const db = await conn.ready();
+        if (files && files.length > 0) {
+            const refs = await db.select<{ content: string }[]>(
+                "SELECT content FROM clipboard WHERE content IN ("
+                + files.map((_, j) => `$${j + 1}`).join(',') + ")",
+                files.map(n => `imgfile:${n}`),
+            ).catch(() => [] as { content: string }[]);
+            const usedRefs = new Set(refs.map(r => r.content));
+            const deletable = files.filter(n => !usedRefs.has(`imgfile:${n}`));
+            if (deletable.length > 0) {
+                await invoke('delete_clipboard_image_files', { files: deletable });
+            }
+        }
+        await db.execute("DROP TABLE IF EXISTS image_cleanup_backup").catch(() => {});
     }
 
     return {
         cleanupImageStorage,
+        undoImageCleanup,
+        finalizeImageCleanup,
 
         suppressUseCountBump(ms = 1200): void {
             useCountSuppressUntil = Date.now() + ms;
@@ -303,8 +380,12 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
             await trimClipboard();
 
             // 图片条目：按「图片缓存上限」联动清理磁盘（孤儿文件 + 不常用原图优先淘汰；
-            // fire-and-forget，清理失败不影响入库）
-            if (type === 'image') void cleanupImageStorage();
+            // fire-and-forget，清理失败不影响入库）。联动场景无撤回交互，清理后立即 finalize 真删
+            if (type === 'image') {
+                void cleanupImageStorage().then((r) => {
+                    if (!r.failed) return finalizeImageCleanup();
+                });
+            }
 
             // 智能剪贴板：新文本入库 → 广播复制事件（处理层 smartClip 解析进内存 store；
             // 设计文档 §4.1 触发点）。仅文本参与解析管道。
