@@ -10,6 +10,7 @@ import {
   data, filter, dataLength, hasMore, loadingMore,
   fetchData, getSelectedItem, moveSelection, loadMoreClips, resetClips,
   restoreAdvancedSearch, setAdvancedSearch,
+  batchSelectedIds, toggleBatchSelect, selectBatchRange, clearBatchSelection,
 } from '~/src/commands/local/clipboardStore';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {isTauri} from "~/utils/env";
@@ -335,8 +336,24 @@ async function openTooltipWindow() {
 /** 列表行样式：选中项金色描边 + 高亮环；收藏项（未选中时）金色描边 + 淡金底色，与未收藏项明显区分。
  *  选中与收藏同时存在时以选中样式为主——收藏仍有左缘竖条、金色序号与「已收藏」徽标标识。 */
 function rowClass(item: ClipboardData, index: number): string {
+  // 批量选中：双环金框（与键盘单选的单环区分）
+  if (batchSelectedIds.value.has(item.id)) return 'border-gold ring-2 ring-gold/60 bg-gold/10';
   if (index === getSelectedRowIndex()) return 'border-gold ring-1 ring-gold/60';
   return item.is_favorite === 1 ? '!border-gold/80 !bg-gold/10' : '';
+}
+
+/** 列表行点击：Ctrl/Cmd=切换批量选中，Shift=范围选择，普通点击=清除多选并单选 */
+function onRowClick(item: ClipboardData, index: number, e: MouseEvent) {
+  if (e.ctrlKey || e.metaKey) {
+    toggleBatchSelect(item.id, index);
+    return;
+  }
+  if (e.shiftKey) {
+    selectBatchRange(index);
+    return;
+  }
+  clearBatchSelection();
+  selectRow(index);
 }
 
 /** 列表本地方向键导航：上下移动选中项，并阻止冒泡避免与 ShortcutManager 的 window 监听重复触发 */
@@ -355,6 +372,11 @@ function onListKeydown(e: KeyboardEvent) {
       void loadMoreClips();
     }
     moveSelection(1);
+  } else if (e.key === 'Escape' && batchSelectedIds.value.size > 0) {
+    // Esc：退出批量选择（无多选时不拦截，交给全局快捷键）
+    e.preventDefault();
+    e.stopPropagation();
+    clearBatchSelection();
   } else if (e.key === 'Delete') {
     // 直接响应 Delete 键：停止冒泡避免 ShortcutManager 的 delete_item 重复触发，并弹出删除确认框
     e.preventDefault();
@@ -649,6 +671,63 @@ async function favorite(id: number, value: number) {
     console.error('更新收藏状态失败:', e);
     showPinnedHint(t('clip.favorite_failed'), 'error');
   }
+}
+
+// ===== 批量操作：Ctrl/Shift 多选后列表上方工具栏（复制/收藏/删除） =====
+const batchCount = computed(() => batchSelectedIds.value.size);
+/** 选中条目按当前列表顺序排列（已不在列表内的 id 自然排除） */
+const batchItems = computed(() => data.value.filter((it: ClipboardData) => batchSelectedIds.value.has(it.id)));
+
+/** 批量复制：选中文本条目按列表顺序合并（换行分隔）写入系统剪贴板 */
+async function batchCopy() {
+  const texts = batchItems.value
+    .filter((it: ClipboardData) => (it.type ?? 'text') === 'text')
+    .map((it: ClipboardData) => it.content);
+  if (texts.length === 0) {
+    showPinnedHint(t('clip.batch_copy_no_text'), 'info');
+    return;
+  }
+  try {
+    await writeText(texts.join('\n'));
+    showPinnedHint(t('clip.batch_copy_done', { n: texts.length }));
+    clearBatchSelection();
+  } catch (e) {
+    console.error('批量复制失败:', e);
+    showPinnedHint(t('clip.batch_copy_failed'), 'error');
+  }
+}
+
+/** 批量收藏切换：选中含任一未收藏 → 全部收藏，否则全部取消收藏 */
+async function batchFavorite() {
+  const items = batchItems.value;
+  if (items.length === 0) return;
+  const target = items.some((it: ClipboardData) => it.is_favorite !== 1) ? 1 : 0;
+  try {
+    await Promise.all(items.map((it: ClipboardData) => clipboardService.updateFavorite(it.id, target)));
+    for (const it of items) it.is_favorite = target;
+    showPinnedHint(t(target === 1 ? 'clip.batch_favorited' : 'clip.batch_unfavorited', { n: items.length }));
+    clearBatchSelection();
+  } catch (e) {
+    console.error('批量收藏失败:', e);
+    showPinnedHint(t('clip.batch_favorite_failed'), 'error');
+  }
+}
+
+/** 批量删除：先经确认框，逐条删除后刷新 */
+const batchDeleteConfirmVisible = ref(false);
+async function confirmBatchDelete() {
+  const ids = [...batchSelectedIds.value];
+  batchDeleteConfirmVisible.value = false;
+  clearBatchSelection();
+  try {
+    for (const id of ids) await clipboardService.deleteClipboardData(id);
+    showPinnedHint(t('clip.batch_deleted', { n: ids.length }));
+  } catch (e) {
+    console.error('批量删除失败:', e);
+    showPinnedHint(t('clip.batch_delete_failed'), 'error');
+  }
+  await fetchData();
+  refocusList();
 }
 
 // ===== 右键菜单：添加到常用剪贴板 =====
@@ -1078,6 +1157,18 @@ async function openImageViewer(item: ClipboardData) {
                 </button>
               </div>
 
+              <!-- 批量操作工具栏：Ctrl/Shift 多选后浮出（Esc 或普通点击退出） -->
+              <div
+                  v-if="batchCount > 0"
+                  class="glass-card mb-2 flex flex-wrap items-center gap-2 rounded-2xl px-4 py-2 text-sm"
+              >
+                <span class="text-ink-soft">{{ t('clip.batch_selected', { n: batchCount }) }}</span>
+                <button type="button" class="btn-soft px-2 py-1 text-xs" @click="batchCopy">{{ t('clip.batch_copy') }}</button>
+                <button type="button" class="btn-soft px-2 py-1 text-xs text-gold" @click="batchFavorite">{{ t('clip.batch_favorite') }}</button>
+                <button type="button" class="btn-soft px-2 py-1 text-xs text-danger" @click="batchDeleteConfirmVisible = true">{{ t('clip.batch_delete') }}</button>
+                <button type="button" class="btn-soft px-2 py-1 text-xs" @click="clearBatchSelection">{{ t('clip.batch_cancel') }}</button>
+              </div>
+
               <ul
                 ref="listElement"
                 id="listElement"
@@ -1093,7 +1184,7 @@ async function openImageViewer(item: ClipboardData) {
                   draggable="true"
                   @dragstart="handleDragStart(item, $event)"
                   @dragend="handleDragEnd(item,$event)"
-                  @click="selectRow(index)"
+                  @click="onRowClick(item, index, $event)"
                   @contextmenu="openContextMenu(item, index, $event)"
                   @dblclick="openImageViewer(item)"
                 >

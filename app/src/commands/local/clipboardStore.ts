@@ -32,6 +32,44 @@ export const hasMore = ref(true);
 /** 加载下一页进行中（sentinel 显示"加载中…"） */
 export const loadingMore = ref(false);
 
+// ===== 批量选择（Ctrl/Shift+点击多选，配合列表上方工具栏批量删除/收藏/复制） =====
+
+/** 批量选中的条目 id 集合（普通点击 / Esc / 列表重置时清空） */
+export const batchSelectedIds = ref<Set<number>>(new Set());
+
+/** Shift 范围选择的锚点行索引（-1 = 无锚点，下次以当前键盘选中行为锚） */
+let batchAnchorIndex = -1;
+
+/** Ctrl/Cmd+点击：切换某条目的批量选中态（index 同步为键盘导航选中行） */
+export function toggleBatchSelect(id: number, index: number) {
+  const next = new Set(batchSelectedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  batchSelectedIds.value = next;
+  batchAnchorIndex = next.size > 0 ? index : -1;
+  selectedRowIndex.value = index;
+}
+
+/** Shift+点击：从锚点行到当前行范围全选（无锚点时以当前键盘选中行为锚） */
+export function selectBatchRange(index: number) {
+  if (batchAnchorIndex < 0) batchAnchorIndex = selectedRowIndex.value;
+  const lo = Math.min(batchAnchorIndex, index);
+  const hi = Math.max(batchAnchorIndex, index);
+  const next = new Set(batchSelectedIds.value);
+  for (let i = lo; i <= hi; i++) {
+    const it = data.value[i];
+    if (it) next.add(it.id);
+  }
+  batchSelectedIds.value = next;
+  selectedRowIndex.value = index;
+}
+
+/** 清空批量选择（普通点击 / Esc / 批量操作完成 / 列表重置） */
+export function clearBatchSelection() {
+  batchSelectedIds.value = new Set();
+  batchAnchorIndex = -1;
+}
+
 /** 过滤条件：是否仅收藏 + 搜索关键字 + 类型筛选（all 全部 / image 仅图片）+ 高级搜索开关 */
 export const filter = ref({
   favorite: 0,
@@ -146,6 +184,9 @@ export async function resetClips() {
     data.value = [];
     dataLength.value = 0;
     selectedRowIndex.value = 0;
+    // 搜索词/筛选变化后旧 id 集合失效，批量选择一并清空
+    batchSelectedIds.value = new Set();
+    batchAnchorIndex = -1;
     hasMore.value = true;
   } finally {
     inFlight = false;
