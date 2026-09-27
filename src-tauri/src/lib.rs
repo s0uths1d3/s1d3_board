@@ -84,6 +84,8 @@ pub fn run() {
             clipboard::image_store::read_clipboard_image_file,
             clipboard::image_store::read_clipboard_image_files,
             clipboard::image_store::delete_clipboard_image_file,
+            clipboard::image_store::list_clipboard_image_files,
+            clipboard::image_store::delete_clipboard_image_files,
             ai::engine::ai_test_connection,
             ai::engine::ai_complete,
             island::api::island_api_apply,

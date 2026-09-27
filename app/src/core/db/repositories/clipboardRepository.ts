@@ -2,12 +2,96 @@ import { invoke } from "@tauri-apps/api/core";
 import type { DatabaseConnection } from '../connection';
 import type { ClipboardData } from '../../../entities';
 import { bus } from '../../events';
-import { resolveImageRows, deleteImageFileByRef } from '../imageRef';
+import { resolveImageRows, deleteImageFileByRef, invalidateImageCache } from '../imageRef';
 import { escapeLike, withPage, type PageQuery } from '../sql';
 import type { RecordStats } from './noteRepository';
 
 /** 剪贴板默认保留上限：设置项 max_save_count 未设置/无效时生效（防 DB 无限膨胀） */
 const DEFAULT_MAX_SAVE_COUNT = 1000;
+
+/**
+ * 图片缓存磁盘占用默认上限（MB）：设置项 image_cache_max_mb 未设置/无效时生效。
+ * 用户可设置；默认 256MB（对比：内存解析缓存 64MB 预算，磁盘侧余量更大）。
+ */
+export const DEFAULT_IMAGE_CACHE_MB = 256;
+
+/** 磁盘图片清单条目（Rust list_clipboard_image_files 返回） */
+export interface ImageFileInfo {
+    name: string;
+    size: number;
+}
+
+/** 剪贴板图片条目的清理候选字段（DB 行裁剪） */
+export interface ImageCleanupRow {
+    id: number;
+    content: string;
+    count: number;
+    updated_at: number;
+    is_favorite: number;
+}
+
+/** 清理计划：孤儿文件（DB 无引用）与超限淘汰（行+文件一起删） */
+export interface ImageCleanupPlan {
+    orphanFiles: string[];
+    victimFiles: string[];
+    victimRowIds: number[];
+}
+
+/**
+ * 图片磁盘清理的淘汰选择（纯函数，便于单测）：
+ * - 孤儿文件：磁盘上有、但既无剪贴板条目引用、也不在保护集（常用剪贴的图片副本）中 → 只删文件；
+ * - 超限淘汰：总占用超出 limitBytes 时，按「使用次数少 → 最久未用」优先淘汰，
+ *   收藏项（is_favorite=1）豁免——用户显式标记要留的内容不被清理挤掉；
+ * - 返回待删文件名（不含 imgfile: 前缀）与待删行 id，调用方执行 DB 删除 + 文件删除 + 缓存失效。
+ */
+export function selectImageCleanupVictims(
+    files: ImageFileInfo[],
+    rows: ImageCleanupRow[],
+    limitBytes: number,
+    protectedRefs: string[] = [],
+): ImageCleanupPlan {
+    // 引用保护集：剪贴板 imgfile 引用 + 外部保护引用（常用剪贴等）
+    const referenced = new Set<string>();
+    const rowByRef = new Map<string, ImageCleanupRow>();
+    for (const r of rows) {
+        if (typeof r.content !== 'string' || !r.content.startsWith('imgfile:')) continue;
+        referenced.add(r.content);
+        rowByRef.set(r.content, r);
+    }
+    for (const p of protectedRefs) referenced.add(p);
+
+    const sizeByRef = new Map<string, number>(
+        files.map(f => [`imgfile:${f.name}`, f.size ?? 0]),
+    );
+    // ① 孤儿文件：磁盘有、无任何引用（残留垃圾，直接清）
+    const orphanFiles = files
+        .map(f => `imgfile:${f.name}`)
+        .filter(ref => !referenced.has(ref))
+        .map(ref => ref.slice('imgfile:'.length));
+
+    // ② 超限淘汰：收藏豁免，按 count 升序（用得少先删）、updated_at 升序（久未用先删）、id 兜底
+    const overBytes = files.reduce((s, f) => s + (f.size ?? 0), 0) - limitBytes;
+    const victimFiles: string[] = [];
+    const victimRowIds: number[] = [];
+    if (overBytes > 0) {
+        const candidates = rows
+            .filter(r => r.is_favorite !== 1 && rowByRef.has(r.content))
+            .sort((a, b) =>
+                (a.count ?? 0) - (b.count ?? 0)
+                || (a.updated_at ?? 0) - (b.updated_at ?? 0)
+                || a.id - b.id,
+            );
+        let need = overBytes;
+        for (const r of candidates) {
+            if (need <= 0) break;
+            const name = r.content.slice('imgfile:'.length);
+            victimFiles.push(name);
+            victimRowIds.push(r.id);
+            need -= sizeByRef.get(r.content) ?? 0;
+        }
+    }
+    return { orphanFiles, victimFiles, victimRowIds };
+}
 
 /**
  * 剪贴板领域仓储（clipboard 表）：写入 upsert / 查询 / 收藏 / 使用计数 / 删除 /
@@ -41,6 +125,12 @@ export interface ClipboardRepository {
     deleteClipboardData(id: number): Promise<void>;
     /** 区间内按来源应用聚合的复制条数 Top N（统计页"来源应用"榜；startMs 含、endMs 不含） */
     fetchSourceAppTop(startMs: number, endMs: number, limit: number): Promise<{ app: string; cnt: number }[]>;
+    /**
+     * 磁盘图片缓存清理：总占用超出「图片缓存上限」（image_cache_max_mb，默认 256MB）时，
+     * 孤儿文件直接清、引用行按「使用次数少 → 最久未用」淘汰（行+文件+内存缓存一并处理）。
+     * 触发点：新图片入库后（fire-and-forget）与应用启动时。
+     */
+    cleanupImageStorage(): Promise<void>;
 }
 
 export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
@@ -99,7 +189,74 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
         }
     }
 
+    /**
+     * 磁盘图片缓存清理（接口语义见 ClipboardRepository.cleanupImageStorage 注释）：
+     * ① Rust 列举 images 目录（文件名 + 字节数），总占用未超上限直接返回；
+     * ② 常用剪贴的图片副本（pinned_clip）虽不在 clipboard 表，同样引用 imgfile 文件，
+     *    加入保护集——否则未用满上限时孤儿判定会误删常用剪贴的原图；
+     * ③ 孤儿文件（无任何 DB 引用）只删文件；超限部分按淘汰序删行 + 删文件 + 失效内存缓存。
+     * 任何失败仅记日志（清理是尽力而为的维护操作，不影响主流程）。
+     * 提升到工厂作用域：saveClipboard 的新图入库联动触发与本方法共用同一实现。
+     */
+    async function cleanupImageStorage(): Promise<void> {
+        try {
+            const raw = await getKeyValue('image_cache_max_mb');
+            const parsed = parseInt(raw ?? '', 10);
+            const limitBytes = (Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_IMAGE_CACHE_MB) * 1024 * 1024;
+
+            const files = await invoke<ImageFileInfo[]>('list_clipboard_image_files');
+            if (!files || files.length === 0) return;
+            const totalBytes = files.reduce((s, f) => s + (f.size ?? 0), 0);
+
+            const db = await conn.ready();
+            const rows: ImageCleanupRow[] = await db.select(
+                "SELECT id, content, count, updated_at, is_favorite FROM clipboard WHERE type = 'image'",
+            );
+            // 保护集：常用剪贴的图片副本（imgfile 引用，与剪贴板条目共用同一落盘文件）
+            let protectedRefs: string[] = [];
+            try {
+                const pinned: { content: string }[] = await db.select(
+                    "SELECT content FROM pinned_clip WHERE type = 'image'",
+                );
+                protectedRefs = pinned.map(p => p.content).filter(c => typeof c === 'string');
+            } catch { /* 表缺失等异常：保护集为空，继续（孤儿判定不受影响） */ }
+
+            const plan = selectImageCleanupVictims(files, rows, limitBytes, protectedRefs);
+            const freedBytes =
+                plan.orphanFiles.reduce((s, n) => s + (files.find(f => f.name === n)?.size ?? 0), 0)
+                + plan.victimFiles.reduce((s, n) => s + (files.find(f => f.name === n)?.size ?? 0), 0);
+            if (plan.orphanFiles.length === 0 && plan.victimRowIds.length === 0) return;
+
+            // ① 孤儿文件：只删文件（DB 本就无引用）
+            // ② 超限淘汰：先删行（分批防参数上限，与 trimClipboard 同策略）再删文件
+            for (let i = 0; i < plan.victimRowIds.length; i += 500) {
+                const chunk = plan.victimRowIds.slice(i, i + 500);
+                await conn.executeWithRetry(
+                    `DELETE FROM clipboard WHERE id IN (${chunk.map((_, j) => `$${j + 1}`).join(',')})`,
+                    chunk,
+                );
+            }
+            const allFiles = [...plan.orphanFiles, ...plan.victimFiles];
+            if (allFiles.length > 0) {
+                await invoke('delete_clipboard_image_files', { files: allFiles });
+            }
+            // 淘汰行的内存解析缓存一并失效：引用与文件都不复存在，缓存命中会展示幽灵图
+            if (plan.victimFiles.length > 0) {
+                invalidateImageCache(plan.victimFiles.map(n => `imgfile:${n}`));
+            }
+            console.info(
+                `图片缓存清理：释放 ${(freedBytes / 1024 / 1024).toFixed(1)}MB`
+                + `（孤儿 ${plan.orphanFiles.length} 个 / 淘汰条目 ${plan.victimRowIds.length} 条，`
+                + `上限 ${Math.round(limitBytes / 1024 / 1024)}MB，原占用 ${(totalBytes / 1024 / 1024).toFixed(1)}MB）`,
+            );
+        } catch (e) {
+            console.error('图片缓存清理失败:', e);
+        }
+    }
+
     return {
+        cleanupImageStorage,
+
         suppressUseCountBump(ms = 1200): void {
             useCountSuppressUntil = Date.now() + ms;
         },
@@ -140,6 +297,10 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
             }
             // 新记录插入后按「剪贴板最大存储数量」裁剪最旧记录
             await trimClipboard();
+
+            // 图片条目：按「图片缓存上限」联动清理磁盘（孤儿文件 + 不常用原图优先淘汰；
+            // fire-and-forget，清理失败不影响入库）
+            if (type === 'image') void cleanupImageStorage();
 
             // 智能剪贴板：新文本入库 → 广播复制事件（处理层 smartClip 解析进内存 store；
             // 设计文档 §4.1 触发点）。仅文本参与解析管道。

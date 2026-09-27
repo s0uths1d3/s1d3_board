@@ -98,6 +98,12 @@ class DatabaseService {
         return this.clipboard.fetchSourceAppTop(startMs, endMs, limit);
     }
 
+    /** 磁盘图片缓存清理（图片缓存上限可设置，默认 256MB；孤儿文件 + 不常用原图优先淘汰） */
+    public async cleanupImageStorage(): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.clipboard.cleanupImageStorage();
+    }
+
     public async updateFavorite(id: number, value: number): Promise<void> {
         await this.ensureDbInitialized();
         return this.clipboard.updateFavorite(id, value);

@@ -63,6 +63,8 @@ interface SettingGroup {
 // 各设置项的响应式状态（直接承载值，并通过 watch 实时持久化，无需“应用”按钮）
 const apiKey = ref('');
 const maxLimit = ref('');
+/** 图片缓存磁盘上限（MB）：留空/无效时清理策略回落默认 256MB（DEFAULT_IMAGE_CACHE_MB） */
+const imageLimit = ref('');
 // ===== 配色：琥珀（当前暖米色）/ 跟随系统 / 浅色 / 深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 =====
 const { scheme } = useColorScheme();
 const colorSchemeOptions = computed(() => COLOR_SCHEME_ORDER.map(value => ({ value, label: t(`color_scheme.${value}`) })));
@@ -201,6 +203,9 @@ watch(apiKey, async (val) => {
 });
 watch(maxLimit, async (val) => {
   debouncePersist('max_save_count', () => dbService.setKeyValue('max_save_count', val ?? ''));
+});
+watch(imageLimit, async (val) => {
+  debouncePersist('image_cache_max_mb', () => dbService.setKeyValue('image_cache_max_mb', val ?? ''));
 });
 
 // ===== AI 通道配置（设计文档 §4.2）：提供商 / 地址 / 模型 + 连接测试 =====
@@ -974,6 +979,11 @@ const settings: SettingGroup[] = [
         type: 'input'
       },
       {
+        label: 'setting.general.image_limit',
+        value: '',
+        type: 'input'
+      },
+      {
         label: 'setting.general.launch_at_startup',
         value: '',
         type: 'checkbox'
@@ -1378,6 +1388,7 @@ onBeforeUnmount(() => {
 onMounted(async () => {
   osType.value = getOsTypeFromNavigator();
   maxLimit.value = await dbService.getKeyValue('max_save_count');
+  imageLimit.value = await dbService.getKeyValue('image_cache_max_mb');
   apiKey.value = await dbService.getKeyValue('api_key');
   // AI 通道配置恢复（设计文档 §4.2）：提供商缺省 openai-compat
   aiProvider.value = ((await dbService.getKeyValue('ai_provider')) || 'openai-compat') as AiProviderKind;
@@ -2012,7 +2023,14 @@ onMounted(async () => {
                       v-model="maxLimit"
                       :placeholder="t('setting.general.clipboard_limit_placeholder')"
                       @save="showHint(t('setting.general.clipboard_limit_saved'))"
-                  />                  <UiToggleSwitch
+                  />
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.image_limit'"
+                      v-model="imageLimit"
+                      :placeholder="t('setting.general.image_limit_placeholder')"
+                      @save="showHint(t('setting.general.image_limit_saved'))"
+                  />
+                  <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === 'setting.general.launch_at_startup'"
                       v-model="autoStartEnabled"
                       :label="t('setting.general.launch_at_startup')"

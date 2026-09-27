@@ -12,6 +12,18 @@ pub(crate) trait ImageStore {
     fn read(&self, file: &str) -> Option<String>;
     /// 删除原图文件（不存在视为已删除，幂等 true）
     fn delete(&self, file: &str) -> bool;
+    /// 列举 images 目录全部图片文件（文件名 + 字节数）：磁盘占用清理策略的输入
+    fn list(&self) -> Vec<ImageFileEntry>;
+    /// 批量删除原图文件（逐个消毒 + 幂等删除），返回成功删除个数
+    fn delete_batch(&self, files: &[String]) -> usize;
+}
+
+/// 磁盘图片清单条目（清理策略输入 / 前端展示）：文件名 + 字节数。
+/// pub：随 image_store::list_from_dir 的对外（tests/ 集成测试）签名暴露。
+#[derive(serde::Serialize)]
+pub struct ImageFileEntry {
+    pub name: String,
+    pub size: u64,
 }
 
 /// 前台应用查询抽象（clip.source_app 来源标记）。
@@ -32,8 +44,9 @@ pub(crate) trait IslandSink {
 
 /// Tauri managed state 包装：State<'_, T> 要求具体类型，trait 对象以 Arc 存于字段。
 /// 命令参数中的 State 不进 invoke 载荷，前端 invoke 签名不受影响。
-pub(crate) struct ImageStoreHandle(pub(crate) std::sync::Arc<dyn ImageStore + Send + Sync>);
+/// pub：命令经 lib.rs pub use 重导出后进入对外（tests/）接口，包装类型须同步公开。
+pub struct ImageStoreHandle(pub(crate) std::sync::Arc<dyn ImageStore + Send + Sync>);
 
-pub(crate) struct ForegroundSourceHandle(
+pub struct ForegroundSourceHandle(
     pub(crate) std::sync::Arc<dyn ForegroundSource + Send + Sync>,
 );

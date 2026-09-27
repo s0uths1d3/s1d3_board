@@ -125,3 +125,17 @@ export function deleteImageFileByRef(content: string | null | undefined): void {
     if (!content || !content.startsWith(IMAGE_FILE_PREFIX)) return;
     void invoke('delete_clipboard_image_file', { file: content.slice(IMAGE_FILE_PREFIX.length) }).catch(() => {});
 }
+
+/**
+ * 批量失效解析缓存（磁盘占用清理联动）：被清理的引用从 LRU 中移除。
+ * 与单条删除不同——清理是"条目+文件"一起消失，内存里的 data URL 若不失效，
+ * 列表刷新（resolveImageRows 缓存命中直接回填）会继续展示已删除的图（幽灵图）。
+ */
+export function invalidateImageCache(refs: string[]): void {
+    for (const ref of refs) {
+        const v = resolveCache.get(ref);
+        if (v === undefined) continue;
+        resolveCache.delete(ref);
+        resolveCacheBytes -= v.length;
+    }
+}

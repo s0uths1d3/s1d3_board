@@ -47,6 +47,10 @@ vi.mock('../../commands/shortcuts/InitShortcuts', () => ({
     unregisterAllShortcuts: vi.fn(async () => {}),
 }));
 vi.mock('../../core/db/migrator', () => ({ runDatabaseMigrations: vi.fn(async () => {}) }));
+// clipboard.module 启动末尾会触发磁盘图片清理：桩化 dbService，避免测试引入真实连接
+vi.mock('~/src/db/dbService', () => ({
+    default: { cleanupImageStorage: vi.fn(async () => {}) },
+}));
 
 /** 构造可断言的模块上下文（db/config 为最小桩：boot 流程不触达它们） */
 function makeCtx() {
