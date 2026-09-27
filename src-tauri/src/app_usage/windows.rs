@@ -351,20 +351,3 @@ unsafe {
 }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 真机链路自检：explorer 常驻运行，icon_of_app 应能走通
-    /// 进程枚举 → 路径查询 → SHGetFileInfo → PNG data URL 全链路
-    #[test]
-    fn icon_of_running_process_returns_data_url() {
-        let icon = icon_of_app("explorer").expect("explorer 应能提取到图标");
-        assert!(icon.starts_with("data:image/png;base64,"), "应为 PNG data URL");
-        assert!(icon.len() > 100, "data URL 不应为空");
-        // 带旧式 .exe 后缀的名字（历史 source_app 数据）也应匹配成功
-        let icon2 = icon_of_app("explorer.exe").expect("带 .exe 后缀的名字也应能提取");
-        assert!(icon2.starts_with("data:image/png;base64,"));
-    }
-}
-

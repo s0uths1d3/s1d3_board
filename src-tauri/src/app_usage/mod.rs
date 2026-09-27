@@ -269,7 +269,7 @@ impl ForegroundSource for PlatformForegroundSource {
 
 // ===================== 平台实现（按编译目标选择） =====================
 #[cfg(target_os = "windows")]
-mod windows;
+pub mod windows;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "linux")]
@@ -296,21 +296,4 @@ pub fn encode_data_url(bytes: Vec<u8>) -> String {
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn encode_data_url_wraps_base64() {
-        let out = encode_data_url(b"hello".to_vec());
-        assert_eq!(out, "data:image/png;base64,aGVsbG8=");
-    }
-
-    #[test]
-    fn encode_data_url_empty_is_valid_data_url() {
-        // 空字节也应产出合法 data URL（前缀 + 空 base64）
-        assert_eq!(encode_data_url(Vec::new()), "data:image/png;base64,");
-    }
 }

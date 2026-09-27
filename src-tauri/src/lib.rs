@@ -17,8 +17,16 @@ use app_usage::PlatformForegroundSource;
 use clipboard::image_store::FsImageStore;
 use core::traits::{ForegroundSourceHandle, ImageStoreHandle};
 
-// 对外（tests/ 集成测试）公共 API：QR 扫描纯函数与 data URL 解码命令
+// 对外（tests/ 集成测试）公共 API：QR 扫描纯函数与 data URL 解码命令、
+// 图片文件存取核心、灵动岛 Webhook URL 校验、数据库迁移链、AI 引擎 base_url 规整
 pub use clipboard::thumb;
+pub use app_usage::encode_data_url;
+#[cfg(target_os = "windows")]
+pub use app_usage::windows;
+pub use clipboard::image_store;
+pub use island::webhook;
+pub use db::migrations;
+pub use ai::engine;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

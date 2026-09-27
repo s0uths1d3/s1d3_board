@@ -53,7 +53,8 @@ fn http_client() -> Result<reqwest::Client, String> {
 }
 
 /// 规整 base_url：去尾部斜杠；空值回落到该提供商的官方默认地址
-fn normalize_base_url(base_url: &str, provider_default: &str) -> String {
+/// （pub：tests/ 集成测试经 app_lib::engine 引入断言）
+pub fn normalize_base_url(base_url: &str, provider_default: &str) -> String {
     let trimmed = base_url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         provider_default.to_string()
@@ -522,45 +523,4 @@ pub async fn ai_complete(
     provider_for_err(&cfg)?
         .complete(&cfg, &system, &content, &app)
         .await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_base_url_trims_trailing_slash() {
-        assert_eq!(
-            normalize_base_url("https://api.example.com/v1/", "https://default"),
-            "https://api.example.com/v1"
-        );
-        // 多个尾斜杠全部去除
-        assert_eq!(
-            normalize_base_url("https://api.example.com/v1///", "https://default"),
-            "https://api.example.com/v1"
-        );
-    }
-
-    #[test]
-    fn normalize_base_url_keeps_clean_url() {
-        assert_eq!(
-            normalize_base_url("https://api.openai.com/v1", "https://default"),
-            "https://api.openai.com/v1"
-        );
-    }
-
-    #[test]
-    fn normalize_base_url_trims_whitespace() {
-        assert_eq!(
-            normalize_base_url("  https://api.example.com  ", "https://default"),
-            "https://api.example.com"
-        );
-    }
-
-    #[test]
-    fn normalize_base_url_empty_falls_back_to_default() {
-        assert_eq!(normalize_base_url("", "https://fallback"), "https://fallback");
-        assert_eq!(normalize_base_url("   ", "https://fallback"), "https://fallback");
-        assert_eq!(normalize_base_url("/", "https://fallback"), "https://fallback");
-    }
 }
