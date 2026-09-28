@@ -84,6 +84,11 @@ export function createDataTransferRepository({ conn }: { conn: DatabaseConnectio
             if (!bundle || typeof bundle !== 'object' || typeof bundle.tables !== 'object' || bundle.tables === null) {
                 throw new Error('invalid data bundle');
             }
+            // 版本守卫：只接受当前导出版本——旧/新版本文件静默导入会产生错乱数据，
+            // 明确报错走设置页的「导入失败」提示
+            if (bundle.version !== DATA_BUNDLE_VERSION) {
+                throw new Error(`unsupported bundle version: ${String(bundle.version)} (expected ${DATA_BUNDLE_VERSION})`);
+            }
             const db = await conn.ready();
             // 图片先行落盘：dataUrl → imgfile: 引用（sha256 内容寻址，同内容得到原文件名）
             for (const name of IMAGE_TABLES) {

@@ -24,6 +24,7 @@ import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
 import statsService from "~/src/statistics/statsService";
 import { savePopupLastPosition } from "~/composables/usePopupPosition";
 import { closeTooltipWindows } from "~/composables/useTooltipEnabled";
+import { ensureAutoHideLoaded, isAutoHideEnabled } from "~/composables/useAutoHide";
 import { createAppRegistry, appContext } from "~/src/modules";
 
 // Tauri 2.11 注入脚本缺陷补丁：unregisterListener 读本地表不判空
@@ -67,6 +68,11 @@ let hideOnBlurTimer: ReturnType<typeof setTimeout> | null = null;
  */
 async function tryHideMainWindow() {
   try {
+    // 失焦自动隐藏开关（设置 → 通用）关闭时：主窗口保持显示，由用户手动收起。
+    // 同步读共享状态（onMounted 已 ensureLoaded，持久化值先于首次失焦落定）
+    if (!isAutoHideEnabled()) {
+      return;
+    }
     // 主窗口置顶（始终在最前）时禁止失焦自动隐藏：置顶语义即"永不退到后台"。
     // 否则置顶主窗口在切到其它窗口/应用后仍被隐藏，违背用户对"置顶"的预期。
     if (await getCurrentWindow().isAlwaysOnTop().catch(() => false)) {
@@ -199,7 +205,9 @@ onMounted(async () => {
     await registry.boot(appContext);
   }
 
-  // 失焦自动隐藏（后台驻留模式）——窗口生命周期行为，保留在 app.vue
+  // 失焦自动隐藏（后台驻留模式）——窗口生命周期行为，保留在 app.vue。
+  // 开关持久化值先落定（默认开），避免首版启动瞬间失焦钩子读到默认值误隐藏
+  await ensureAutoHideLoaded();
   await setupAutoHideOnBlur();
 
   // 退出前强制落库 pending（防崩溃/强制退出丢失当日未落库数据，§14.1.1）

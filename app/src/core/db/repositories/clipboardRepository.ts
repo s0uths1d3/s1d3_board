@@ -8,7 +8,7 @@ import { toDateString } from '../../../../utils/datetime';
 import type { RecordStats } from './noteRepository';
 
 /** 剪贴板默认保留上限：设置项 max_save_count 未设置/无效时生效（防 DB 无限膨胀） */
-const DEFAULT_MAX_SAVE_COUNT = 1000;
+export const DEFAULT_MAX_SAVE_COUNT = 1000;
 
 /**
  * 图片缓存磁盘占用默认上限（MB）：设置项 image_cache_max_mb 未设置/无效时生效。

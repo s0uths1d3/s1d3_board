@@ -2,6 +2,17 @@
 // 模块级：跨组件挂载保留选中的设置分类。设置页随 Tab 切换被卸载/重建，
 // 组件内 ref 会重置为第一项，导致每次进入设置都先闪现第一组、再跳到上次分类。
 let lastActiveSettingTitle: string | null = null;
+
+// ===== 清空撤回窗口（模块级单例，独立于组件生命周期）=====
+// 设置页随 Tab 切换被卸载/重建：撤回状态若放组件内，切走即触发 expireUndoWindow
+// 把备份丢掉——用户「清空后切走再切回」就永远失去撤回机会。状态移到模块级：
+// 切走仅隐藏 UI，倒计时继续，5s 内切回仍可撤回，超时照常 finalize 丢备份。
+// （ref 复用下方 <script setup> 的 vue 导入：双 script 块合并为同一模块，重复 import 会冲突）
+// （dev HMR 会重执行本模块重建状态，属开发期边缘情况，不影响生产行为）
+const undoActive = ref(false);
+const undoRemaining = ref(5);
+let undoCountdownTimer: ReturnType<typeof setInterval> | null = null;
+let undoExpireTimer: ReturnType<typeof setTimeout> | null = null;
 </script>
 
 <script setup lang="ts">
@@ -16,7 +27,7 @@ import dbService from '~/src/db/dbService';
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
-import { DEFAULT_IMAGE_CACHE_MB, type ImageFileInfo } from '~/src/core/db/repositories/clipboardRepository';
+import { DEFAULT_IMAGE_CACHE_MB, DEFAULT_MAX_SAVE_COUNT, type ImageFileInfo } from '~/src/core/db/repositories/clipboardRepository';
 import type { DataBundle } from '~/src/core/db/repositories/dataTransferRepository';
 import type { ClipExtractor, ClipScheme } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
@@ -44,6 +55,7 @@ import {
     usePrivacyPause, setPrivacyPaused,
     useSensitiveFilter, setSensitiveFilterEnabled,
 } from '~/composables/usePrivacySettings';
+import { useAutoHide, setAutoHideEnabled } from '~/composables/useAutoHide';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
 import { appUsageEnabled, setAppUsageEnabled } from '~/composables/useAppUsage';
 import { navRows, reorderTab, persistNavConfig, setTabEnabled } from '~/composables/useTabs';
@@ -93,6 +105,8 @@ const localeLabel = computed(() =>
 );
 async function selectLocale(value: LocaleMode) {
   if (localeMode.value === value) return;
+  // 切语言走整页 reload：先把未落库的防抖输入写库，避免最后编辑的设置项被 reload 丢弃
+  flushPendingWrites();
   await setLocaleMode(value);
   showHint(t('setting.general.locale_changed', { name: localeOptions.value.find(o => o.value === value)?.label ?? '' }));
 }
@@ -188,6 +202,13 @@ async function onAppUsageToggle(val: boolean) {
   }
 }
 
+/** 失焦自动隐藏开关：主窗口失焦后自动收起到托盘（app.vue 失焦钩子读取同一状态源） */
+const { autoHideEnabled } = useAutoHide();
+async function onAutoHideToggle(val: boolean) {
+  await setAutoHideEnabled(val);
+  showHint(val ? t('setting.general.auto_hide_on') : t('setting.general.auto_hide_off'));
+}
+
 /** 隐私模式（暂停记录）开关：开启后监听管道不处理任何剪贴板更新（托盘菜单同款开关，共用状态源） */
 const { privacyPaused } = usePrivacyPause();
 async function onPrivacyPauseToggle(val: boolean) {
@@ -206,29 +227,48 @@ watch(searchHighlightEnabled, async (val) => {
 });
 // 实时保存：文本输入加 400ms 防抖——API key / 最大数量是逐字符输入，
 // 每键一次 INSERT...ON CONFLICT 写库纯属浪费；停止输入后统一落库一次。
-const pendingWrites = new Map<string, ReturnType<typeof setTimeout>>();
+// Map 存 { timer, write }：卸载/切语言时能取出 write 闭包立即执行（flush），
+// 只存计时器的话 flush 时只能丢弃，最后一段输入就丢了
+const pendingWrites = new Map<string, { timer: ReturnType<typeof setTimeout>; write: () => Promise<void> }>();
 function debouncePersist(key: string, write: () => Promise<void>, delay = 400) {
-  const t = pendingWrites.get(key);
-  if (t) clearTimeout(t);
-  pendingWrites.set(key, setTimeout(() => {
+  const pending = pendingWrites.get(key);
+  if (pending) clearTimeout(pending.timer);
+  const timer = setTimeout(() => {
     pendingWrites.delete(key);
     void write();
-  }, delay));
+  }, delay);
+  pendingWrites.set(key, { timer, write });
+}
+/** 立即执行所有未落库的防抖写入（fire-and-forget）：组件卸载 / 切语言 reload 前调用 */
+function flushPendingWrites() {
+  for (const { timer, write } of pendingWrites.values()) {
+    clearTimeout(timer);
+    void write().catch(() => {});
+  }
+  pendingWrites.clear();
 }
 onBeforeUnmount(() => {
-  // 卸载时把未落库的输入立即写库，避免最后一段输入丢失
-  for (const t of pendingWrites.values()) clearTimeout(t);
-  pendingWrites.clear();
+  // 卸载时把未落库的输入立即写库（此前实现是 clearTimeout 丢弃，与注释不符导致丢输入）
+  flushPendingWrites();
 });
 watch(apiKey, async (val) => {
   debouncePersist('api_key', () => dbService.setKeyValue('api_key', val ?? ''));
 });
 watch(maxLimit, async (val) => {
-  debouncePersist('max_save_count', () => dbService.setKeyValue('max_save_count', val ?? ''));
+  debouncePersist('max_save_count', () => persistClampedCount('max_save_count', maxLimit, DEFAULT_MAX_SAVE_COUNT));
 });
 watch(imageLimit, async (val) => {
-  debouncePersist('image_cache_max_mb', () => dbService.setKeyValue('image_cache_max_mb', val ?? ''));
+  debouncePersist('image_cache_max_mb', () => persistClampedCount('image_cache_max_mb', imageLimit, DEFAULT_IMAGE_CACHE_MB));
 });
+
+/** 数量/上限类输入写库前钳制：空 / 非数字 / ≤0 一律落默认值并回写输入框，
+ *  不再原样存脏值（此前读取侧会静默回退，但输入框回显的仍是无效原始值，用户无从得知） */
+async function persistClampedCount(key: string, model: { value: string }, fallback: number): Promise<void> {
+  const parsed = parseInt(model.value ?? '', 10);
+  const valid = Number.isFinite(parsed) && parsed > 0 ? String(parsed) : String(fallback);
+  await dbService.setKeyValue(key, valid);
+  if (model.value !== valid) model.value = valid; // 回显实际生效值（同值不重触发 watch）
+}
 
 // ===== 图片缓存占用可视化 + 手动清理（上次做的磁盘清理策略缺闭环：填了上限但看不到实际占用）=====
 const imageCacheUsedBytes = ref<number | null>(null);
@@ -983,10 +1023,7 @@ const clearing = ref(false);
 const clearMsg = ref('');
 
 // ===== 5 秒撤回窗口：清空后数据先备份到 clear_backup_* 表，期间可整表恢复，超时丢弃备份 =====
-const undoActive = ref(false);
-const undoRemaining = ref(5);
-let undoCountdownTimer: ReturnType<typeof setInterval> | null = null;
-let undoExpireTimer: ReturnType<typeof setTimeout> | null = null;
+// 状态在模块级（见文件顶部）：不随设置页卸载重置，切走再切回仍可撤回
 
 const stopUndoTimers = () => {
   if (undoCountdownTimer) {
@@ -1063,19 +1100,20 @@ async function confirmClearDatabase() {
   }
 }
 
-// 组件卸载（切走设置页）时窗口随界面结束：停表并丢弃备份，避免备份悬挂到下次启动
-onBeforeUnmount(() => {
-  if (undoActive.value) {
-    void expireUndoWindow();
-  } else {
-    stopUndoTimers();
-  }
-});
+// 撤回窗口不随组件卸载终结：状态与定时器在模块级（见文件顶部），
+// 切走设置页后倒计时继续，超时自动 finalize；期间切回设置页仍可撤回
 
 // ===== 数据备份：导出/导入 JSON（剪贴历史换机迁移；图片以 dataUrl 自包含） =====
 const exportingData = ref(false);
 const showImportConfirm = ref(false);
 const importingData = ref(false);
+
+/** 字节数格式化（导出完成提示用；JSON 字符数≈字节数，dataUrl 为 ASCII，提示用途无需精确） */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 
 /** 导出全部业务与统计数据为 JSON 文件（系统保存对话框选位置） */
 async function exportData() {
@@ -1088,8 +1126,10 @@ async function exportData() {
       filters: [{ name: 'JSON', extensions: ['json'] }],
     });
     if (!path) return;
-    await writeTextFile(path, JSON.stringify(bundle));
-    showHint(t('setting.general.export_data_done'));
+    const json = JSON.stringify(bundle);
+    await writeTextFile(path, json);
+    // 带文件大小反馈：图片库经 base64 体积暴涨，用户导出后应能核对文件规模是否符合预期
+    showHint(t('setting.general.export_data_done', { size: formatBytes(json.length) }));
   } catch (e) {
     console.error('导出数据失败:', e);
     showHint(t('setting.general.export_data_failed') + (e as Error).message, 'error');
@@ -1122,7 +1162,16 @@ async function importDataConfirmed() {
     showHint(t('setting.general.import_data_done'));
   } catch (e) {
     console.error('导入数据失败:', e);
-    showHint(t('setting.general.import_data_failed') + (e as Error).message, 'error');
+    const msg = (e as Error)?.message ?? '';
+    // 常见失败本地化：JSON.parse 失败（文件不是合法 JSON）/ 备份版本不兼容——
+    // 直接拼原始 e.message 对用户是英文技术乱码，其余未知错误仍拼原文便于排查
+    if (e instanceof SyntaxError || /unexpected token|json/i.test(msg)) {
+      showHint(t('setting.general.import_bad_file'), 'error');
+    } else if (/version/i.test(msg)) {
+      showHint(t('setting.general.import_bad_version'), 'error');
+    } else {
+      showHint(t('setting.general.import_data_failed') + msg, 'error');
+    }
   } finally {
     importingData.value = false;
   }
@@ -1200,6 +1249,11 @@ const settings: SettingGroup[] = [
       },
       {
         label: 'setting.general.tooltip_window',
+        value: '',
+        type: 'checkbox'
+      },
+      {
+        label: 'setting.general.auto_hide',
         value: '',
         type: 'checkbox'
       },
@@ -2180,6 +2234,11 @@ onMounted(async () => {
                       {{ t('setting.general.clear_undo_btn') }}
                     </button>
                   </div>
+                  <!-- 导入确认态：名称下方红字强调替换式覆盖语义（覆盖不可逆，选错文件有代价） -->
+                  <div v-if="item.type === 'action' && item.label === 'setting.general.import_data' && showImportConfirm"
+                       class="mt-1 text-xs text-danger">
+                    {{ t('setting.general.import_confirm_text') }}
+                  </div>
                 </div>
                 <div class="shrink-0" :class="isWideSettingItem(item) ? 'w-full' : 'w-56'">
                   <!-- 操作型设置项（如清空数据库）：二次确认 -->
@@ -2206,6 +2265,8 @@ onMounted(async () => {
                             :disabled="exportingData" @click="exportData">
                       {{ exportingData ? t('setting.general.export_data_doing') : t('setting.general.export_data') }}
                     </button>
+                    <!-- 范围说明：明确备份不含设置与快捷键，避免「换机后设置全没了」的预期落差 -->
+                    <p class="mt-1 text-xs text-ink-faint">{{ t('setting.general.export_scope_note') }}</p>
                   </template>
                   <!-- 导入备份：二次确认（替换式恢复）→ 系统文件对话框 -->
                   <template v-else-if="item.type === 'action' && item.label === 'setting.general.import_data'">
@@ -2311,6 +2372,13 @@ onMounted(async () => {
                       :tip-on="t('setting.general.tooltip_tip_on')" :tip-off="t('setting.general.tooltip_tip_off')"
                       :label="t('setting.general.tooltip_window')"
                       @change="showHint(tooltipEnabled ? t('setting.general.tooltip_on') : t('setting.general.tooltip_off'))"
+                  />
+                  <!-- 失焦自动隐藏：主窗口失焦后自动收起到托盘；关闭后保持显示，手动收起 -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.auto_hide'"
+                      :model-value="autoHideEnabled"
+                      :label="t('setting.general.auto_hide')"
+                      @change="onAutoHideToggle"
                   />
                   <!-- 灵动岛提示：复制/粘贴时屏幕顶部胶囊反馈 -->
                   <UiToggleSwitch
