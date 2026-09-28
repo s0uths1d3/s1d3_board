@@ -3,6 +3,11 @@
 name = "S1d3 Board"
 image_viewer = "图片查看器"
 
+[tray]
+toggle = "显示/隐藏"
+privacy_pause = "隐私模式（暂停记录）"
+quit = "退出"
+
 [locale]
 label = "语言"
 system = "跟随系统"

@@ -8,7 +8,8 @@
     "tooltip-*",
     "clipboard-bubble-*",
     "island-history",
-    "note-colors"
+    "note-colors",
+    "tray-menu"
   ],
   "permissions": [
     "core:path:default",

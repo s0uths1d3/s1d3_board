@@ -77,6 +77,22 @@ pub fn run() {
             island::api::attach_event_bridge(app.handle());
             Ok(())
         })
+        .on_tray_icon_event(|tray, event| {
+            // 托盘点击转发给前端：自绘托盘菜单（tray-menu 窗口）由 JS 侧定位显示。
+            // 项目版本的 @tauri-apps/api TrayIcon 无 JS 事件订阅 API，只能 Rust 转发。
+            // 仅转发单击松开（Up）帧避免 Down/Up 双发；左右键都转发（与原原生菜单行为一致）
+            if let tauri::tray::TrayIconEvent::Click {
+                button_state: tauri::tray::MouseButtonState::Up,
+                position,
+                ..
+            } = &event
+            {
+                use tauri::Emitter;
+                // 只转发 position（点击光标物理坐标，恒有效）：实测部分 Windows 环境
+                // rect 上报全 0，不能作为定位依据；菜单以光标为锚
+                let _ = tray.app_handle().emit("tray-click", serde_json::json!({ "position": position }));
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::paste::paste,
             commands::menu::set_menu_theme,

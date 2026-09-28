@@ -1,7 +1,12 @@
 
 [app]
 name = "S1d3 Board"
-image_viewer = "Image Viewer"
+image_viewer = "Image viewer"
+
+[tray]
+toggle = "Show/Hide"
+privacy_pause = "Pause clipboard recording"
+quit = "Quit"
 
 [locale]
 label = "Language"
