@@ -8,6 +8,8 @@ import dbService from '~/src/db/dbService';
 import statsService from '~/src/statistics/statsService';
 import { bus } from '~/src/core/events';
 import { createBooleanSetting } from './useBooleanSetting';
+import { useI18n } from './useI18n';
+import { isPrivacyPaused } from './usePrivacySettings';
 import { isTauri } from '~/utils/env';
 
 /**
@@ -458,6 +460,9 @@ let pendingShowTimer: ReturnType<typeof setTimeout> | null = null;
  *  不受灵动岛总开关门控：开关关闭时事件照常入历史/统计/出站推送，仅不建窗显示 */
 async function showIsland(payload: IslandShowPayload): Promise<void> {
   if (!isTauri()) return;
+  // 隐私模式（暂停记录）下应用对剪贴板「失明」：复制/剪切/粘贴检测与第三方 API 请求
+  // 全部收口于此直接丢弃——不弹岛、不落岛历史、不计剪切统计（快速轮询与事件双路径均经过此入口）
+  if (isPrivacyPaused()) return;
   if (pendingShowTimer) { clearTimeout(pendingShowTimer); pendingShowTimer = null; }
   if (islandDelayMs.value <= 0) {
     await emitIslandShow(payload);
@@ -495,6 +500,12 @@ export function initCopyIsland(): void {
       : d.type === 'image'
         ? { kind: 'copy-image', text: qr, image: d.content, thumb: d.thumb ?? undefined, qrText: qr }
         : { kind: 'copy', text: d.content.slice(0, PREVIEW_MAX) });
+  });
+  // 系统提示（如敏感内容拦截）：纯文字 info 胶囊——载荷是 i18n key，此处翻译；
+  // 历史里只留提示文字，敏感内容本身不回显不入库。
+  // t 回调内现取（useI18n 为纯函数读模块级 locale），避免闭包捕获过期状态
+  bus.on('island:notice', (key) => {
+    if (typeof key === 'string' && key) void showIsland({ kind: 'info', text: useI18n().t(key) });
   });
   // 灵动岛 API：Rust 侧 HTTP 服务（island_api.rs）转发的第三方显示请求。
   // kind 由 Rust 校验过，此处再防御性收敛；durationMs>0 时单次覆盖停留时长（钳制到合法范围）。

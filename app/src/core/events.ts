@@ -38,6 +38,8 @@ export interface FocusSearchDetail {
 /** 应用内事件映射：事件名 → 载荷类型（void = 无载荷）。事件名与既有 CustomEvent 完全一致 */
 export interface AppEventMap {
     'clipboard:changed': void;
+    /** 剪贴板列表拉取失败（DB 故障等）：clipboardStore 派发，页面层提示用户 */
+    'clip:load-failed': void;
     'island:copy': IslandCopyDetail;
     'smart-clip:copy': SmartClipCopyDetail;
     'window-shown': void;
@@ -50,6 +52,8 @@ export interface AppEventMap {
     'focus-search': FocusSearchDetail;
     /** 隐私模式（暂停记录）开关变化：托盘菜单重建勾选态（设置页/托盘任一入口切换后派发） */
     'privacy-pause-changed': void;
+    /** 系统提示胶囊（如敏感内容拦截）：载荷为 i18n key，岛端翻译——监听管道不依赖文案层 */
+    'island:notice': string;
 }
 
 export type AppEventName = keyof AppEventMap;

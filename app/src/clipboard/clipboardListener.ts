@@ -64,8 +64,14 @@ export async function startClipboardListener(): Promise<void> {
         try {
             // 隐私模式：暂停一切记录（不落库 / 不弹岛 / 不解析）
             if (isPrivacyPaused()) return;
-            // 敏感内容防护：命中卡号 / 验证码 / 密码形态的文本不落库（默认开启，设置页可关）
-            if (isSensitiveFilterEnabled() && isSensitiveText(newText)) return;
+            // 敏感内容防护：命中卡号 / 验证码 / 密码形态的文本不落库（默认开启，设置页可关）。
+            // 拦截必须可感知——静默丢弃会让用户误以为「复制丢了」（粘贴出来的是上一条内容）。
+            // 载荷为 i18n key（岛端翻译）：本模块若 import useI18n 会构成
+            // dbService → 本模块 → useI18n → dbService 的模块级循环（TDZ 崩溃）
+            if (isSensitiveFilterEnabled() && isSensitiveText(newText)) {
+                bus.emit('island:notice', 'clip.sensitive_blocked');
+                return;
+            }
             await repo.saveClipboard(newText, 'text', await queryForegroundApp());
             // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
             bus.emit('clipboard:changed');
