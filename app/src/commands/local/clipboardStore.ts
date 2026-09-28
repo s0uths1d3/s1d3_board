@@ -1,6 +1,7 @@
 import { ref, nextTick } from 'vue';
 import type { ClipboardData } from '~/src/entities';
 import clipboardService from '~/src/db/dbService';
+import { bus } from '~/src/core/events';
 
 /**
  * 剪贴板列表共享状态
@@ -145,6 +146,8 @@ export async function fetchData() {
     }
   } catch (err) {
     console.error(err);
+    // 通知页面层提示（index.vue 弹错误 hint）：DB 故障时不再只表现为「列表静默没反应」
+    bus.emit('clip:load-failed');
   } finally {
     inFlight = false;
   }
@@ -180,9 +183,9 @@ export async function resetClips() {
   }
   inFlight = true;
   try {
+    // 不先清空 data：旧列表保留展示到新结果替换为止，避免改筛选/搜索词的瞬间闪一屏空白；
+    // lastSignature 已置 null，fetchData 拿到结果必定替换；拉取失败时旧列表保留而非消失
     lastSignature = null;
-    data.value = [];
-    dataLength.value = 0;
     selectedRowIndex.value = 0;
     // 搜索词/筛选变化后旧 id 集合失效，批量选择一并清空
     batchSelectedIds.value = new Set();

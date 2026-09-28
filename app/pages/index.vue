@@ -549,6 +549,8 @@ onMounted(async () => {
   }
   // Delete 键请求删除：弹出内联删除确认框（DeleteConfirm 组件，与便签一致）
   bus.on('delete-request', onDeleteRequest);
+  // 列表加载失败（DB 故障等）：提示用户，替代「列表静默没反应」
+  bus.on('clip:load-failed', () => showPinnedHint(t('clip.load_failed'), 'error'));
 });
 
 /** 命令结果事件的监听取消函数（onBeforeUnmount 统一清理） */
@@ -675,12 +677,22 @@ async function favorite(id: number, value: number) {
 
 // ===== 批量操作：Ctrl/Shift 多选后列表上方工具栏（复制/收藏/删除） =====
 const batchCount = computed(() => batchSelectedIds.value.size);
-/** 选中条目按当前列表顺序排列（已不在列表内的 id 自然排除） */
-const batchItems = computed(() => data.value.filter((it: ClipboardData) => batchSelectedIds.value.has(it.id)));
+/** 选中条目按选择发生顺序排列（Set 保持插入序：单选按点击先后，范围选按锚点→当前遍历序）——
+ *  批量复制合并顺序与用户点选顺序一致，而非「新→旧」的列表顺序 */
+const batchItems = computed(() => {
+  const byId = new Map(data.value.map((it: ClipboardData) => [it.id, it] as const));
+  const picked: ClipboardData[] = [];
+  for (const id of batchSelectedIds.value) {
+    const it = byId.get(id);
+    if (it) picked.push(it);
+  }
+  return picked;
+});
 
-/** 批量复制：选中文本条目按列表顺序合并（换行分隔）写入系统剪贴板 */
+/** 批量复制：选中文本条目按选择顺序合并（换行分隔）写入系统剪贴板 */
 async function batchCopy() {
-  const texts = batchItems.value
+  const items = batchItems.value;
+  const texts = items
     .filter((it: ClipboardData) => (it.type ?? 'text') === 'text')
     .map((it: ClipboardData) => it.content);
   if (texts.length === 0) {
@@ -689,7 +701,11 @@ async function batchCopy() {
   }
   try {
     await writeText(texts.join('\n'));
-    showPinnedHint(t('clip.batch_copy_done', { n: texts.length }));
+    // 图片条目无法合并进文本：明确告知跳过数量，而非静默丢弃让用户以为全选都复制了
+    const skippedImages = items.length - texts.length;
+    showPinnedHint(skippedImages > 0
+      ? t('clip.batch_copy_done_skip', { n: texts.length, m: skippedImages })
+      : t('clip.batch_copy_done', { n: texts.length }));
     clearBatchSelection();
   } catch (e) {
     console.error('批量复制失败:', e);
@@ -755,7 +771,15 @@ function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
   ctxMenuX.value = e.clientX;
   ctxMenuY.value = e.clientY;
   ctxMenuItems.value = [
+    // 复制：文本直接写系统剪贴板（触发既有弹岛链路）；图片项提示不支持
+    { label: t('clip.ctx_copy'), action: () => copyClipItem(item) },
     { label: t('clip.add_to_pinned'), action: () => addToPinned(item) },
+    {
+      label: item.is_favorite === 1 ? t('clip.ctx_unfavorite') : t('clip.ctx_favorite'),
+      action: () => favorite(item.id, item.is_favorite === 1 ? 0 : 1),
+    },
+    // 普通删除：弹内联确认框（与列表行删除按钮一致；anchor 为空走居中兜底）
+    { label: t('clip.delete'), danger: true, action: () => handleDelete(item) },
     // 永久抹除：条目 + 统计字符计数一起清（敏感内容防护闭环，danger 红字警示）
     { label: t('clip.purge'), danger: true, action: () => requestPurge(item) },
   ];
@@ -796,6 +820,22 @@ async function copyQrContent(item: ClipboardData) {
   } catch (e) {
     console.error('复制二维码内容失败:', e);
     showPinnedHint(t('clip.qr_copy_failed'), 'error');
+  }
+}
+
+/** 右键「复制」：文本写系统剪贴板（触发既有弹岛链路）；图片项不支持（data URL 直接回写
+ *  无意义且会污染剪贴板历史），提示引导用双击查看大图 */
+async function copyClipItem(item: ClipboardData) {
+  if ((item.type ?? 'text') === 'image') {
+    showPinnedHint(t('clip.ctx_copy_image_unsupported'), 'info');
+    return;
+  }
+  try {
+    await writeText(item.content);
+    showPinnedHint(t('clip.copied'));
+  } catch (e) {
+    console.error('复制剪贴项失败:', e);
+    showPinnedHint(t('clip.copy_failed'), 'error');
   }
 }
 
@@ -1143,7 +1183,7 @@ async function openImageViewer(item: ClipboardData) {
                   class="flex items-center justify-between rounded-2xl border border-gold/50 bg-gold/10 px-3 py-1.5 text-xs text-gold"
               >
                 <span>
-                  已筛选：{{ filter.type === 'image' ? '仅显示图片' : '' }}{{ filter.type === 'image' && filter.favorite === 1 ? ' + ' : '' }}{{ filter.favorite === 1 ? '仅显示收藏' : '' }}
+                  {{ t('clip.filtered') }}{{ filter.type === 'image' ? t('clip.filter_image') : '' }}{{ filter.type === 'image' && filter.favorite === 1 ? ' + ' : '' }}{{ filter.favorite === 1 ? t('clip.filter_favorite') : '' }}
                 </span>
                 <button
                     type="button"
@@ -1176,6 +1216,14 @@ async function openImageViewer(item: ClipboardData) {
                 tabindex="0"
                 @keydown="onListKeydown"
               >
+                <!-- 空态：无记录 / 搜索无结果时给明确文案（替代一屏空白），附基础操作引导 -->
+                <li
+                  v-if="data.length === 0"
+                  class="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-line px-4 py-10 text-center"
+                >
+                  <span class="text-sm text-ink-faint">{{ filter.searchContent ? t('clip.empty_search') : t('clip.empty') }}</span>
+                  <span class="text-xs text-ink-faint/70">{{ t('clip.shortcut_hints') }}</span>
+                </li>
                 <li
                   class="glass-card list-row relative cursor-pointer rounded-2xl p-4 transition-all duration-300 ease-soft hover:-translate-y-0.5 hover:shadow-float"
                   v-for="(item, index) in data"
