@@ -7,6 +7,7 @@ import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewW
 import { isTauri } from '~/utils/env';
 import { useI18n } from '~/composables/useI18n';
 import { showImagePreview, hideImagePreview, dismissImagePreview } from '~/composables/useImagePreview';
+import { useTransparentWindow } from '~/composables/useTransparentWindow';
 import type { IslandKind } from '~/composables/useCopyIsland';
 
 /**
@@ -513,9 +514,10 @@ function hubClose(): void {
 
 onMounted(async () => {
   if (!isTauri()) return;
+  // 透明窗口通用：去除全局 body 渐变与光晕，避免自绘圆角外露实底「白角」。
+  // 此前经 body class（.island-body）逐分支添加，pin 模式曾漏加导致白角
+  useTransparentWindow();
   if (isIsland) {
-    // 透明窗口：body 渐变背景与光晕必须去除，否则透出灰底（.island-body 规则见样式块）
-    document.body.classList.add('island-body');
     unlisteners.push(await listen<{ kind: IslandKind; text?: string; image?: string; thumb?: string; title?: string; durationMs?: number; sticky?: boolean }>('island:show-ui', (ev) => {
       void applyIsland(ev.payload);
     }));
@@ -542,9 +544,6 @@ onMounted(async () => {
     return;
   }
   if (isRingBubble) {
-    // 透明窗口：body 渐变背景与光晕必须去除，否则透出灰底、圆角卡片四角露方块
-    // （复用 .island-body 规则——该规则即"body 透明 + 去全局光晕"，与岛模式共用）
-    document.body.classList.add('island-body');
     // 窗口级 listen（同 pin 模式注释）：emitTo 定向投递只命中本窗口，杜绝多气泡文本串台
     unlisteners.push(await getCurrentWebviewWindow().listen<{ text: string }>('bubble:ring:data', (ev) => {
       ringText.value = ev.payload.text;
@@ -557,8 +556,6 @@ onMounted(async () => {
     return;
   }
   if (isRingHub) {
-    // 透明窗口：同 ring 气泡，去除 body 背景让圆润卡片直接悬浮于桌面
-    document.body.classList.add('island-body');
     unlisteners.push(await listen<{ selected: number; page: number; total: number; source?: string }>('ring:state', (ev) => {
       hubSelected.value = ev.payload.selected;
       hubTotal.value = ev.payload.total;
@@ -632,8 +629,6 @@ onBeforeUnmount(() => {
     if (islandCollapseTimer) { clearTimeout(islandCollapseTimer); islandCollapseTimer = null; }
     stopIslandProximity();
   }
-  // ring / ring-hub 模式挂载时也加了 island-body（body 透明），统一在此移除
-  document.body.classList.remove('island-body');
 });
 </script>
 
@@ -812,16 +807,6 @@ vue-devtools-anchor {
 </style>
 
 <style>
-/* 透明悬浮窗口通用（island / ring / ring-hub 模式经 body class 作用）：
-   去除全局 body 渐变与光晕，保持窗口透明以悬浮于桌面 */
-body.island-body {
-  background: transparent !important;
-}
-body.island-body::before,
-body.island-body::after {
-  display: none !important;
-}
-
 /* 环心原文预览：窄窗口内使用细滚动条（WebView2 默认滚动条过宽，挤占 240px 环心宽度） */
 .hub-source {
   scrollbar-width: thin;

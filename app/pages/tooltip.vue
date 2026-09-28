@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { getCurrentWindow, currentMonitor, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 import { isTauri } from '~/utils/env';
+import { useTransparentWindow } from '~/composables/useTransparentWindow';
 
 interface TooltipPayload {
   /** 文本模式内容（逐行带行号）；图片模式下为空 */
@@ -247,6 +248,8 @@ function markInteracting() {
 
 onMounted(async () => {
   if (!isTauri()) return;
+  // 透明窗口：去除全局 body 渐变与光晕，避免自绘圆角卡片外露实底「白角」
+  useTransparentWindow();
   // 独立窗口无需任务栏/装饰，保持轻量；位置与尺寸由主窗口事件驱动
   // 窗口以 visible:false 创建，收到首个 show 事件后再 show()，避免闪烁/错位
   await getCurrentWindow().setSkipTaskbar(true).catch(() => {});

@@ -15,6 +15,7 @@ import UiColorPicker from '~/components/ui/UiColorPicker.vue'
 import { useNoteColors, NOTE_COLOR_PRESETS, type NoteColor } from '~/composables/useNoteColors'
 import { useColorScheme } from '~/composables/useColorScheme'
 import { useI18n } from '~/composables/useI18n'
+import { useTransparentWindow } from '~/composables/useTransparentWindow'
 import { isTauri } from '~/utils/env'
 
 const { t } = useI18n()
@@ -30,6 +31,8 @@ const openRow = ref<number | null>(null)
 const committing = ref(false)
 
 onMounted(() => {
+  // 透明窗口：去除全局 body 渐变与光晕，避免自绘卡片圆角外露实底「白角」
+  useTransparentWindow()
   drafts.value = colors.value.map(c => ({ ...c }))
   startFocusWatcher()
 })
@@ -155,13 +158,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
-/* 透明窗口：全局 body 渐变背景与光晕伪元素会使自绘卡片圆角外露底（同 bubble 的
-   .island-body 目的），本页整窗置透明，视觉层次完全由卡片圆角+描边+阴影承载 */
-body {
-  background: transparent !important;
-}
-body::before,
-body::after {
-  display: none !important;
-}
+/* 透明窗口的 body 置透明处理统一由 useTransparentWindow composable 注入
+   （视觉层次完全由卡片圆角+描边+阴影承载） */
 </style>

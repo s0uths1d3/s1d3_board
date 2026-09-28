@@ -74,7 +74,10 @@ async function ensurePreviewWindow(): Promise<void> {
     height: 360,
     resizable: false,
     decorations: false,
-    transparent: false, // 与主窗口 tooltip 一致：窗口自带背景
+    // 与主窗口 tooltip（index.vue）一致：透明窗口 + 页面自绘圆角。不透明窗口在
+    // Win11 被系统强制圆角，圆角外露出窗口底色（白色残角）；shadow 同理关闭黑边
+    transparent: true,
+    shadow: false,
     skipTaskbar: true,
     focus: false, // 不抢焦点：不打断宿主窗口交互
     visible: false, // 尺寸与定位就绪后再 show，避免闪烁/错位

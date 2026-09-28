@@ -11,6 +11,7 @@ import { useFormatDate } from '~/composables/useFormatDate';
 import { useColorScheme } from '~/composables/useColorScheme';
 import { notifyIsland, useIslandEnabled, makeImageThumb } from '~/composables/useCopyIsland';
 import { showImagePreview, hideImagePreview, dismissImagePreview } from '~/composables/useImagePreview';
+import { useTransparentWindow } from '~/composables/useTransparentWindow';
 import { isTauri } from '~/utils/env';
 import type { IslandKind } from '~/composables/useCopyIsland';
 
@@ -379,6 +380,9 @@ async function closeWin(): Promise<void> {
 onMounted(() => {
   void loadHistory();
   if (!isTauri()) return;
+  // 透明无边框窗口：去除全局 body 渐变与光晕，避免圆角外露底色（氛围由根容器内
+  // .island-atmosphere 重建，见样式块）
+  useTransparentWindow();
   // 历史窗口存活期间与岛同步接收：新消息实时插到列表头部（限长 500 与 DB 一致）。
   // copy-image 的原图在出站事件 image 字段（v1.4.0 起 text 不再携带 data URL），与 DB 写入点
   // 同规则：先插空占位条目，缩略图（webp 小图）生成后回填，原图 base64 不进列表内存
@@ -753,19 +757,9 @@ onBeforeUnmount(() => dismissImagePreview());
   </div>
 </template>
 
-<style>
-/* 透明无边框窗口：body 不透明背景与 fixed 光晕会铺满矩形、圆角外露底色，
-   页面级整体置空，氛围由根容器内 .island-atmosphere 重建（仅本窗口页面生效） */
-body {
-  background: transparent !important;
-}
-body::before,
-body::after {
-  display: none !important;
-}
-</style>
-
 <style scoped>
+/* 透明无边框窗口的 body 置透明处理统一由 useTransparentWindow composable 注入；
+   页面氛围由下方 .island-atmosphere 重建（仅本窗口页面生效） */
 /* 氛围背景层：三段渐变 + 双光晕（与 main.css body 同参数，fixed 改 absolute 随容器裁切）。
    z-index:-1 必不可少：z-auto 的 absolute 元素会绘制在所有 static 内容（列表条目）之上，
    不透明渐变直接盖住数据；-1 使其落在根容器 isolate 上下文的负层（内容之下、背景之上） */

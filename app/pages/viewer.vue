@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, emit } from '@tauri-apps/api/event';
 import { isTauri } from '~/utils/env';
 import { useI18n } from '~/composables/useI18n';
+import { useTransparentWindow } from '~/composables/useTransparentWindow';
 
 const { t } = useI18n();
 
@@ -184,6 +185,9 @@ onMounted(async () => {
     loading.value = false;
     return;
   }
+
+  // 透明窗口：去除全局 body 渐变与光晕，避免自绘圆角外露实底「白角」
+  useTransparentWindow();
 
   myLabel = getCurrentWindow().label;
 
