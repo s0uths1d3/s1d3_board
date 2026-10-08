@@ -9,14 +9,14 @@ import DeleteConfirm from '../DeleteConfirm.vue';
  * - 焦点切换：方向键/Tab 在确认/取消之间轮转，Enter 触发当前聚焦按钮
  */
 
-type MountOpts = { visible?: boolean; message?: string; anchor?: DOMRect | null };
+type MountOpts = { visible?: boolean; message?: string };
 
 /** 当前挂载实例（afterEach 统一卸载，防止键盘监听跨用例泄漏抢占事件） */
 let activeWrapper: ReturnType<typeof mount> | null = null;
 
-function mountConfirm({ visible = true, message = '确定删除？', anchor = null }: MountOpts = {}) {
+function mountConfirm({ visible = true, message = '确定删除？' }: MountOpts = {}) {
     activeWrapper = mount(DeleteConfirm, {
-        props: { visible, message, anchor },
+        props: { visible, message },
         attachTo: document.body,
     });
     return activeWrapper;
@@ -48,8 +48,8 @@ describe('DeleteConfirm 渲染与定位', () => {
         expect(panel()).toBeNull();
     });
 
-    it('无锚点（anchor=null）：视口居中定位', async () => {
-        const w = mountConfirm({ anchor: null });
+    it('视口居中定位', async () => {
+        const w = mountConfirm();
         await flushPromises();
         const el = panel() as HTMLElement;
         const vw = window.innerWidth;

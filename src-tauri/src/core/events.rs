@@ -15,5 +15,9 @@ pub const ISLAND_API_SHOW: &str = "island-api:show";
 pub const ISLAND_API_FAILED: &str = "island-api:failed";
 /// 灵动岛历史查询（HTTP 线程 → 主窗口查库，前端经 island_history_result 回传）
 pub const ISLAND_HISTORY_QUERY: &str = "island-history:query";
+/// macOS 辅助功能权限缺失（CGEventTap 创建失败 → 前端弹岛引导授权，粘贴感知未启用）
+/// 仅 macOS paste_tap 分支引用；Windows/Linux 构建无引用（cfg 隔离），需压制 dead_code
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub const PASTE_PERMISSION_MISSING: &str = "paste:permission-missing";
 /// AI 流式响应分片（ai 命令 → 前端渲染）
 pub const AI_CHUNK: &str = "ai:chunk";

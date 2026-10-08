@@ -1,6 +1,7 @@
 import { ref, computed, watch } from 'vue';
 import { listen, emit } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import dbService from '~/src/db/dbService';
 import { bus } from '~/src/core/events';
 import { isTauri } from '~/utils/env';
@@ -97,6 +98,12 @@ export function useColorScheme() {
         if (typeof window !== 'undefined') {
           bus.emit('resolved-scheme-changed');
         }
+      }, { immediate: true });
+      // 窗口原生主题（标题栏/原生控件明暗）跟随配色：跟随系统模式传 null 恢复系统跟随，
+      // 固定模式映射 light/dark（琥珀为暖米色浅色系 → light）。每窗口独立执行，各自同步。
+      watch([mode, systemDark], ([m]) => {
+        const theme = m === 'system' ? null : (m === 'dark' ? 'dark' : 'light');
+        getCurrentWindow().setTheme(theme).catch(() => { /* 原生主题跟随失败不影响应用 */ });
       }, { immediate: true });
     }
   }

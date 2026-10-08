@@ -4,7 +4,7 @@
  *
  * 与便签（StickyNote）删除确认一致的样式与操作方式：
  * - 暖色 glass-card 卡片 + 金色感叹号 + 「取消/确定」按钮
- * - 就近定位：跟随触发元素（anchor），视口边界自适应，不遮挡被删项
+ * - 视口垂直/水平居中定位，渲染后按真实高度二次校正垂直位置
  * - 键盘：Enter 确认 / Esc 取消 / ←→ 或 Tab 切换按钮焦点
  *
  * 通过 Teleport 挂到 body，避免被调用方容器裁切。
@@ -17,8 +17,6 @@ const { t } = useI18n()
 const props = defineProps<{
   visible: boolean
   message?: string
-  /** 触发删除按钮在视口内的位置（DOMRect）；缺省时屏幕居中 */
-  anchor?: DOMRect | null
 }>()
 
 // prop 默认值会被编译提升到 setup() 外部，无法引用局部 t，
@@ -38,46 +36,31 @@ let keyHandler: ((e: KeyboardEvent) => void) | null = null
 
 const W = 400
 const H = 160
-const GAP = 12
 
-function computeStyle(anchor?: DOMRect | null) {
+/** 视口居中（H 为首帧估算值，渲染后 adjustToRealSize 按真实高度二次校正） */
+function computeCentered() {
   const vw = window.innerWidth
   const vh = window.innerHeight
-  if (!anchor) {
-    style.value = {
-      left: `${Math.max(8, (vw - W) / 2)}px`,
-      top: `${Math.max(8, (vh - H) / 2)}px`,
-    }
-    return
+  style.value = {
+    left: `${Math.max(8, (vw - W) / 2)}px`,
+    top: `${Math.max(8, (vh - H) / 2)}px`,
   }
-  let left = anchor.right + GAP
-  if (left + W > vw - 8) left = Math.max(8, anchor.left - W - GAP)
-  let top = anchor.top
-  if (top + H > vh - 8) top = Math.max(8, anchor.bottom - H - GAP)
-  style.value = { left: `${left}px`, top: `${top}px` }
 }
 
-/** 渲染后按真实高度二次校正：H 只是估算值（文案可多行），窗口放不下时
+/** 渲染后按真实高度二次校正垂直位置：文案可多行，窗口放不下时
  *  钳制最大高度 + 内部滚动，确认框内容永不超出窗口边缘被裁切 */
-function adjustToRealSize(anchor?: DOMRect | null) {
+function adjustToRealSize() {
   const el = document.querySelector<HTMLElement>('[data-delete-confirm]')
   if (!el) return
   const vh = window.innerHeight
   const realH = el.offsetHeight
   const available = Math.max(0, vh - 16)
-  const capped = realH > available
-  if (capped) {
+  if (realH > available) {
     el.style.maxHeight = `${Math.floor(available)}px`
     el.style.overflowY = 'auto'
   }
   const renderH = Math.min(realH, available)
-  if (!anchor) {
-    style.value = { ...style.value, top: `${Math.max(8, (vh - renderH) / 2)}px` }
-    return
-  }
-  let top = anchor.top
-  if (top + renderH > vh - 8) top = Math.max(8, anchor.bottom - renderH - 12)
-  style.value = { ...style.value, top: `${top}px` }
+  style.value = { ...style.value, top: `${Math.max(8, (vh - renderH) / 2)}px` }
 }
 
 function focusAction(action: 'confirm' | 'cancel') {
@@ -89,10 +72,10 @@ watch(
     () => props.visible,
     (v) => {
       if (v) {
-        computeStyle(props.anchor)
+        computeCentered()
         nextTick(() => {
           focusAction('confirm')
-          adjustToRealSize(props.anchor)
+          adjustToRealSize()
         })
         keyHandler = (e: KeyboardEvent) => {
           // capture 阶段 + stopImmediatePropagation：

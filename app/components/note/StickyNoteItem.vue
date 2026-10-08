@@ -113,7 +113,6 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { resolveNoteColor, adaptNoteColorToScheme, useNoteColors } from '~/composables/useNoteColors';
 import { useColorScheme } from '~/composables/useColorScheme';
 import { useI18n } from '~/composables/useI18n';
-import { notifyIsland } from '~/composables/useCopyIsland';
 import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
 import type { Note } from '~/src/entities';
 import { bus } from '~/src/core/events';
@@ -317,12 +316,13 @@ const saveAndClose = () => {
   }, 420)
 }
 
-/** 卸载守卫：编辑态带着未保存改动被销毁（切换标签页）时灵动岛提示。
- *  Ctrl+Enter / 失焦 / 快捷键系统三条保存路径都会先落库，走到这里的只有
- *  「改了内容但没经过任何保存路径就被卸载」的情况；无改动卸载不提示 */
+/** 卸载守卫：编辑态带着未保存改动被销毁（切换标签页等）时自动落库。
+ *  组件卸载不会触发 blur（DOM 移除不发 blur 事件），此前仅弹「编辑已丢弃」提示、
+ *  内容实际丢失；改为卸载前经 update 事件保存（父组件 updateNote 落库并反馈提示）。
+ *  父组件同批卸载时事件处理器仍可执行，异步落库在卸载后继续完成 */
 onBeforeUnmount(() => {
   if (props.editing && editContent.value !== props.note.content) {
-    notifyIsland({ kind: 'info', text: t('note.edit_discarded') })
+    emit('update', props.note.id, editContent.value)
   }
 })
 

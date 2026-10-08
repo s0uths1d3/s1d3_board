@@ -8,7 +8,7 @@ import { deleteImageFileByRef } from '../imageRef';
 
 /**
  * 清空撤回机制的备份表映射：清空前各业务/统计表整表复制到 clear_backup_*，
- * 5 秒撤回窗口内可整表恢复，窗口结束或应用重启后丢弃。
+ * 3 分钟撤回窗口内可合并恢复，窗口结束或应用重启后丢弃。
  */
 export const CLEAR_BACKUP_TABLES = [
     { src: 'clipboard', backup: 'clear_backup_clipboard' },
@@ -24,13 +24,19 @@ export interface BackupRepository {
      * 保留配置表（settings、shortcut_binding）与常用剪贴（pinned_clip，重置不动它，单条删除走 deletePinnedClip）。
      * 同时重置各表的自增主键计数。
      *
-     * 清空前把上述表完整备份到 clear_backup_* 表，配合 undoClearDatabase（5 秒
-     * 撤回窗口内整表恢复）与 finalizeClear（窗口结束后丢弃备份）实现可撤回清空；
+     * 清空前把上述表完整备份到 clear_backup_* 表，配合 undoClearDatabase（3 分钟
+     * 撤回窗口内合并恢复）与 finalizeClear（窗口结束后丢弃备份）实现可撤回清空；
      * 上次会话遗留的备份在启动迁移（migrator）中清理。
      * clearStats = 统计清空钩子（statsService.clearAll：先丢内存累加器再删统计表），保持原调用顺序。
      */
     clearDatabase(clearStats: () => Promise<void>): Promise<void>;
-    /** 撤回清空：把 clear_backup_* 备份整表还原。返回是否有备份被恢复。 */
+    /**
+     * 撤回清空：把 clear_backup_* 备份合并还原（不清空窗口期内新增的数据）。返回是否有备份被恢复。
+     * - clipboard（自增 id + UNIQUE content）：id 整体偏移到现有 MAX(id) 之后插入；窗口期内
+     *   重新复制过的内容（UNIQUE 冲突）以新条目为准（OR IGNORE），内容不丢、仅不合并历史复制计数
+     * - todo / note（TEXT 主键）与 daily_stat / app_usage（日期主键）：直接合并插入，主键冲突
+     *   时备份行胜出（OR REPLACE）——窗口 ≤3 分钟的增量远小于清空前的累计值
+     */
     undoClearDatabase(): Promise<boolean>;
     /** 撤回窗口结束：丢弃备份，清空彻底生效（幂等，可在无备份时安全调用） */
     finalizeClear(): Promise<void>;
@@ -71,8 +77,19 @@ export function createBackupRepository({ conn }: { conn: DatabaseConnection }): 
             }
             if (restorable.length === 0) return false;
             for (const { src, backup } of restorable) {
-                await db.execute(`DELETE FROM ${src}`);
-                await db.execute(`INSERT INTO ${src} SELECT * FROM ${backup}`);
+                if (src === 'clipboard') {
+                    // 自增 id 整体偏移到现有 MAX(id) 之后：不与窗口期内新增条目冲突；
+                    // sqlite_sequence 由显式 rowid 插入自动抬升（成功插入的最大 id ≥ 偏移上限）
+                    await db.execute(
+                        `UPDATE ${backup} SET id = id + (SELECT COALESCE(MAX(id), 0) FROM ${src})`,
+                    );
+                    // 重新复制过的内容撞 UNIQUE 约束：保留窗口期新条目（内容已在，仅计数不合并）
+                    await db.execute(`INSERT OR IGNORE INTO ${src} SELECT * FROM ${backup}`);
+                } else {
+                    // todo/note（TEXT 主键）、daily_stat/app_usage（日期主键）：窗口期新增行与
+                    // 备份行主键天然不同，直接合并；万一撞主键，备份行（清空前累计值）胜出
+                    await db.execute(`INSERT OR REPLACE INTO ${src} SELECT * FROM ${backup}`);
+                }
                 await db.execute(`DROP TABLE ${backup}`);
             }
             return true;
@@ -81,7 +98,7 @@ export function createBackupRepository({ conn }: { conn: DatabaseConnection }): 
         async finalizeClear(): Promise<void> {
             const db = await conn.ready();
             // 撤回窗口已过：清理被清空图片条目的原图文件。clearDatabase 阶段不删文件——
-            // 5s 撤回窗口内 undoClearDatabase 恢复行后引用必须仍有效。只删当前 clipboard 表
+            // 3 分钟撤回窗口内 undoClearDatabase 恢复行后引用必须仍有效。只删当前 clipboard 表
             // 未再引用的文件（清空后用户可能重新复制了同一张图：新条目与备份引用同一文件）
             try {
                 const orphans = await db.select(

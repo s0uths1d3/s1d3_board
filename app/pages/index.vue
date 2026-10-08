@@ -31,6 +31,7 @@ import { activeTab } from "~/composables/useTabs";
 import { bus } from "~/src/core/events";
 import { SwitchTabCommand } from "~/src/commands/local/SwitchTabCommand";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
+import { isTooltipWrapEnabled } from "~/composables/useTooltipWrap";
 import { useSearchHighlight } from "~/composables/useSearchHighlight";
 import { useI18n } from "~/composables/useI18n";
 import { notifyIsland, type IslandKind } from "~/composables/useCopyIsland";
@@ -419,7 +420,7 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
       count: item.count,
       updated: formatDateLocalized(parseInt(item.updated_at)),
     });
-  let payload: { text?: string; image?: string; meta?: string; x: number; y: number; top: number; bottom: number };
+  let payload: { text?: string; image?: string; meta?: string; x: number; y: number; top: number; bottom: number; wrap?: boolean };
   if (isImageItem) {
     payload = {
       image: item.content,
@@ -446,6 +447,8 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
     payload = {
       text,
       meta,
+      // 换行开关：hover 时同步读取（设置页切换立即对下次预览生效），随载荷传给 tooltip 子窗口
+      wrap: isTooltipWrapEnabled(),
       x: rect.left,
       y: rect.bottom + 4,
       top: rect.top,
@@ -865,19 +868,16 @@ function showPinnedHint(msg: string, kind: IslandKind = 'success') {
 // ===== 删除确认（DeleteConfirm 内联组件，样式/操作与便签一致）=====
 const deleteConfirmVisible = ref(false);
 const deleteConfirmMessage = ref('');
-const deleteConfirmAnchor = ref<DOMRect | null>(null);
 const deleteConfirmTarget = ref<ClipboardData | null>(null);
 /** 确认框模式：delete=普通删除（统计保留），purge=永久抹除（数据 + 统计字符计数一起清） */
 const deleteConfirmMode = ref<'delete' | 'purge'>('delete');
 
-/** 点击删除按钮：弹出内联删除确认框（就近定位，不创建子窗口） */
-function handleDelete(target: ClipboardData, e?: MouseEvent) {
+/** 点击删除按钮：弹出内联删除确认框（视口居中，不创建子窗口） */
+function handleDelete(target: ClipboardData) {
   if (!target) return;
   deleteConfirmMode.value = 'delete';
   deleteConfirmTarget.value = target;
   deleteConfirmMessage.value = t(target.type === 'image' ? 'clip.delete_confirm_image' : 'clip.delete_confirm_text');
-  const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null;
-  deleteConfirmAnchor.value = btn?.getBoundingClientRect() ?? null;
   deleteConfirmVisible.value = true;
 }
 
@@ -887,7 +887,6 @@ function requestPurge(target: ClipboardData) {
   deleteConfirmMode.value = 'purge';
   deleteConfirmTarget.value = target;
   deleteConfirmMessage.value = t(target.type === 'image' ? 'clip.purge_confirm_image' : 'clip.purge_confirm_text');
-  deleteConfirmAnchor.value = null;
   deleteConfirmVisible.value = true;
 }
 
@@ -897,7 +896,6 @@ async function confirmDelete() {
   const mode = deleteConfirmMode.value;
   deleteConfirmVisible.value = false;
   deleteConfirmTarget.value = null;
-  deleteConfirmAnchor.value = null;
   if (target) {
     try {
       if (mode === 'purge') {
@@ -922,7 +920,6 @@ async function confirmDelete() {
 function cancelDelete() {
   deleteConfirmVisible.value = false;
   deleteConfirmTarget.value = null;
-  deleteConfirmAnchor.value = null;
   refocusList();
 }
 
@@ -1323,7 +1320,7 @@ async function openImageViewer(item: ClipboardData) {
                       <path d="M985.6 1022.976c-14.848 0-31.744-4.096-47.104-12.288L716.288 899.584l-223.744 111.104c-14.336 7.68-30.208 11.776-47.104 11.776-21.504 0-42.496-6.656-59.392-19.456-31.232-23.552-47.104-64-39.936-101.376l45.568-237.056-175.616-163.328c-27.136-27.648-37.376-67.072-27.136-104.448l0.512-1.024c12.8-38.4 44.544-65.024 82.944-70.144l243.712-44.544L625.152 58.88C642.56 23.552 678.4 1.024 716.288 1.024c39.424 0 76.288 23.552 91.648 58.368l109.056 221.696 243.712 42.496c38.4 5.632 70.656 33.28 81.408 71.168 12.288 36.864 2.048 77.312-25.6 104.96l-0.512 0.512-174.592 164.864 44.032 237.568c7.168 37.888-8.192 76.288-39.424 100.352-17.92 12.8-38.912 19.968-60.416 19.968z" fill="currentColor"></path>
                     </svg>
                   </button>
-                  <button class="btn-soft btn-circle p-2 text-danger" @click="handleDelete(item, $event)">
+                  <button class="btn-soft btn-circle p-2 text-danger" @click="handleDelete(item)">
                     <svg class="size-[1.2em]" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" p-id="4580">
                       <path d="M254.398526 804.702412l-0.030699-4.787026C254.367827 801.546535 254.380106 803.13573 254.398526 804.702412zM614.190939 259.036661c-22.116717 0-40.047088 17.910928-40.047088 40.047088l0.37146 502.160911c0 22.097274 17.930371 40.048111 40.047088 40.048111s40.048111-17.950837 40.048111-40.048111l-0.350994-502.160911C654.259516 276.948613 636.328122 259.036661 614.190939 259.036661zM893.234259 140.105968l-318.891887 0.148379-0.178055-41.407062c0-22.13616-17.933441-40.048111-40.067554-40.048111-7.294127 0-14.126742 1.958608-20.017916 5.364171-5.894244-3.405563-12.729929-5.364171-20.031219-5.364171-22.115694 0-40.047088 17.911952-40.047088 40.048111l0.188288 41.463344-230.115981 0.106424c-3.228531-0.839111-6.613628-1.287319-10.104125-1.287319-3.502777 0-6.89913 0.452301-10.136871 1.296529l-73.067132 0.033769c-22.115694 0-40.048111 17.950837-40.048111 40.047088 0 22.13616 17.931395 40.048111 40.048111 40.048111l43.176358-0.020466 0.292666 617.902982 0.059352 0 0 42.551118c0 44.233434 35.862789 80.095199 80.095199 80.095199l40.048111 0 0 0.302899 440.523085-0.25685 0-0.046049 40.048111 0c43.663452 0 79.146595-34.95 80.054267-78.395488l-0.329505-583.369468c0-22.135136-17.930371-40.047088-40.048111-40.047088-22.115694 0-40.047088 17.911952-40.047088 40.047088l0.287549 509.324054c-1.407046 60.314691-18.594497 71.367421-79.993892 71.367421l41.575908 1.022283-454.442096 0.26606 52.398394-1.288343c-62.715367 0-79.305207-11.522428-80.0645-75.308173l0.493234 76.611865-0.543376 0-0.313132-660.818397 236.82273-0.109494c1.173732 0.103354 2.360767 0.166799 3.561106 0.166799 1.215688 0 2.416026-0.063445 3.604084-0.169869l32.639375-0.01535c1.25355 0.118704 2.521426 0.185218 3.805676 0.185218 1.299599 0 2.582825-0.067538 3.851725-0.188288l354.913289-0.163729c22.115694 0 40.050158-17.911952 40.050158-40.047088C933.283394 158.01792 915.349953 140.105968 893.234259 140.105968zM774.928806 815.294654l0.036839 65.715701-0.459464 0L774.928806 815.294654zM413.953452 259.036661c-22.116717 0-40.048111 17.910928-40.048111 40.047088l0.37146 502.160911c0 22.097274 17.931395 40.048111 40.049135 40.048111 22.115694 0 40.047088-17.950837 40.047088-40.048111l-0.37146-502.160911C454.00054 276.948613 436.069145 259.036661 413.953452 259.036661z" fill="currentColor" p-id="4581"></path>
                     </svg>
@@ -1352,7 +1349,6 @@ async function openImageViewer(item: ClipboardData) {
               <DeleteConfirm
                   :visible="deleteConfirmVisible"
                   :message="deleteConfirmMessage"
-                  :anchor="deleteConfirmAnchor"
                   @confirm="confirmDelete"
                   @cancel="cancelDelete"
               />
@@ -1360,7 +1356,6 @@ async function openImageViewer(item: ClipboardData) {
               <DeleteConfirm
                   :visible="batchDeleteConfirmVisible"
                   :message="t('clip.batch_delete_confirm', { n: batchCount })"
-                  :anchor="null"
                   @confirm="confirmBatchDelete"
                   @cancel="batchDeleteConfirmVisible = false"
               />

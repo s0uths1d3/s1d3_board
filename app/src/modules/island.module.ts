@@ -1,6 +1,6 @@
 import type { AppModule } from '../core/registry';
 import { initCopyIsland } from '~/composables/useCopyIsland';
-import { restoreIslandApiSetting, setupIslandHistoryBridge } from '../island/islandApi';
+import { restoreIslandApiSetting, setupIslandApiFailureListener, setupIslandHistoryBridge, setupPastePermissionListener } from '../island/islandApi';
 import { restoreIslandWebhookSetting } from '../island/islandWebhook';
 
 /**
@@ -17,6 +17,10 @@ export const islandModule: AppModule = {
         void restoreIslandApiSetting();
         // 灵动岛历史查询桥：GET /api/history 的 HTTP 线程挂起请求由主窗口查库回传（常驻，与 API 开关无关）
         void setupIslandHistoryBridge();
+        // API 启动失败监听：端口占用等 → 弹岛提示 + 设置页内联展示（常驻，与 API 开关无关）
+        void setupIslandApiFailureListener();
+        // macOS 粘贴感知权限缺失监听：CGEventTap 创建失败 → 弹岛引导授予辅助功能权限
+        void setupPastePermissionListener();
         // 灵动岛 Webhook 出站推送（事件转发外部 URL；按持久化配置恢复）
         void restoreIslandWebhookSetting();
     },

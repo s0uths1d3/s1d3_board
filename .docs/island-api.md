@@ -1,6 +1,6 @@
 # S1d3 Board 开放 API · 灵动岛
 
-> API v1.4.0 · 适用 S1d3 Board ≥ v0.4.0 · 本文档与实现严格同步，以代码为准（实现：`src-tauri/src/island/api.rs`）
+> API v1.5.0 · 适用 S1d3 Board ≥ v0.4.0 · 本文档与实现严格同步，以代码为准（实现：`src-tauri/src/island/api.rs`）
 
 S1d3 Board 通过回环 HTTP 服务对外开放**双向**能力：
 
@@ -33,21 +33,22 @@ S1d3 Board 通过回环 HTTP 服务对外开放**双向**能力：
 
 ## 2. 快速开始
 
-**启用**：设置 → 通用 → 灵动岛 API → 打开开关（默认关闭），记下端口（默认 `12935`），可选配置 token。
+**启用**：设置 → 通用 → 灵动岛 API → 打开开关（默认关闭），记下端口（默认 `12935`）；访问令牌首次开启时自动生成，复制后配置到你的集成方。
 
 ```bash
-# 1. 健康检查
-curl http://127.0.0.1:12935/api/health
-# {"ok":true,"data":{"version":"1.4.0","port":12935}}
+# 1. 健康检查（所有接口均需令牌，下同）
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:12935/api/health
+# {"ok":true,"data":{"version":"1.5.0","port":12935}}
 
 # 2. 推送一条提示（Inbound）
 curl -X POST http://127.0.0.1:12935/api/island/show \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"text":"构建完成，耗时 42s","kind":"success"}'
 # HTTP 204 No Content
 
-# 3. 订阅事件流（Outbound）
-curl -N http://127.0.0.1:12935/api/events
+# 3. 订阅事件流（Outbound；EventSource 等无法带请求头的客户端用 ?token=）
+curl -N -H "Authorization: Bearer $TOKEN" http://127.0.0.1:12935/api/events
 ```
 
 Node.js 完整示例见 §7 / §8。
@@ -56,13 +57,13 @@ Node.js 完整示例见 §7 / §8。
 
 | 项 | 规则 |
 |---|---|
-| 机制 | 静态 Bearer token：`Authorization: Bearer {token}`，全接口统一 |
-| 配置 | 设置页自定义；**为空 = 免认证**；修改即时生效（服务自动重启） |
-| 强制时机 | 仅当配置了非空 token；未配置时发送该头会被忽略 |
+| 机制 | 静态 Bearer token：`Authorization: Bearer {token}`，**全接口强制**（含 health） |
+| 配置 | 首次开启时自动生成（64 位 hex，运行时 CSPRNG，256 bit 熵）；设置页可复制 / 重新生成，也可自定义；修改即时生效（服务自动重启，SSE 连接断开） |
+| 强制时机 | 所有实际请求（`OPTIONS` 预检除外）；令牌缺失或错误一律 `401` |
 | 失败响应 | `401` + `{"ok":false,"error":{"code":"unauthorized",...}}` |
-| 传递方式 | 仅请求头（不支持 query 参数） |
+| 传递方式 | 请求头优先；`?token={token}` query 兜底（供 `EventSource` 等无法携带请求头的客户端使用） |
 | CORS | `Access-Control-Allow-Origin: *` 全接口开放；preflight（`OPTIONS`）免 token 应答——**预检不携带 Authorization，故 token 校验只发生在实际请求** |
-| 威胁模型 | 回环绑定隔绝外部网络；CORS 全开放使同机任意网页可调用——**对抗同机恶意网页的唯一防线是 token**，对外发布集成方案时强烈建议启用 token |
+| 威胁模型 | 回环绑定隔绝外部网络；CORS 全开放下**强制 token 是对抗同机恶意网页的唯一防线**——未持有令牌的网页无法读取任何响应（含 SSE 流）；令牌运行时生成，源码中不存在可推导的默认值 |
 
 ## 4. 接口一览
 
@@ -126,7 +127,7 @@ async function show(text, kind = "info", title, duration = 0) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      // Authorization: `Bearer ${token}`,   // 应用配置了 token 时必须
+      Authorization: `Bearer ${token}`,   // 必须携带，见 §3
     },
     body: JSON.stringify({ text, kind, title, duration }),
   });
@@ -200,8 +201,8 @@ curl "http://127.0.0.1:12935/api/history?kind=error&from=1757996400000&to=175800
 ### 7.1 连接
 
 - 长连接 `text/event-stream`；空闲心跳为注释行 `: ping`（每 15s，兼做断连探测）
-- 服务重启（改端口/开关）会断开全部订阅，客户端需自动重连；**不回放历史事件**，重连后从新事件开始
-- 浏览器 `EventSource` 与 Node.js 客户端均可连接（CORS 全开放）；配置 token 后 `EventSource` 无法携带请求头，需改用支持自定义 header 的客户端
+- 服务重启（改端口/令牌/开关）会断开全部订阅，客户端需自动重连；**不回放历史事件**，重连后从新事件开始
+- 认证：请求头 `Authorization: Bearer {token}`；`EventSource` 无法携带请求头，改用 URL `GET /api/events?token={token}`（§3）
 
 ### 7.2 事件格式
 
@@ -244,9 +245,11 @@ Node.js：
 ```js
 const BASE = "http://127.0.0.1:12935";
 
-// Node 18+ 内置 fetch/ReadableStream；token 已配置时改用支持 header 的 SSE 库
+// Node 18+ 内置 fetch/ReadableStream
 async function subscribe() {
-  const res = await fetch(`${BASE}/api/events`, { headers: {} });
+  const res = await fetch(`${BASE}/api/events`, {
+    headers: { Authorization: `Bearer ${token}` }, // 必须携带，见 §3
+  });
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
@@ -274,8 +277,8 @@ subscribe().catch(() => setTimeout(subscribe, 3000)); // 断线退避重连
 网页（浏览器）：
 
 ```js
-// 网页可直接订阅（CORS 已开放）；应用配置 token 后 EventSource 不可用
-const es = new EventSource("http://127.0.0.1:12935/api/events");
+// 网页可直接订阅（CORS 已开放）；令牌经 ?token= query 携带（EventSource 不支持自定义请求头）
+const es = new EventSource("http://127.0.0.1:12935/api/events?token=" + token);
 es.addEventListener("island.show", (e) => {
   const ev = JSON.parse(e.data);
   console.log("S1d3 Board:", ev.text);
@@ -375,7 +378,7 @@ function verify(req, rawBody, secret) {
 |---|---|---|
 | 400 | `invalid_json` | 请求体非合法 JSON |
 | 400 | `empty_text` | `text` 缺失或为空 |
-| 401 | `unauthorized` | 配置了 token 但请求头不匹配 |
+| 401 | `unauthorized` | 令牌缺失或与配置不匹配（全接口强制） |
 | 404 | `not_found` | 路径不存在 |
 | 405 | `method_not_allowed` | 方法错误 |
 | 422 | `text_too_long` | `text` > 2000 字符 |
@@ -389,7 +392,7 @@ function verify(req, rawBody, secret) {
 2. **灵动岛定位为「尽力而为」通知**：可能被合并/顶掉/总开关关闭（不弹岛）——关键路径保留系统通知或日志；SSE 确认（收到 `island.show`）是**事件回执**，不代表已在屏幕上显示
 3. **节流**：进度/状态类按变化推送，避免逐帧推送
 4. **重连退避**：SSE 断开后指数退避重连（如 1s/3s/10s），避免连接风暴
-5. **token 卫生**：对外分发集成方案时默认启用 token；token 泄露即更换（设置页改完即时生效）
+5. **token 卫生**：令牌即凭据，勿写入公开仓库/前端源码；怀疑泄露时在设置页重新生成（即时生效，第三方需同步更新）
 6. **处理 4xx**：`invalid_kind`/`text_too_long` 属调用方 bug，应修复而非重试；`401` 提示用户核对 token
 7. **事件幂等**：SSE 重连可能错过事件（不回放），业务侧以 `ts` 去重并容忍丢失
 
@@ -399,16 +402,22 @@ function verify(req, rawBody, secret) {
 |---|---|
 | 连接拒绝 | 确认开关已开、端口正确，先 `GET /api/health` |
 | 端口启用失败 | 应用日志提示绑定失败；设置页换端口保存即自动重启 |
-| 401 | 核对 token；注意 preflight 不带 token 属正常 |
+| 401 | 核对令牌（设置页可复制）；注意 preflight 不带 token 属正常 |
 | 推送 204 但没显示 | ① 总开关已关闭 ② 被更高频事件顶掉（§9 单例队列）③ 处于出现延迟窗口被合并 |
 | 长文本显示不全 | 显示层固定截断 120 字符；需完整内容请推系统通知或分段推送 |
 | SSE 收不到应用自身事件 | 确认事件未被延迟合并吞掉（§9）；总开关不影响广播；重连后不回放历史 |
 | 网页调用失败 | 检查是否触发 preflight（自定义头/JSON POST）；本服务已开放 CORS，若仍失败检查浏览器扩展拦截 |
-| SSE 收不到事件（配了 token） | `EventSource` 无法带 token，改用 fetch 流式或带 header 的 SSE 客户端 |
+| SSE 收不到事件（401） | 检查令牌：带请求头的客户端用 `Authorization`，`EventSource` 用 `?token=` query；重新生成后需同步更新 |
 | 历史查询 503 | 主窗口未启动或正退出；确认应用主窗口已打开后重试 |
 
 ## 更新日志
 
+- **v1.5.0**（2026-10-08）：
+  - **认证改为强制**（破坏性变更）：所有端点（含 health）必须携带有效 Bearer token，缺失/错误一律 `401`；服务在配置 token 为空时拒绝启动（v1.0~v1.4「为空 = 免认证」模式移除）
+  - 令牌自动生成：首次开启时运行时 CSPRNG 生成 64 位 hex（256 bit 熵）并持久化，源码不存在可推导默认值；老版本升级后为空令牌自动补发
+  - 设置页令牌改为掩码显示，新增复制 / 重新生成按钮
+  - token 传递新增 `?token={token}` query 兜底：`EventSource` 等无法携带请求头的客户端可直接连接（此前需改用 fetch 流式）
+  - token 比对改为常量时间实现，防时序侧信道
 - **v1.4.0**（2026-09-21）：
   - `island.show` 事件新增 `qr_text` 字段：图片事件（复制/粘贴/剪切）在 Rust 侧自动扫描二维码，识别到时携带文本（链接等），灵动岛内同时在缩略图旁显示该链接
   - 智能剪贴板环盘（Ctrl+B）：选中的二维码图片条目把解码链接当文本参与切分，Enter 直接粘贴链接

@@ -7,8 +7,10 @@
 //! 使用完整子模块路径（commands::paste::paste 等）；本模块仅再导出非命令
 //! 入口（lib.rs setup 直接调用的函数），保持 `commands::register_global_paste_hotkey` 路径。
 
+pub mod backup;
 pub mod lifecycle;
 pub mod menu;
+pub mod notify;
 pub mod paste;
 
 pub use paste::register_global_paste_hotkey;

@@ -75,6 +75,8 @@ pub fn run() {
             commands::register_global_paste_hotkey(app.handle());
             // 灵动岛 API 出站桥：应用内岛事件统一转 SSE 广播（常驻，与 API 开关无关，无订阅时零开销）
             island::api::attach_event_bridge(app.handle());
+            // Windows toast AUMID 注册：让系统通知显示本应用名与图标（而非 PowerShell）
+            commands::notify::register_toast_identity(app.handle());
             Ok(())
         })
         .on_tray_icon_event(|tray, event| {
@@ -97,8 +99,14 @@ pub fn run() {
             commands::paste::paste,
             commands::menu::set_menu_theme,
             commands::lifecycle::quit_app,
+            commands::backup::write_auto_backup,
+            commands::backup::list_auto_backups,
+            commands::backup::read_auto_backup,
+            commands::backup::delete_auto_backup,
+            commands::notify::send_system_notification,
             app_usage::set_app_usage_enabled,
             app_usage::pull_app_usage,
+            app_usage::app_usage_supported,
             app_usage::foreground_app_name,
             app_usage::app_icon_by_name,
             clipboard::thumb::clipboard_image_thumb,
@@ -113,6 +121,8 @@ pub fn run() {
             clipboard::image_store::delete_clipboard_image_files,
             ai::engine::ai_test_connection,
             ai::engine::ai_complete,
+            ai::secret::ai_key_get,
+            ai::secret::ai_key_set,
             island::api::island_api_apply,
             island::api::island_history_result,
             island::webhook::island_webhook_apply,

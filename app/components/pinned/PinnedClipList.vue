@@ -113,15 +113,12 @@ async function togglePin(item: PinnedClip) {
 // ===== 删除（单条移除，仅删常用剪贴记录，不动剪贴板主列表原条目）=====
 const deleteConfirmVisible = ref(false);
 const deleteConfirmMessage = ref('');
-const deleteConfirmAnchor = ref<DOMRect | null>(null);
 const deleteConfirmTarget = ref<PinnedClip | null>(null);
 
-/** 请求删除：弹出内联确认框（anchor 就近定位；键盘触发无 anchor 时居中） */
-function requestDelete(item: PinnedClip, e?: MouseEvent) {
+/** 请求删除：弹出内联确认框（视口居中） */
+function requestDelete(item: PinnedClip) {
   deleteConfirmTarget.value = item;
   deleteConfirmMessage.value = t('clip.pinned_delete_confirm');
-  const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null;
-  deleteConfirmAnchor.value = btn?.getBoundingClientRect() ?? null;
   deleteConfirmVisible.value = true;
 }
 
@@ -130,7 +127,6 @@ async function confirmDelete() {
   const target = deleteConfirmTarget.value;
   deleteConfirmVisible.value = false;
   deleteConfirmTarget.value = null;
-  deleteConfirmAnchor.value = null;
   if (!target) return;
   try {
     await clipboardService.deletePinnedClip(target.id);
@@ -146,7 +142,6 @@ async function confirmDelete() {
 function cancelDelete() {
   deleteConfirmVisible.value = false;
   deleteConfirmTarget.value = null;
-  deleteConfirmAnchor.value = null;
 }
 
 /** 把选中卡片滚动到可见区域 */
@@ -324,7 +319,7 @@ onUnmounted(() => {
                       <path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
                     </svg>
                   </button>
-                  <button type="button" class="btn-soft btn-circle p-1.5 text-danger" v-tip="t('common.delete')" @click="requestDelete(item, $event)" @pointerdown.stop.prevent>
+                  <button type="button" class="btn-soft btn-circle p-1.5 text-danger" v-tip="t('common.delete')" @click="requestDelete(item)" @pointerdown.stop.prevent>
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>
                   </button>
                 </div>
@@ -346,11 +341,10 @@ onUnmounted(() => {
       <div v-else-if="clips.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
     </div>
 
-    <!-- 删除确认框（内联组件，与剪贴板/便签一致；键盘触发无 anchor 时居中） -->
+    <!-- 删除确认框（内联组件，与剪贴板/便签一致，视口居中） -->
     <DeleteConfirm
         :visible="deleteConfirmVisible"
         :message="deleteConfirmMessage"
-        :anchor="deleteConfirmAnchor"
         @confirm="confirmDelete"
         @cancel="cancelDelete"
     />

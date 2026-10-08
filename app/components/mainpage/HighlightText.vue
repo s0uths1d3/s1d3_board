@@ -1,6 +1,6 @@
 <template>
     <template v-for="(seg, index) in processedSegments" :key="index">
-      <span v-if="seg.isHighlight" class="rounded bg-gold/30 text-ink">{{ seg.text }}</span>
+      <span v-if="seg.isHighlight" class="rounded bg-hl/40 text-hl-ink">{{ seg.text }}</span>
       <template v-else>{{ seg.text }}</template>
     </template>
 </template>

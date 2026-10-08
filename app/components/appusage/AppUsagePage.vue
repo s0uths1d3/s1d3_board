@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from '~/composables/useI18n';
 import statsService from '~/src/statistics/statsService';
 import { DONUT_OPS } from '~/src/statistics/chartMath';
 import { toDateString } from '~/utils/datetime';
+import { getOsTypeFromNavigator } from '~/utils/systemOS';
 import RangeBar from '~/components/statistics/RangeBar.vue';
 import { appUsageEnabled, setAppUsageEnabled } from '~/composables/useAppUsage';
 
@@ -158,6 +160,9 @@ function fmt(seconds: number): string {
   return t('app_usage.dur_seconds', { s: seconds });
 }
 
+/** Wayland 下应用时长不支持（Rust 无统一前台窗口协议实现）：仅 Linux 探测后展示提示条 */
+const waylandUnsupported = ref(false);
+
 async function load(): Promise<void> {
   try {
     rows.value = await statsService.getAppUsageRange(rangeDates.value.from, rangeDates.value.to);
@@ -181,6 +186,10 @@ async function onToggle(enabled: boolean): Promise<void> {
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
+  // Linux 会话探测：Wayland（无 X 服务）下采集不可用，展示不支持提示条（X11 正常）
+  if (getOsTypeFromNavigator() === 'Linux') {
+    invoke<boolean>('app_usage_supported').then(ok => { waylandUnsupported.value = !ok; }).catch(() => {});
+  }
   // 切入本 Tab 时先立即拉取 Rust 侧内存增量并落库，再读表展示，
   // 消除 30s 定时拉取周期带来的数据滞后，保证切入瞬间所见即最新
   if (appUsageEnabled.value) {
@@ -216,6 +225,11 @@ onBeforeUnmount(() => {
         v-model:custom-to="customTo"
         :label="`${rangeDates.from} ~ ${rangeDates.to}`"
       />
+
+      <!-- Wayland 不支持提示：采集依赖 X11（_NET_ACTIVE_WINDOW），Wayland 会话恒无数据 -->
+      <div v-if="waylandUnsupported" class="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
+        {{ t('app_usage.wayland_unsupported') }}
+      </div>
 
       <!-- 未开启：引导开启 -->
       <div

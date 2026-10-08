@@ -20,6 +20,8 @@ import {CycleColorSchemeCommand} from "~/src/commands/local/CycleColorSchemeComm
 import {BubbleToggleCommand} from "~/src/commands/local/BubbleToggleCommand"
 import dbService from "~/src/db/dbService";
 import { normalizeShortcutKey } from "~/utils/shortcutFormat";
+import { notifyIsland } from "~/composables/useCopyIsland";
+import { useI18n } from "~/composables/useI18n";
 
 const toggleWindowCommand = new ToggleWindowCommand();
 const hideWindowCommand = new HideWindowCommand();
@@ -54,7 +56,7 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
     },
     {
         // Ctrl+B 为局部快捷键：仅剪贴板主窗口聚焦时响应（不全局拦截浏览器/其他应用的加粗键）；
-        // 环打开期间焦点在环心控制盘，由其 keydown 转发 ring:close 实现 toggle off
+        // 环打开期间焦点在环 overlay 窗口，由其 keydown 转发 ring:close 实现 toggle off
         id: 'bubble_toggle',
         key: 'CommandOrControl+B',
         defaultKey: 'CommandOrControl+B',
@@ -214,6 +216,10 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
 /** 响应式快捷键列表（自定义后实时反映到设置页与注册表） */
 export const shortcuts = ref<ShortcutConfig[]>([...DEFAULT_SHORTCUTS]);
 
+/** 启动/重注册后仍失败的快捷键 id 集合（多为全局键被系统或其他程序占用）：
+ * 设置页对应行展示标红提示，启动期失败另弹灵动岛通知 */
+export const failedShortcutIds = ref<Set<string>>(new Set());
+
 const manager = new ShortcutManager();
 let initialized = false;
 
@@ -225,7 +231,10 @@ async function reloadShortcuts(): Promise<ShortcutConfig[]> {
     } catch (e) {
         console.error('注销残留快捷键失败:', e);
     }
-    return await manager.registerAll(shortcuts.value);
+    const failed = await manager.registerAll(shortcuts.value);
+    // 失败集随每次重注册整体重算：改键/重置成功后自动清除标红态
+    failedShortcutIds.value = new Set(failed.map(f => f.id));
+    return failed;
 }
 
 /** 把当前快捷键配置批量写入数据库（幂等 upsert，含启用状态） */
@@ -312,8 +321,18 @@ export async function initShortcuts() {
         try { await unregister(key); } catch { /* 未注册过则忽略 */ }
     }
 
-    await manager.registerAll(shortcuts.value);
+    // 统一走 reloadShortcuts：失败项落入 failedShortcutIds（设置页标红），
+    // 启动期有失败则弹灵动岛通知（否则全局键静默失效，用户无从知晓）
+    const failed = await reloadShortcuts();
     initialized = true;
+    if (failed.length > 0) {
+        const { t } = useI18n();
+        notifyIsland({
+            kind: 'error',
+            title: t('shortcut.failed_title'),
+            text: t('shortcut.failed_text', { n: failed.length }),
+        });
+    }
 }
 
 /** 检测某 key 是否与其他快捷键冲突（排除指定 id），返回冲突项或 null。

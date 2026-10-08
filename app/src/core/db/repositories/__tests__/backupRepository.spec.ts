@@ -23,7 +23,7 @@ describe('backupRepository', () => {
         expect(sqls[13]).toBe("DELETE FROM sqlite_sequence WHERE name IN ('clipboard', 'note', 'todo')");
     });
 
-    it('undoClearDatabase：无备份返回 false；有备份整表还原并删除备份', async () => {
+    it('undoClearDatabase：无备份返回 false；clipboard 偏移 id 合并还原，其余表 OR REPLACE 合并', async () => {
         const noneRepo = createBackupRepository({ conn: await connWith(stubDb().db) });
         expect(await noneRepo.undoClearDatabase()).toBe(false);
 
@@ -35,7 +35,22 @@ describe('backupRepository', () => {
         expect(await repo.undoClearDatabase()).toBe(true);
         const sqls = executes.filter((c) => !c.sql.includes('sqlite_master')).map((c) => c.sql);
         expect(sqls).toEqual([
-            'DELETE FROM clipboard', 'INSERT INTO clipboard SELECT * FROM clear_backup_clipboard', 'DROP TABLE clear_backup_clipboard',
+            'UPDATE clear_backup_clipboard SET id = id + (SELECT COALESCE(MAX(id), 0) FROM clipboard)',
+            'INSERT OR IGNORE INTO clipboard SELECT * FROM clear_backup_clipboard',
+            'DROP TABLE clear_backup_clipboard',
+        ]);
+    });
+
+    it('undoClearDatabase：统计表（daily_stat）走 OR REPLACE 合并，不动自增 id', async () => {
+        const { db, executes } = stubDb((sql, params) =>
+            (sql.includes('sqlite_master') && params?.[0] === 'clear_backup_daily_stat' ? [{ name: 'clear_backup_daily_stat' }] : []));
+        const repo = createBackupRepository({ conn: await connWith(db) });
+
+        expect(await repo.undoClearDatabase()).toBe(true);
+        const sqls = executes.filter((c) => !c.sql.includes('sqlite_master')).map((c) => c.sql);
+        expect(sqls).toEqual([
+            'INSERT OR REPLACE INTO daily_stat SELECT * FROM clear_backup_daily_stat',
+            'DROP TABLE clear_backup_daily_stat',
         ]);
     });
 

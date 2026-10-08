@@ -89,10 +89,9 @@
       </div>
     </div>
 
-    <!-- 删除确认框：与全局一致的 DeleteConfirm 组件（就近定位、键盘操作一致） -->
+    <!-- 删除确认框：与全局一致的 DeleteConfirm 组件（视口居中、键盘操作一致） -->
     <DeleteConfirm
         :visible="!!deleteConfirmTarget"
-        :anchor="confirmAnchor"
         @confirm="confirmDelete"
         @cancel="cancelDelete"
     />
@@ -257,14 +256,10 @@ const showHint = (msg: string, kind: IslandKind = 'success') => {
 
 // ===== 删除确认框（DeleteConfirm 组件，样式/操作与全局一致） =====
 const deleteConfirmTarget = ref<StickyNote | null>(null)
-/** 触发删除按钮的位置（供 DeleteConfirm 就近定位） */
-const confirmAnchor = ref<DOMRect | null>(null)
 
-/** 请求删除：弹出确认框并记录触发位置 */
-const onRequestDelete = (note: StickyNote, e?: MouseEvent) => {
+/** 请求删除：弹出确认框（视口居中） */
+const onRequestDelete = (note: StickyNote) => {
   deleteConfirmTarget.value = note
-  const btn = (e?.target as HTMLElement | undefined)?.closest?.('button') as HTMLElement | null
-  confirmAnchor.value = btn?.getBoundingClientRect() ?? null
 }
 
 const updateNote = async (id: string, content: string) => {
@@ -288,7 +283,6 @@ const confirmDelete = async () => {
   const target = deleteConfirmTarget.value
   if (!target) return
   deleteConfirmTarget.value = null
-  confirmAnchor.value = null
   try {
     await deleteNote(target.id)
     showHint(t('note.deleted'))
@@ -301,7 +295,6 @@ const confirmDelete = async () => {
 /** 取消删除 */
 const cancelDelete = () => {
   deleteConfirmTarget.value = null
-  confirmAnchor.value = null
 }
 
 const deleteNote = async (id: string) => {

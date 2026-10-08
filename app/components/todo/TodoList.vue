@@ -218,11 +218,10 @@
         </p>
       </div>
 
-      <!-- 删除确认框：与全局一致的 DeleteConfirm 组件（就近定位、键盘操作一致） -->
+      <!-- 删除确认框：与全局一致的 DeleteConfirm 组件（视口居中、键盘操作一致） -->
       <DeleteConfirm
           :visible="deleteConfirmVisible"
           :message="deleteConfirmMessage"
-          :anchor="deleteConfirmAnchor"
           @confirm="onDeleteConfirm"
           @cancel="onDeleteCancel"
       />
@@ -534,12 +533,11 @@ const updateTodo = async (id: string, updates: Partial<Todo>) => {
   }
 }
 
-/** 点击待办删除按钮：弹出内联删除确认框 */
-const deleteTodo = (id: string, rect?: DOMRect) => {
+/** 点击待办删除按钮：弹出内联删除确认框（视口居中） */
+const deleteTodo = (id: string) => {
   deleteConfirmAction = 'todo'
   deleteConfirmId = id
   deleteConfirmMessage.value = t('todo.delete_task_confirm')
-  deleteConfirmAnchor.value = rect ?? null
   deleteConfirmVisible.value = true
 }
 
@@ -605,17 +603,14 @@ const { categories, addCategory, removeCategory } = useCategories()
 // ===== 删除确认（DeleteConfirm 内联组件，样式/操作与便签一致）=====
 const deleteConfirmVisible = ref(false)
 const deleteConfirmMessage = ref('')
-/** 触发删除按钮的位置（供 DeleteConfirm 就近定位） */
-const deleteConfirmAnchor = ref<DOMRect | null>(null)
 let deleteConfirmAction: 'todo' | 'category' | null = null
 let deleteConfirmId: string | null = null
 
 /** 点击分类 ×：弹出内联删除确认框 */
-const handleCategoryDelete = (name: string, rect?: DOMRect) => {
+const handleCategoryDelete = (name: string) => {
   deleteConfirmAction = 'category'
   deleteConfirmId = name
   deleteConfirmMessage.value = t('todo.delete_category_confirm')
-  deleteConfirmAnchor.value = rect ?? null
   deleteConfirmVisible.value = true
 }
 
@@ -626,7 +621,6 @@ const onDeleteConfirm = () => {
   deleteConfirmVisible.value = false
   deleteConfirmAction = null
   deleteConfirmId = null
-  deleteConfirmAnchor.value = null
   if (action === 'todo' && id) void executeTodoDelete(id)
   else if (action === 'category' && id) void executeCategoryDelete(id)
 }
@@ -636,7 +630,6 @@ const onDeleteCancel = () => {
   deleteConfirmVisible.value = false
   deleteConfirmAction = null
   deleteConfirmId = null
-  deleteConfirmAnchor.value = null
 }
 
 /** 确认后真正执行分类删除：持久化 + 清理使用该分类的待办（重置为剩余第一个分类） */
@@ -791,17 +784,13 @@ const onEditRequest = () => {
   editSignal.value += 1
 }
 
-/** Del 键：对当前选中待办打开内联删除确认框（与点击卡片删除按钮同一流程）。
- *  锚点取选中卡片右缘垂直居中（模拟删除按钮位置），确认框就近弹出且不遮挡选中项。 */
+/** Del 键：对当前选中待办打开内联删除确认框（与点击卡片删除按钮同一流程，视口居中） */
 const onDeleteRequest = () => {
   // 确认框已打开时不重复响应（轮询刷新可能已改变选中项，避免确认框跳到别的任务上）
   if (deleteConfirmVisible.value) return
   const todo = todoList.value[selectedTodoIndex.value]
   if (!todo) return
-  const card = document.querySelectorAll('#todoListContainer .todo-item')[selectedTodoIndex.value] as HTMLElement | null
-  const rect = card?.getBoundingClientRect()
-  const anchor = rect ? new DOMRect(rect.right - 40, rect.top + rect.height / 2 - 16, 32, 32) : null
-  deleteTodo(todo.id, anchor ?? undefined)
+  deleteTodo(todo.id)
 }
 
 /** 点击列表行：选中对应索引 */

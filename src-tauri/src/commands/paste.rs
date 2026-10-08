@@ -220,7 +220,11 @@ mod paste_tap {
             std::ptr::null_mut(),
         );
         if tap.is_null() {
-            // 常见于未授予「辅助功能」权限：系统设置 → 隐私与安全性 → 辅助功能
+            // 常见于未授予「辅助功能」权限：系统设置 → 隐私与安全性 → 辅助功能。
+            // emit 事件让前端弹岛引导授权（静默失败会让用户以为粘贴感知坏了）
+            if let Some(app) = PASTE_HOOK_APP.get() {
+                let _ = app.emit(events::PASTE_PERMISSION_MISSING, ());
+            }
             eprintln!("[global-paste-hotkey] CGEventTapCreate 失败（检查辅助功能权限），粘贴感知不启用");
             return;
         }

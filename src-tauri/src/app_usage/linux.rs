@@ -20,6 +20,11 @@ std::thread::spawn(|| loop {
     }
 });
 }
+
+/// X11 连接探测：Wayland 会话（无 DISPLAY/X 服务）返回 false，前端据此展示不支持提示
+pub fn is_supported() -> bool {
+    x11rb::connect(None).is_ok()
+}
 fn listen() -> Result<(), Box<dyn std::error::Error>> {
 let (conn, screen_num) = x11rb::connect(None)?;
 let root = conn.setup().roots.get(screen_num).map(|r| r.root).ok_or("无屏幕")?;

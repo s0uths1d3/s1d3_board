@@ -6,11 +6,12 @@ let lastActiveSettingTitle: string | null = null;
 // ===== 清空撤回窗口（模块级单例，独立于组件生命周期）=====
 // 设置页随 Tab 切换被卸载/重建：撤回状态若放组件内，切走即触发 expireUndoWindow
 // 把备份丢掉——用户「清空后切走再切回」就永远失去撤回机会。状态移到模块级：
-// 切走仅隐藏 UI，倒计时继续，5s 内切回仍可撤回，超时照常 finalize 丢备份。
+// 切走仅隐藏 UI，倒计时继续，窗口内切回仍可撤回，超时照常 finalize 丢备份。
 // （ref 复用下方 <script setup> 的 vue 导入：双 script 块合并为同一模块，重复 import 会冲突）
 // （dev HMR 会重执行本模块重建状态，属开发期边缘情况，不影响生产行为）
 const undoActive = ref(false);
-const undoRemaining = ref(5);
+// 3 分钟撤回窗口（原 5 秒过短且误触即丢）：倒计时以 mm:ss 显示
+const undoRemaining = ref(180);
 let undoCountdownTimer: ReturnType<typeof setInterval> | null = null;
 let undoExpireTimer: ReturnType<typeof setTimeout> | null = null;
 </script>
@@ -19,7 +20,7 @@ let undoExpireTimer: ReturnType<typeof setTimeout> | null = null;
 import { ref, computed, onMounted, watch, onBeforeUnmount, nextTick } from 'vue';
 import {
   shortcuts, updateShortcutKey, resetShortcut, resetAllShortcuts,
-  toggleShortcutEnabled, setShortcutGroupEnabled, resetShortcutGroup,
+  toggleShortcutEnabled, setShortcutGroupEnabled, resetShortcutGroup, failedShortcutIds,
 } from "~/src/commands/shortcuts/InitShortcuts";
 import { formatShortcutForDisplay, parseKeyEvent } from "~/utils/shortcutFormat";
 import { getOsTypeFromNavigator } from "~/utils/systemOS";
@@ -29,10 +30,12 @@ import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { DEFAULT_IMAGE_CACHE_MB, DEFAULT_MAX_SAVE_COUNT, type ImageFileInfo } from '~/src/core/db/repositories/clipboardRepository';
 import type { DataBundle } from '~/src/core/db/repositories/dataTransferRepository';
+import { listAutoBackups, readAutoBackup } from '~/src/backup/autoBackup';
 import type { ClipExtractor, ClipScheme } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
 import { updateSmartClipConfig } from '~/src/smart-clip/smartClip';
-import { ISLAND_API_DEFAULT_PORT, applyIslandApi } from '~/src/island/islandApi';
+import { ISLAND_API_DEFAULT_PORT, applyIslandApi, ensureIslandApiToken, generateIslandApiToken, lastIslandApiFailure } from '~/src/island/islandApi';
+import { bus } from '~/src/core/events';
 import { loadIslandWebhookConfig, saveIslandWebhookConfig, testIslandWebhook, validateWebhookUrl, type WebhookTarget } from '~/src/island/islandWebhook';
 import {
   loadExtractors, persistExtractors, missingBuiltinExtractors,
@@ -40,7 +43,7 @@ import {
 } from '~/src/smart-clip/extractors';
 import { generateExtractorDraft, generateSchemeDraft } from '~/src/smart-clip/aiGenerate';
 import { clampAnalysisMaxChars } from '~/src/smart-clip/analyzer';
-import { AI_CUSTOM_TEMPLATE } from '~/src/smart-clip/aiClient';
+import { AI_CUSTOM_TEMPLATE, loadAiApiKey, migrateAiApiKey, storeAiApiKey } from '~/src/smart-clip/aiClient';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/utils/env';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
@@ -51,6 +54,7 @@ import { useI18n, setLocaleMode, LOCALES, type LocaleMode } from '~/composables/
 import { briefAiError, parseAiError } from '~/utils/aiError';
 import { useTodoSmartRemind, setTodoSmartRemindEnabled } from '~/composables/useTodoSmartRemind';
 import { useTodoSystemNotify, setTodoSystemNotifyEnabled } from '~/composables/useTodoSystemNotify';
+import { useTooltipWrap, setTooltipWrapEnabled } from '~/composables/useTooltipWrap';
 import {
     usePrivacyPause, setPrivacyPaused,
     useSensitiveFilter, setSensitiveFilterEnabled,
@@ -65,6 +69,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { writeText } from 'tauri-plugin-clipboard-api';
 import appIcon from '~/assets/icon/icon.png';
 import ShortcutRow from '~/components/setting/ShortcutRow.vue';
+import HighlightText from '~/components/mainpage/HighlightText.vue';
 
 const osType = ref('');
 
@@ -72,16 +77,28 @@ interface SettingItem {
   label: string;
   value: string | string[];
   type: 'input' | 'select' | 'checkbox' | 'action';
+  /** 搜索结果专用：命中项的来源分组标题（正常渲染时无此字段，用于结果列表显示归属） */
+  groupTitle?: string;
+}
+
+/** 子分组：顶层分组内的分节卡片（标题 + 该节设置项），控制左侧分类数量 */
+interface SettingChildGroup {
+  title: string;
+  items: SettingItem[];
 }
 
 interface SettingGroup {
   title: string;
   type: string;
   items: SettingItem[];
+  /** 子分组（有则渲染为多张分节卡片，items 直挂方式仅剩类型兼容默认值） */
+  children?: SettingChildGroup[];
 }
 
 // 各设置项的响应式状态（直接承载值，并通过 watch 实时持久化，无需“应用”按钮）
 const apiKey = ref('');
+/** 系统凭据库不可用警示：API Key 降级为 KV 明文存储时置真（输入框下方常驻警示） */
+const aiKeyPlaintext = ref(false);
 const maxLimit = ref('');
 /** 图片缓存磁盘上限（MB）：留空/无效时清理策略回落默认 256MB（DEFAULT_IMAGE_CACHE_MB） */
 const imageLimit = ref('');
@@ -222,6 +239,18 @@ async function onSensitiveFilterToggle(val: boolean) {
   await setSensitiveFilterEnabled(val);
   showHint(val ? t('setting.general.sensitive_on') : t('setting.general.sensitive_off'));
 }
+// 粘贴后恢复原剪贴板：粘贴完成约 1 秒后把粘贴前内容写回（默认关闭；pasteUtil 消费此开关）
+const pasteRestoreEnabled = ref(false);
+async function onPasteRestoreToggle(val: boolean) {
+  await dbService.setKeyValue('paste_restore_clipboard', val ? '1' : '0');
+  showHint(val ? t('setting.general.paste_restore_on') : t('setting.general.paste_restore_off'));
+}
+// 剪贴板预览（tooltip）换行开关：默认关闭（不折行，超宽横向滚动），共享 composable 单例状态
+const { tooltipWrapEnabled } = useTooltipWrap();
+async function onTooltipWrapToggle(val: boolean) {
+  await setTooltipWrapEnabled(val);
+  showHint(val ? t('setting.general.tooltip_wrap_on') : t('setting.general.tooltip_wrap_off'));
+}
 watch(searchHighlightEnabled, async (val) => {
   await dbService.setKeyValue('search_highlight_enabled', val ? '1' : '0');
 });
@@ -252,7 +281,15 @@ onBeforeUnmount(() => {
   flushPendingWrites();
 });
 watch(apiKey, async (val) => {
-  debouncePersist('api_key', () => dbService.setKeyValue('api_key', val ?? ''));
+  // API Key 加密存储（系统凭据库）：凭据库不可用时降级 KV 明文并警示
+  debouncePersist('api_key', async () => {
+    if ((await storeAiApiKey(val ?? '')) === 'plaintext') {
+      aiKeyPlaintext.value = true;
+      showHint(t('setting.general.api_key_plaintext_fallback'), 'error');
+    } else {
+      aiKeyPlaintext.value = false;
+    }
+  });
 });
 watch(maxLimit, async (val) => {
   debouncePersist('max_save_count', () => persistClampedCount('max_save_count', maxLimit, DEFAULT_MAX_SAVE_COUNT));
@@ -498,7 +535,7 @@ const aiTestParsed = computed(() => parseAiError(aiTestError.value));
 /** 连接测试：invoke Rust ai_test_connection（请求细节在 Rust 侧，Key 不进 fetch） */
 async function testAiConnection(): Promise<void> {
   if (aiTestState.value === 'testing') return;
-  const key = await dbService.getKeyValue('api_key');
+  const { key } = await loadAiApiKey();
   if (!key) {
     showHint(t('setting.general.api_key_missing'), 'error');
     return;
@@ -900,6 +937,14 @@ const islandApiPort = ref(String(ISLAND_API_DEFAULT_PORT));
 const islandApiToken = ref('');
 // 恢复填充期间跳过 watch（否则加载赋值会以空值覆盖持久化并重复 apply；服务恢复由 app.vue 的 restoreIslandApiSetting 负责）
 const islandApiLoading = ref(true);
+// API 启动失败展示（端口占用等）：Rust 事件 → 失败监听 → 总线 → 此处内联展示；
+// lastIslandApiFailure 进程内记忆用于挂载回填（启动期失败发生在设置页打开前），成功应用后清除
+const islandApiError = ref('');
+let unsubIslandApiFailure: (() => void) | null = null;
+onMounted(() => {
+  unsubIslandApiFailure = bus.on('island-api:failed', (reason) => { islandApiError.value = reason; });
+});
+onBeforeUnmount(() => { unsubIslandApiFailure?.(); });
 watch([islandApiEnabled, islandApiPort, islandApiToken], async ([en, p, tk]) => {
   if (islandApiLoading.value) return;
   const portNum = Number(p);
@@ -909,10 +954,12 @@ watch([islandApiEnabled, islandApiPort, islandApiToken], async ([en, p, tk]) => 
   await dbService.setKeyValue('island_api_token', tk);
   if (!en) {
     await applyIslandApi(false, portNum || ISLAND_API_DEFAULT_PORT, tk);
+    islandApiError.value = '';
     return;
   }
   if (!portNum || portNum < 1 || portNum > 65535) return;
   await applyIslandApi(true, portNum, tk);
+  islandApiError.value = '';
 });
 // 开关切换提示（端口/令牌输入过程不弹提示，避免干扰）；恢复填充期间跳过——
 // 否则每次进入设置页都会把 ref 从初始 false 填到存储值，误触发「已开启」提示
@@ -920,6 +967,19 @@ watch(islandApiEnabled, (en) => {
   if (islandApiLoading.value) return;
   showHint(t(en ? 'island_api.on' : 'island_api.off'));
 });
+// 重新生成令牌：赋值触发上方 watch → 持久化并重启服务（SSE 客户端随之断开，需换新令牌重连）
+async function regenerateIslandApiToken() {
+  islandApiToken.value = generateIslandApiToken();
+  showHint(t('island_api.regenerated'));
+}
+async function copyIslandApiToken() {
+  try {
+    await navigator.clipboard.writeText(islandApiToken.value);
+    showHint(t('island_api.copied'));
+  } catch {
+    showHint(t('island_api.copy_fail'), 'error');
+  }
+}
 
 // ===== 灵动岛 Webhook 出站推送：URL 列表任一变化即持久化 + 下发 Rust（deep watch 覆盖行内编辑） =====
 const webhookEnabled = ref(false);
@@ -1022,7 +1082,7 @@ const showClearConfirm = ref(false);
 const clearing = ref(false);
 const clearMsg = ref('');
 
-// ===== 5 秒撤回窗口：清空后数据先备份到 clear_backup_* 表，期间可整表恢复，超时丢弃备份 =====
+// ===== 3 分钟撤回窗口：清空后数据先备份到 clear_backup_* 表，期间可合并恢复，超时丢弃备份 =====
 // 状态在模块级（见文件顶部）：不随设置页卸载重置，切走再切回仍可撤回
 
 const stopUndoTimers = () => {
@@ -1035,6 +1095,13 @@ const stopUndoTimers = () => {
     undoExpireTimer = null;
   }
 };
+
+/** 撤回窗口倒计时显示（mm:ss）：180 秒纯数字倒数可读性差 */
+const undoRemainingLabel = computed(() => {
+  const m = Math.floor(undoRemaining.value / 60);
+  const s = undoRemaining.value % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+});
 
 /** 窗口结束（到期/组件卸载）：丢弃备份，清空彻底生效 */
 const expireUndoWindow = async () => {
@@ -1081,8 +1148,8 @@ async function confirmClearDatabase() {
       const { fetchData } = await import('~/src/commands/local/clipboardStore');
       await fetchData();
     } catch (_) { /* 列表未挂载时忽略 */ }
-    // 开启 5 秒撤回窗口：倒计时归零后自动丢弃备份
-    undoRemaining.value = 5;
+    // 开启 3 分钟撤回窗口：倒计时归零后自动丢弃备份
+    undoRemaining.value = 180;
     undoActive.value = true;
     undoCountdownTimer = setInterval(() => {
       undoRemaining.value = Math.max(0, undoRemaining.value - 1);
@@ -1091,7 +1158,7 @@ async function confirmClearDatabase() {
       void expireUndoWindow().then(() => {
         if (!clearMsg.value) clearMsg.value = t('setting.general.cleared_detail');
       });
-    }, 5000);
+    }, 180000);
   } catch (e) {
     clearMsg.value = t('setting.general.clear_failed') + (e as Error).message;
   } finally {
@@ -1177,6 +1244,76 @@ async function importDataConfirmed() {
   }
 }
 
+// ===== 自动备份恢复：列出每日首启快照（Rust 侧 backups 目录，保留 7 份），两步确认后替换式恢复 =====
+const autoBackupOpen = ref(false);
+const autoBackupLoadingList = ref(false);
+const autoBackupList = ref<string[]>([]);
+const autoBackupPending = ref('');
+const restoringBackup = ref('');
+
+/** 备份文件名 → 展示日期（s1de-board-auto-2026-10-08.json → 2026-10-08） */
+function autoBackupLabel(name: string): string {
+  return name.replace(/^s1de-board-auto-/, '').replace(/\.json$/, '');
+}
+
+/** 展开/收起备份列表：每次展开重新拉取（Rust list_auto_backups，倒序新→旧） */
+async function toggleAutoBackupList() {
+  autoBackupOpen.value = !autoBackupOpen.value;
+  if (!autoBackupOpen.value || autoBackupLoadingList.value) return;
+  autoBackupLoadingList.value = true;
+  autoBackupPending.value = '';
+  try {
+    autoBackupList.value = await listAutoBackups();
+  } catch (e) {
+    console.error('加载自动备份列表失败:', e);
+    autoBackupList.value = [];
+    showHint(t('setting.general.auto_backup_list_failed'), 'error');
+  } finally {
+    autoBackupLoadingList.value = false;
+  }
+}
+
+/** 恢复自动备份：同一条目两步确认 → 读取 → 替换式导入（错误映射与手动导入一致） */
+async function restoreAutoBackup(name: string) {
+  if (restoringBackup.value) return;
+  if (autoBackupPending.value !== name) {
+    autoBackupPending.value = name;
+    return;
+  }
+  autoBackupPending.value = '';
+  restoringBackup.value = name;
+  try {
+    const bundle = JSON.parse(await readAutoBackup(name)) as DataBundle;
+    if (!bundle || typeof bundle !== 'object' || !bundle.tables) {
+      throw new Error('invalid backup bundle');
+    }
+    await dbService.importData(bundle);
+    // 触发剪贴板列表刷新（若在其他页已挂载），待办/统计由各自 Tab 重新挂载时拉取
+    try {
+      const { fetchData } = await import('~/src/commands/local/clipboardStore');
+      await fetchData();
+    } catch (_) { /* 列表未挂载时忽略 */ }
+    showHint(t('setting.general.import_data_done'));
+  } catch (e) {
+    console.error('恢复自动备份失败:', e);
+    const msg = (e as Error)?.message ?? '';
+    if (e instanceof SyntaxError || /unexpected token|json/i.test(msg)) {
+      showHint(t('setting.general.import_bad_file'), 'error');
+    } else if (/version/i.test(msg)) {
+      showHint(t('setting.general.import_bad_version'), 'error');
+    } else {
+      showHint(t('setting.general.import_data_failed') + msg, 'error');
+    }
+  } finally {
+    restoringBackup.value = '';
+  }
+}
+
+/** 回看首次使用引导（bus 派发 → 主窗口 OnboardingOverlay 重置到第一步重新弹出） */
+function replayOnboarding() {
+  bus.emit('onboarding:replay');
+}
+
 const settings: SettingGroup[] = [
   {
     title: 'setting.categories.shortcuts',
@@ -1189,150 +1326,111 @@ const settings: SettingGroup[] = [
     items: [],
   },
   {
-    title: 'setting.categories.api',
-    type: 'ai_setting',
-    items: [
+    // 剪贴板：存储上限 / 悬浮预览 / 隐私与安全 三个子分组
+    title: 'setting.categories.clipboard',
+    type: 'general',
+    items: [],
+    children: [
       {
-        label: 'setting.general.ai_provider',
-        value: '',
-        type: 'select'
+        title: 'setting.subgroups.clipboard_general',
+        items: [
+          { label: 'setting.general.clipboard_limit', value: '', type: 'input' },
+          { label: 'setting.general.image_limit', value: '', type: 'input' },
+          { label: 'setting.general.popup_position', value: '', type: 'select' },
+          { label: 'setting.general.search_highlight', value: '', type: 'checkbox' },
+        ],
       },
       {
-        label: 'setting.general.ai_base_url',
-        value: '',
-        type: 'input'
+        title: 'setting.subgroups.preview',
+        items: [
+          { label: 'setting.general.tooltip_window', value: '', type: 'checkbox' },
+          { label: 'setting.general.tooltip_wrap', value: '', type: 'checkbox' },
+          { label: 'setting.general.paste_restore_clipboard', value: '', type: 'checkbox' },
+        ],
       },
       {
-        label: 'setting.general.ai_model',
-        value: '',
-        type: 'input'
+        title: 'setting.subgroups.privacy',
+        items: [
+          { label: 'setting.general.privacy_pause', value: '', type: 'checkbox' },
+          { label: 'setting.general.sensitive_filter', value: '', type: 'checkbox' },
+        ],
       },
-      {
-        label: 'setting.general.ai_test',
-        value: '',
-        type: 'action'
-      },
-      {
-        label: 'setting.general.api_key',
-        value: '',
-        type: 'input'
-      },
-      {
-        label: 'setting.general.ai_analysis_max',
-        value: '',
-        type: 'input'
-      }
-    ]
+    ],
   },
   {
+    // 灵动岛：显示效果子组 + 灵动岛 API 与 Webhook 配置卡片（模板尾部按 title 挂载）
+    title: 'setting.categories.island',
+    type: 'island',
+    items: [],
+    children: [
+      {
+        title: 'setting.subgroups.island_display',
+        items: [
+          { label: 'setting.general.island_hint', value: '', type: 'checkbox' },
+          { label: 'setting.general.island_delay', value: '', type: 'input' },
+          { label: 'setting.general.island_duration', value: '', type: 'input' },
+        ],
+      },
+    ],
+  },
+  {
+    // 智能与 AI：智能剪贴板专属块在前（模板按 type==='smart' 渲染），AI 分析子组卡片在后
     title: 'setting.categories.smart',
     type: 'smart',
-    items: []
+    items: [],
+    children: [
+      {
+        title: 'setting.subgroups.ai',
+        items: [
+          { label: 'setting.general.ai_provider', value: '', type: 'select' },
+          { label: 'setting.general.ai_base_url', value: '', type: 'input' },
+          { label: 'setting.general.ai_model', value: '', type: 'input' },
+          { label: 'setting.general.ai_test', value: '', type: 'action' },
+          { label: 'setting.general.api_key', value: '', type: 'input' },
+          { label: 'setting.general.ai_analysis_max', value: '', type: 'input' },
+        ],
+      },
+    ],
   },
   {
+    // 通用：应用 / 外观与语言 / 待办与提醒 / 数据管理 四个子组
     title: 'setting.categories.general',
-    type: 'general',    items: [
+    type: 'general',
+    items: [],
+    children: [
       {
-        label: 'setting.general.clipboard_limit',
-        value: '',
-        type: 'input'
+        title: 'setting.subgroups.app',
+        items: [
+          { label: 'setting.general.launch_at_startup', value: '', type: 'checkbox' },
+          { label: 'setting.general.auto_hide', value: '', type: 'checkbox' },
+          { label: 'setting.general.app_usage_tracking', value: '', type: 'checkbox' },
+          { label: 'setting.general.replay_onboarding', value: '', type: 'action' },
+        ],
       },
       {
-        label: 'setting.general.image_limit',
-        value: '',
-        type: 'input'
+        title: 'setting.subgroups.appearance',
+        items: [
+          { label: 'setting.general.color_scheme', value: '', type: 'select' },
+          { label: 'setting.general.locale', value: '', type: 'select' },
+        ],
       },
       {
-        label: 'setting.general.launch_at_startup',
-        value: '',
-        type: 'checkbox'
+        title: 'setting.subgroups.todo_notify',
+        items: [
+          { label: 'setting.general.smart_reminder', value: '', type: 'checkbox' },
+          { label: 'setting.general.todo_system_notify', value: '', type: 'checkbox' },
+        ],
       },
       {
-        label: 'setting.general.tooltip_window',
-        value: '',
-        type: 'checkbox'
+        title: 'setting.subgroups.data',
+        items: [
+          { label: 'setting.general.clear_database', value: '', type: 'action' },
+          { label: 'setting.general.export_data', value: '', type: 'action' },
+          { label: 'setting.general.import_data', value: '', type: 'action' },
+          { label: 'setting.general.auto_backup_restore', value: '', type: 'action' },
+        ],
       },
-      {
-        label: 'setting.general.auto_hide',
-        value: '',
-        type: 'checkbox'
-      },
-      {
-        label: 'setting.general.island_hint',
-        value: '',
-        type: 'checkbox'
-      },
-      {
-        label: 'setting.general.island_delay',
-        value: '',
-        type: 'input'
-      },
-      {
-        label: 'setting.general.island_duration',
-        value: '',
-        type: 'input'
-      },
-      {
-        label: 'setting.general.smart_reminder',
-        value: '',
-        type: 'checkbox'
-      },
-      {
-        label: 'setting.general.todo_system_notify',
-        value: '',
-        type: 'checkbox'
-      },
-      {
-        label: 'setting.general.privacy_pause',
-        value: '',
-        type: 'checkbox'
-      },
-      {
-        label: 'setting.general.sensitive_filter',
-        value: '',
-        type: 'checkbox'
-      },
-      {
-        label: 'setting.general.app_usage_tracking',
-        value: '',
-        type: 'checkbox'
-      },
-      {
-        label: 'setting.general.popup_position',
-        value: '',
-        type: 'select'
-      },
-      {
-        label: 'setting.general.search_highlight',
-        value: '',
-        type: 'checkbox'
-      },
-      {
-        label: 'setting.general.color_scheme',
-        value: '',
-        type: 'select'
-      },
-      {
-        label: 'setting.general.locale',
-        value: '',
-        type: 'select'
-      },
-      {
-        label: 'setting.general.clear_database',
-        value: '',
-        type: 'action'
-      },
-      {
-        label: 'setting.general.export_data',
-        value: '',
-        type: 'action'
-      },
-      {
-        label: 'setting.general.import_data',
-        value: '',
-        type: 'action'
-      }
-    ]
+    ],
   },
   {
     title: 'setting.categories.about',
@@ -1348,6 +1446,67 @@ watch(activeSetting, async (val) => {
   lastActiveSettingTitle = val?.title ?? null;
   await dbService.setKeyValue('setting_active_tab', val?.title ?? '');
 });
+
+// ===== 设置搜索：跨分组按当前语言文案/键名过滤，结果复用通用渲染循环展示 =====
+/** 搜索关键词（左侧导航底部搜索框输入，实时过滤无需防抖——数据全在内存） */
+const settingSearch = ref('');
+const searchQuery = computed(() => settingSearch.value.trim().toLowerCase());
+const searchMode = computed(() => searchQuery.value.length > 0);
+
+/** 标题命中的分组（提供「前往分组」跳转入口；顶层或子组标题命中均可） */
+const matchedGroups = computed<SettingGroup[]>(() => {
+  if (!searchMode.value) return [];
+  const q = searchQuery.value;
+  const hitTitle = (title: string) => t(title).toLowerCase().includes(q) || title.toLowerCase().includes(q);
+  return settings.filter(g => g.title !== 'setting.categories.nav'
+    && (hitTitle(g.title) || (g.children ?? []).some(c => hitTitle(c.title))));
+});
+
+/** 搜索结果虚拟分组：把所有分组命中项打平（附来源子分组名），复用 children 分节卡片渲染 */
+const searchResultGroup = computed<SettingGroup>(() => {
+  const q = searchQuery.value;
+  const hit = (label: string) => t(label).toLowerCase().includes(q) || label.toLowerCase().includes(q);
+  const items = settings.flatMap(g => [
+    ...(g.children ?? []).flatMap(c => c.items.filter(it => hit(it.label)).map(it => ({ ...it, groupTitle: c.title }))),
+    ...g.items.filter(it => hit(it.label)).map(it => ({ ...it, groupTitle: g.title })),
+  ]);
+  return { title: 'setting.search.results', type: 'general', items: [], children: [{ title: 'setting.search.results', items }] };
+});
+
+/** 内容区实际渲染的分组：搜索态显示结果虚拟组（与 activeSetting 解耦，清空搜索即恢复） */
+const displaySetting = computed<SettingGroup>(() =>
+  searchMode.value ? searchResultGroup.value : (activeSetting.value ?? settings[0]!));
+
+/** 搜索结果跳转：清空关键词退出搜索态并切换到目标分组 */
+function clearSearchAndGo(group: SettingGroup) {
+  settingSearch.value = '';
+  onSettingClick(group);
+}
+
+/** 搜索态下灵动岛专属卡片（API / Webhook）的可见性：
+ *  非搜索态跟随当前分组；搜索态仅当搜索词与灵动岛相关（分组/子组标题或卡片标题命中）时显示，
+ *  避免搜索无关关键词时残留显示 */
+const islandCardsVisible = computed(() => {
+  if (activeSetting.value?.title !== 'setting.categories.island') return false;
+  if (!searchMode.value) return true;
+  const q = searchQuery.value;
+  const hit = (s: string) => t(s).toLowerCase().includes(q) || s.toLowerCase().includes(q);
+  return hit('island_api.section') || hit('island_webhook.section')
+    || hit('setting.categories.island') || hit('setting.subgroups.island_display');
+});
+
+// ===== Ctrl+F 聚焦设置搜索框：走快捷键命令总线（与剪贴板/待办/便签一致） =====
+// find_in_tab 命令（默认 CommandOrControl+F）由 ShortcutManager 捕获阶段处理并 emit
+// 'focus-search'——本页不能自行监听 keydown（命中后被 stopImmediatePropagation 收不到），
+// 与其他标签页一样监听总线事件即可。
+const searchInputRef = ref<HTMLInputElement | null>(null);
+const onFocusSearch = () => {
+  // 立即聚焦一次；页面切入动画（page-curtain）结束后再补一次，避免动画期间焦点被重置
+  nextTick(() => searchInputRef.value?.focus());
+  setTimeout(() => searchInputRef.value?.focus(), 400);
+};
+onMounted(() => bus.on('focus-search', onFocusSearch));
+onBeforeUnmount(() => bus.off('focus-search', onFocusSearch));
 
 // ===== 关于（版本 / 描述 / 作者 / 主页 / 检查更新）=====
 /** 版本单一来源：tauri.conf.json 的 version（经 getVersion 读取）；纯 Web 环境回退到该常量 */
@@ -1528,6 +1687,12 @@ const recordingId = ref<string | null>(null);
 const errorMap = ref<Record<string, string>>({});
 let recorderHandler: ((e: KeyboardEvent) => void) | null = null;
 
+/** 行内错误：录制/冲突错误优先，其次启动期注册失败提示（该键未生效，标红可见） */
+function shortcutRowError(id: string): string {
+  return errorMap.value[id]
+    ?? (failedShortcutIds.value.has(id) ? t('shortcut.register_failed_hint') : '');
+}
+
 /** 快捷键设置组渲染数据 */
 const shortcutItems = computed(() =>
   shortcuts.value.map(s => {
@@ -1673,9 +1838,15 @@ onMounted(async () => {
   osType.value = getOsTypeFromNavigator();
   maxLimit.value = await dbService.getKeyValue('max_save_count');
   imageLimit.value = await dbService.getKeyValue('image_cache_max_mb');
+  // 粘贴后恢复原剪贴板开关（默认关闭）
+  pasteRestoreEnabled.value = (await dbService.getKeyValue('paste_restore_clipboard')) === '1';
   // 图片缓存磁盘占用查询（失败显示统计中占位，不阻塞其余设置恢复）
   void refreshImageCacheUsage();
-  apiKey.value = await dbService.getKeyValue('api_key');
+  // API Key 加密存储：先把旧明文 KV 迁移进系统凭据库（失败保留明文），再从凭据库读取
+  await migrateAiApiKey();
+  const keyRes = await loadAiApiKey();
+  apiKey.value = keyRes.key;
+  aiKeyPlaintext.value = keyRes.source === 'plaintext';
   // AI 通道配置恢复（设计文档 §4.2）：提供商缺省 openai-compat
   aiProvider.value = ((await dbService.getKeyValue('ai_provider')) || 'openai-compat') as AiProviderKind;
   aiBaseUrl.value = await dbService.getKeyValue('ai_base_url');
@@ -1699,7 +1870,10 @@ onMounted(async () => {
     await ensureSchemes();
     islandApiEnabled.value = (await dbService.getKeyValue('island_api_enabled')) === '1';
     islandApiPort.value = (await dbService.getKeyValue('island_api_port')) || String(ISLAND_API_DEFAULT_PORT);
-    islandApiToken.value = await dbService.getKeyValue('island_api_token');
+    // 令牌强制（v1.5.0）：为空时自动生成并持久化（老配置升级 / 首次开启均覆盖）；发生在 islandApiLoading=true 期间，不触发 watch
+    islandApiToken.value = await ensureIslandApiToken();
+    // 回填进程内记录的最近一次启动失败（如启动时端口被占），仅开启状态下展示
+    islandApiError.value = islandApiEnabled.value ? lastIslandApiFailure() : '';
     // Webhook 出站推送配置恢复（JSON 解析失败返回空配置，UI 显示空列表）
     try {
       const wh = await loadIslandWebhookConfig();
@@ -1770,6 +1944,14 @@ onMounted(async () => {
       <!-- 左侧分类列表：长按 1s 可拖动调整顺序，松开自动持久化；TransitionGroup 提供平滑让位。
            容器空白处 data-tauri-drag-region 可拖动主窗口（按钮点击不受影响） -->
       <div class="w-1/5 pr-4 sticky top-4 self-start" data-setting-nav data-tauri-drag-region>
+        <!-- 设置搜索：位于分组列表上方，跨分组匹配设置项文案/键名与分组标题，输入即过滤；Ctrl+F 聚焦 -->
+        <input
+            ref="searchInputRef"
+            v-model="settingSearch"
+            type="text"
+            class="mb-3 w-full rounded-lg border border-line bg-surface-field px-2.5 py-1.5 text-xs text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-gold"
+            :placeholder="t('setting.search.placeholder')"
+        />
         <TransitionGroup name="reorder-list" tag="div">
           <div
               v-for="setting in orderedSettings"
@@ -1800,9 +1982,9 @@ onMounted(async () => {
       <div class="w-4/5">
         <!-- 分类切换过渡：复用全局 page-curtain（淡入 + 上浮），key 驱动 -->
         <Transition name="page-curtain" mode="out-in">
-        <div v-if="activeSetting" :key="activeSetting.title" class="min-h-[280px]">
+        <div v-if="displaySetting" :key="displaySetting.title" class="min-h-[280px]">
           <!-- 快捷键设置组 -->
-          <div v-if="activeSetting.type === 'shortcut'" class="flex flex-col gap-4">
+          <div v-if="displaySetting.type === 'shortcut'" class="flex flex-col gap-4">
             <div v-for="group in shortcutGroups" :key="group.scope">
               <ul class="glass-card rounded-2xl shadow-soft">
                 <li class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
@@ -1812,7 +1994,7 @@ onMounted(async () => {
                   <ShortcutRow
                       :item="item"
                       :recording="recordingId === item.id"
-                      :error="errorMap[item.id]"
+                      :error="shortcutRowError(item.id)"
                       @toggle="toggleShortcutWithHint(item.id)"
                       @record="startRecording(item.id)"
                       @reset="resetOne(item.id)"
@@ -1871,7 +2053,7 @@ onMounted(async () => {
                   <ShortcutRow
                       :item="item"
                       :recording="recordingId === item.id"
-                      :error="errorMap[item.id]"
+                      :error="shortcutRowError(item.id)"
                       @toggle="toggleShortcutWithHint(item.id)"
                       @record="startRecording(item.id)"
                       @reset="resetOne(item.id)"
@@ -1886,7 +2068,7 @@ onMounted(async () => {
           </div>
 
           <!-- 关于：应用信息 / 主页 / 检查更新 -->
-          <div v-else-if="activeSetting.type === 'about'" class="flex flex-col gap-4">
+          <div v-else-if="displaySetting.type === 'about'" class="flex flex-col gap-4">
             <!-- 应用信息 -->
             <div class="glass-card rounded-2xl p-5">
               <div class="flex items-center gap-4">
@@ -1952,8 +2134,9 @@ onMounted(async () => {
             </p>
           </div>
 
-          <!-- 智能剪贴板：处理开关 / 方案 / 提取器 / 开放 API（设计文档 §4/§5） -->
-          <div v-else-if="activeSetting.type === 'smart'">
+          <!-- 智能剪贴板专属块：智能与 AI 分组的前半部分（与下方通用渲染块并存，
+               同屏展示「智能剪贴板处理块 + AI 分析子组卡片」） -->
+          <div v-if="displaySetting.type === 'smart'" class="mb-4 flex flex-col gap-4">
             <div class="glass-card rounded-2xl p-4 shadow-soft">
               <div class="mb-3 text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.mode') }}</div>
               <UiSegmented
@@ -2194,14 +2377,20 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- 其他设置组（排除导航栏设置，导航栏有独立分支） -->
-          <div v-else-if="activeSetting.type !== 'nav'">
-            <ul class="glass-card rounded-2xl shadow-soft">
+          <!-- 通用渲染块（剪贴板/灵动岛/通用/智能与AI 的子组卡片 + 搜索结果）：
+               子分组循环渲染分节卡片，卡片内复用同一套设置项控件分支。
+               shortcut/about 有独立分支（上方），nav 有独立分支（下方），此处排除 -->
+          <div v-if="displaySetting.type !== 'nav' && displaySetting.type !== 'shortcut' && displaySetting.type !== 'about'"
+               class="flex flex-col gap-3">
+            <!-- 子分组分节卡片：每子组一张（标题行 + 该节设置项）；
+                 无命中项的子组（如搜索空结果）不渲染空卡片 -->
+            <template v-for="(child, ci) in displaySetting.children ?? []" :key="ci">
+              <ul v-if="child.items.length" class="glass-card relative z-10 rounded-2xl shadow-soft">
               <li class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
-                {{ t(activeSetting.title) }}
+                {{ t(child.title) }}
               </li>
               <!-- 宽控件项（AI 提供商：分段器 + JSON 编辑器）纵向布局占满整行，其余保持左标签右控件两栏 -->
-              <li v-for="(item, itemIndex) in activeSetting.items" :key="itemIndex"
+              <li v-for="(item, itemIndex) in child.items" :key="itemIndex"
                   class="p-4"
                   :class="isWideSettingItem(item) ? 'flex flex-col items-stretch gap-2' : 'flex flex-wrap items-center justify-between gap-4'">
                 <div>
@@ -2216,13 +2405,26 @@ onMounted(async () => {
                     <svg class="size-3 shrink-0 text-ink-faint transition-transform duration-300 ease-soft" :class="imageCacheOpsOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="m9 18 6-6-6-6" />
                     </svg>
-                    <div class="text-ink">{{ t(item.label) }}</div>
+                    <div class="text-ink">
+                      <HighlightText v-if="searchMode" :text="t(item.label)" :highlight-string="settingSearch.trim()" :active="true" :advanced="false" />
+                      <template v-else>{{ t(item.label) }}</template>
+                    </div>
                   </div>
-                  <div v-else class="text-ink">{{ t(item.label) }}</div>
+                  <!-- 默认 label 行：搜索态命中文字高亮；搜索结果项附来源子分组徽章 -->
+                  <div v-else class="flex flex-wrap items-center gap-2">
+                    <span class="text-ink">
+                      <HighlightText v-if="searchMode" :text="t(item.label)" :highlight-string="settingSearch.trim()" :active="true" :advanced="false" />
+                      <template v-else>{{ t(item.label) }}</template>
+                    </span>
+                    <span
+                        v-if="item.groupTitle"
+                        class="rounded-full border border-line px-1.5 py-0.5 text-[10px] leading-none text-ink-faint"
+                    >{{ t(item.groupTitle) }}</span>
+                  </div>
                   <div v-if="item.type === 'action' && item.label === 'setting.general.clear_database' && (clearMsg || undoActive)"
                        class="mt-1 flex flex-wrap items-center gap-2 text-xs">
                     <span class="text-ink-faint">
-                      {{ undoActive ? t('setting.general.clear_undo_hint', { n: undoRemaining }) : clearMsg }}
+                      {{ undoActive ? t('setting.general.clear_undo_hint', { time: undoRemainingLabel }) : clearMsg }}
                     </span>
                     <!-- 撤回：窗口期内整表恢复清空前的数据 -->
                     <button
@@ -2261,12 +2463,16 @@ onMounted(async () => {
                   </template>
                   <!-- 数据备份：导出 JSON（图片以 dataUrl 自包含），一键换机迁移 -->
                   <template v-else-if="item.type === 'action' && item.label === 'setting.general.export_data'">
-                    <button type="button" class="btn-soft w-full"
-                            :disabled="exportingData" @click="exportData">
-                      {{ exportingData ? t('setting.general.export_data_doing') : t('setting.general.export_data') }}
-                    </button>
-                    <!-- 范围说明：明确备份不含设置与快捷键，避免「换机后设置全没了」的预期落差 -->
-                    <p class="mt-1 text-xs text-ink-faint">{{ t('setting.general.export_scope_note') }}</p>
+                    <div class="group relative">
+                      <button type="button" class="btn-soft w-full"
+                              :disabled="exportingData" @click="exportData">
+                        {{ exportingData ? t('setting.general.export_data_doing') : t('setting.general.export_data') }}
+                      </button>
+                      <!-- 范围说明（备份不含设置与快捷键）：hover 按钮时浮出，不常驻挤占版面 -->
+                      <div class="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-72 rounded-lg bg-black/85 px-3 py-2 text-xs leading-relaxed text-white group-hover:block">
+                        {{ t('setting.general.export_scope_note') }}
+                      </div>
+                    </div>
                   </template>
                   <!-- 导入备份：二次确认（替换式恢复）→ 系统文件对话框 -->
                   <template v-else-if="item.type === 'action' && item.label === 'setting.general.import_data'">
@@ -2285,6 +2491,45 @@ onMounted(async () => {
                       </button>
                     </div>
                   </template>
+                  <!-- 回看使用引导：bus 事件触发主窗口引导层重新弹出 -->
+                  <template v-else-if="item.type === 'action' && item.label === 'setting.general.replay_onboarding'">
+                    <button type="button" class="btn-soft w-full" @click="replayOnboarding">
+                      {{ t('setting.general.replay_onboarding') }}
+                    </button>
+                  </template>
+                  <!-- 自动备份恢复：展开每日快照列表（保留 7 份），同条目两步确认后替换式恢复 -->
+                  <template v-else-if="item.type === 'action' && item.label === 'setting.general.auto_backup_restore'">
+                    <div class="group relative">
+                      <button type="button" class="btn-soft w-full"
+                              :disabled="restoringBackup !== ''" @click="toggleAutoBackupList">
+                        {{ autoBackupOpen ? t('common.cancel') : t('setting.general.auto_backup_restore_btn') }}
+                      </button>
+                      <!-- 范围与覆盖警告说明：hover 按钮时浮出，不常驻挤占版面 -->
+                      <div class="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-72 rounded-lg bg-black/85 px-3 py-2 text-xs leading-relaxed text-white group-hover:block">
+                        {{ t('setting.general.auto_backup_hint') }}
+                      </div>
+                    </div>
+                    <div v-if="autoBackupOpen" class="mt-1 space-y-1">
+                      <p v-if="autoBackupLoadingList" class="text-xs text-ink-faint">
+                        {{ t('setting.general.auto_backup_loading') }}
+                      </p>
+                      <p v-else-if="autoBackupList.length === 0" class="text-xs text-ink-faint">
+                        {{ t('setting.general.auto_backup_empty') }}
+                      </p>
+                      <template v-else>
+                        <div v-for="name in autoBackupList" :key="name" class="flex items-center gap-1">
+                          <span class="flex-1 truncate text-xs text-ink-faint">{{ autoBackupLabel(name) }}</span>
+                          <button type="button" class="btn-soft shrink-0 px-2 py-0.5 text-xs"
+                                  :class="autoBackupPending === name ? 'text-danger' : ''"
+                                  :disabled="restoringBackup !== ''" @click="restoreAutoBackup(name)">
+                            {{ restoringBackup === name
+                                ? t('setting.general.auto_backup_restoring')
+                                : (autoBackupPending === name ? t('setting.general.auto_backup_confirm') : t('setting.general.auto_backup_restore_btn')) }}
+                          </button>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
                   <!-- AI 连接测试：invoke Rust ai_test_connection（设计文档 §4.2） -->
                   <template v-else-if="item.type === 'action' && item.label === 'setting.general.ai_test'">
                     <button type="button" class="btn-soft w-full"
@@ -2292,13 +2537,18 @@ onMounted(async () => {
                       {{ aiTestState === 'testing' ? t('setting.general.ai_testing') : t('setting.general.ai_test') }}
                     </button>
                   </template>
-                  <SettingInput
-                      v-else-if="item.type === 'input' && item.label === 'setting.general.api_key'"
-                      v-model="apiKey"
-                      secret
-                      :placeholder="t('setting.general.api_key_placeholder')"
-                      @save="showHint(t('setting.general.api_key_saved'))"
-                  />
+                  <!-- template 包裹保持 v-else-if 链完整：API Key 输入 + 凭据库降级明文警示 -->
+                  <template v-else-if="item.type === 'input' && item.label === 'setting.general.api_key'">
+                    <SettingInput
+                        v-model="apiKey"
+                        secret
+                        :placeholder="t('setting.general.api_key_placeholder')"
+                        @save="showHint(t('setting.general.api_key_saved'))"
+                    />
+                    <p v-if="aiKeyPlaintext" class="mt-1 text-[10px] leading-relaxed text-amber-600 dark:text-amber-400">
+                      {{ t('setting.general.api_key_plaintext_warn') }}
+                    </p>
+                  </template>
                   <SettingInput
                       v-else-if="item.type === 'input' && item.label === 'setting.general.ai_base_url'"
                       v-model="aiBaseUrl"
@@ -2425,6 +2675,22 @@ onMounted(async () => {
                       :tip-on="t('setting.general.sensitive_tip_on')" :tip-off="t('setting.general.sensitive_tip_off')"
                       :label="t('setting.general.sensitive_filter')"
                       @change="onSensitiveFilterToggle"
+                  />
+                  <!-- 粘贴后恢复原剪贴板：粘贴完成约 1 秒后写回粘贴前内容（默认关闭） -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.paste_restore_clipboard'"
+                      :model-value="pasteRestoreEnabled"
+                      :tip-on="t('setting.general.paste_restore_tip_on')" :tip-off="t('setting.general.paste_restore_tip_off')"
+                      :label="t('setting.general.paste_restore_clipboard')"
+                      @change="onPasteRestoreToggle"
+                  />
+                  <!-- 剪贴板预览换行：默认关闭（每行保持原始单行，超宽内容横向滚动） -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.tooltip_wrap'"
+                      :model-value="tooltipWrapEnabled"
+                      :tip-on="t('setting.general.tooltip_wrap_tip_on')" :tip-off="t('setting.general.tooltip_wrap_tip_off')"
+                      :label="t('setting.general.tooltip_wrap')"
+                      @change="onTooltipWrapToggle"
                   />
                   <!-- 应用使用时长记录：默认关闭（隐私），开启后 Rust 侧监听前台应用并按天累计 -->
                   <UiToggleSwitch
@@ -2605,19 +2871,48 @@ onMounted(async () => {
                   </div>
                 </div>
               </li>
-            </ul>
+              </ul>
+            </template>
+
+            <!-- 搜索态辅助区：标题命中的分组跳转入口 + 无任何匹配时的空态提示 -->
+            <template v-if="searchMode">
+              <div v-if="matchedGroups.length" class="glass-card rounded-2xl p-4 shadow-soft">
+                <div class="mb-2 text-xs uppercase tracking-wide text-ink-faint">{{ t('setting.search.jump') }}</div>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                      v-for="g in matchedGroups"
+                      :key="g.title"
+                      type="button"
+                      class="btn-soft px-3 py-1.5 text-xs"
+                      @click="clearSearchAndGo(g)"
+                  >
+                    {{ t(g.title) }}
+                  </button>
+                </div>
+              </div>
+              <p
+                  v-if="!searchResultGroup.items.length && !matchedGroups.length"
+                  class="mt-6 text-center text-xs text-ink-faint"
+              >
+                {{ t('setting.search.empty') }}
+              </p>
+            </template>
 
             <!-- 灵动岛 API：第三方应用集成入口（本地 HTTP/SSE，接入文档 .docs/island-api.md）。
-                 仅通用标签渲染：本分支为 通用/API设置 共用，不守卫会两边重复出现。
+                 挂在灵动岛分组尾部；用 activeSetting（非 displaySetting）守卫，搜索态不重复出现。
                  标题行点击折叠/展开（chevron 指示），开关独立于折叠 -->
-            <div v-if="activeSetting.type === 'general'" class="glass-card mt-3 rounded-2xl p-4 shadow-soft">
+            <div v-if="islandCardsVisible" class="glass-card rounded-2xl p-4 shadow-soft">
               <div class="flex items-center justify-between">
                 <button type="button" class="flex select-none items-center gap-1.5 text-ink-faint transition-colors hover:text-ink"
                         :aria-expanded="islandApiOpen" @click="islandApiOpen = !islandApiOpen">
                   <svg class="h-3 w-3 transition-transform duration-200" :class="islandApiOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="m9 6 6 6-6 6" />
                   </svg>
-                  <span class="text-xs uppercase tracking-wide">{{ t('island_api.section') }}</span>
+                  <span class="text-xs uppercase tracking-wide">
+                    <!-- 搜索态标题命中高亮（与设置项 label 一致） -->
+                    <HighlightText v-if="searchMode" :text="t('island_api.section')" :highlight-string="settingSearch.trim()" :active="true" :advanced="false" />
+                    <template v-else>{{ t('island_api.section') }}</template>
+                  </span>
                 </button>
                 <UiToggleSwitch v-model="islandApiEnabled" :label="''" />
               </div>
@@ -2626,25 +2921,40 @@ onMounted(async () => {
                 <div class="flex items-center gap-2">
                   <input v-model="islandApiPort" class="w-28 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
                          :placeholder="t('island_api.port')" @change="islandApiPort = String(Number(islandApiPort) || ISLAND_API_DEFAULT_PORT)" />
-                  <input v-model="islandApiToken" class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                  <input v-model="islandApiToken" type="password" autocomplete="off" spellcheck="false"
+                         class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs text-ink"
                          :placeholder="t('island_api.token')" />
+                  <button class="shrink-0 rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field"
+                          @click="copyIslandApiToken">
+                    {{ t('island_api.copy') }}
+                  </button>
+                  <button class="shrink-0 rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field"
+                          @click="regenerateIslandApiToken">
+                    {{ t('island_api.regenerate') }}
+                  </button>
                 </div>
                 <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
                   {{ t('island_api.hint', { port: islandApiPort }) }}
+                </p>
+                <p v-if="islandApiError" class="mt-1 text-[10px] leading-relaxed text-red-600 dark:text-red-400">
+                  {{ t('island_api.failed', { reason: islandApiError }) }}
                 </p>
               </div>
             </div>
 
             <!-- Webhook 出站推送：岛显示事件实时转发外部 URL（文档 §8）。
                  与灵动岛 API 平级的独立折叠卡片：折叠互不影响 -->
-            <div v-if="activeSetting.type === 'general'" class="glass-card mt-3 rounded-2xl p-4 shadow-soft">
+            <div v-if="islandCardsVisible" class="glass-card rounded-2xl p-4 shadow-soft">
               <div class="flex items-center justify-between">
                 <button type="button" class="flex select-none items-center gap-1.5 text-ink-faint transition-colors hover:text-ink"
                         :aria-expanded="webhookOpen" @click="webhookOpen = !webhookOpen">
                   <svg class="h-3 w-3 transition-transform duration-200" :class="webhookOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="m9 6 6 6-6 6" />
                   </svg>
-                  <span class="text-xs uppercase tracking-wide">{{ t('island_webhook.section') }}</span>
+                  <span class="text-xs uppercase tracking-wide">
+                    <HighlightText v-if="searchMode" :text="t('island_webhook.section')" :highlight-string="settingSearch.trim()" :active="true" :advanced="false" />
+                    <template v-else>{{ t('island_webhook.section') }}</template>
+                  </span>
                 </button>
                 <UiToggleSwitch v-model="webhookEnabled" :label="''" />
               </div>
@@ -2684,7 +2994,7 @@ onMounted(async () => {
           </div>
 
           <!-- 导航栏设置：tab 顺序与显示开关（剪贴板/设置强制保留；统计受解锁门槛控制） -->
-          <div v-else-if="activeSetting.type === 'nav'" class="flex flex-col gap-4">
+          <div v-else-if="displaySetting.type === 'nav'" class="flex flex-col gap-4">
             <div class="glass-card rounded-2xl shadow-soft" data-nav-config-list>
               <TransitionGroup name="reorder-list" tag="ul">
                 <li key="__header__" class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">

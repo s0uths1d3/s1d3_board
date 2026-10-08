@@ -6,7 +6,7 @@ import HighlightText from '../HighlightText.vue';
  * 搜索高亮渲染组件测试（搜索筛选的呈现侧）：
  * 解析逻辑 parseSearchTokens 已有 sql.spec.ts 纯函数层覆盖，
  * 此处验证「tokens → 分片 DOM」的组件行为：
- * - 高亮片段 = <span class="rounded bg-gold/30 text-ink">（模板中唯一的 span）
+ * - 高亮片段 = <span class="rounded bg-hl/40 text-hl-ink">（模板中唯一的 span；配色令牌随主题切换）
  * - 普通片段 = 纯文本节点（无 span 包裹）
  *
  * 组件根为 fragment（template v-for），wrapper.text() 对相邻文本节点

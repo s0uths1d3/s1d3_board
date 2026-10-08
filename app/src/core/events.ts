@@ -54,6 +54,10 @@ export interface AppEventMap {
     'privacy-pause-changed': void;
     /** 系统提示胶囊（如敏感内容拦截）：载荷为 i18n key，岛端翻译——监听管道不依赖文案层 */
     'island:notice': string;
+    /** 灵动岛 API 服务启动失败（端口占用/守卫拒绝）：载荷为失败原因原文，设置页内联展示 */
+    'island-api:failed': string;
+    /** 回看首次使用引导（设置页入口派发）：主窗口引导层重置到第一步重新弹出 */
+    'onboarding:replay': void;
 }
 
 export type AppEventName = keyof AppEventMap;

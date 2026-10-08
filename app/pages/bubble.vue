@@ -2,12 +2,13 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { listen, emit, emitTo } from '@tauri-apps/api/event';
-import { currentMonitor, getCurrentWindow, cursorPosition, LogicalSize, PhysicalSize, PhysicalPosition } from '@tauri-apps/api/window';
+import { currentMonitor, getCurrentWindow, cursorPosition, LogicalSize } from '@tauri-apps/api/window';
 import { WebviewWindow, getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { isTauri } from '~/utils/env';
 import { useI18n } from '~/composables/useI18n';
 import { showImagePreview, hideImagePreview, dismissImagePreview } from '~/composables/useImagePreview';
 import { useTransparentWindow } from '~/composables/useTransparentWindow';
+import type { RingSegment } from '~/src/smart-clip/ringSegments';
 import type { IslandKind } from '~/composables/useCopyIsland';
 
 /**
@@ -18,15 +19,12 @@ import type { IslandKind } from '~/composables/useCopyIsland';
  *   useCopyIsland 管理；窗口显隐、进出场动画与超时自动隐藏由本页控制，
  *   事件流：island:ready 握手 → island:show-ui（主窗口路径，小缩略图载荷）/
  *   island:show（第三方 API 路径兜底，原图）推送 → 显示动画 → SHOW_MS 后收起并隐藏窗口。
- * - ring（?mode=ring&index=N）：环形布局中的一只独立气泡窗口。文本由管理器
- *   ready 握手后 emitTo('bubble:ring:data') 投递（窗口级 listen 定向接收，防串台）；
- *   选中高亮来自 ring:state 广播；Ctrl+悬停 / 左键点击 → ring:select-req；
- *   双击 → ring:paste-req（由管理器统一隐藏全部环形窗口并模拟粘贴）。
- * - ring-hub（?mode=ring-hub）：环心控制盘，**持有系统焦点的唯一键盘入口**：
- *   ←↑/→↓ 空间导航（ring:nav 按方向）、PgUp/PgDn 翻页（ring:page-nav）、Enter 粘贴选中项
- *   （ring:paste-req）、Esc 整体关闭（ring:close），状态由 ring:state 广播回显。
+ * - ring（?mode=ring）：Ctrl+B 环形盘的单 overlay 窗口（视觉与交互收口在
+ *   components/ring/RingOverlay，选中/导航/翻页/键盘全在组件内自治）。本页只做
+ *   数据接收（管理器 ready 握手后 emitTo 'ring:data' / 'ring:ai-result' 定向投递）、
+ *   意图转发（ring:paste-req / ring:close / ring:habit）、失焦自动关环与钉住子窗创建。
  *
- * 窗口的创建/定位/分页显隐/层级（选中置顶）全部由 BubbleToggleCommand 管理。
+ * 窗口的创建/定位/显示/取焦由 BubbleToggleCommand 管理。
  */
 
 const route = useRoute();
@@ -34,87 +32,18 @@ const { t } = useI18n();
 const mode = String(route.query.mode ?? 'list');
 const isPinMode = mode === 'pin';
 const isIsland = mode === 'island';
-const isRingBubble = mode === 'ring';
-const isRingHub = mode === 'ring-hub';
-const ringIndex = Number(route.query.index ?? -1);
+const isRingOverlay = mode === 'ring' || mode === 'ring-hub'; // ring-hub 为旧路由参数，并入 overlay
 
 // ===== 钉住模式 =====
 const pinnedText = ref('');
 const pinCopied = ref(false);
 let pinCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 
-// ===== 环形气泡 =====
-const ringText = ref('');
-const ringSelected = ref(false);
-/** 选中一次性脉冲：金光在卡片上闪现渐隐（方向键/点击切换时目标气泡"亮一下"），配合双层辉光让选中态一眼可辨 */
-const selPulse = ref(false);
-let selPulseTimer: ReturnType<typeof setTimeout> | null = null;
-watch(ringSelected, (v) => {
-  if (selPulseTimer) { clearTimeout(selPulseTimer); selPulseTimer = null; }
-  if (!v) { selPulse.value = false; return; }
-  selPulse.value = false; // 复位后下一帧再点亮：连续切换时动画从头重播
-  requestAnimationFrame(() => { selPulse.value = true; });
-  selPulseTimer = setTimeout(() => { selPulse.value = false; }, 700);
-});
-
-// ===== 环心控制盘 =====
-const hubSelected = ref(0);
-const hubTotal = ref(0);
-const hubSource = ref('');
-/** 总页数（环上限 RING_LIMIT=8/页）：仅 1 页时翻页行整体隐藏 */
-const hubPages = computed(() => Math.ceil(hubTotal.value / 8));
-
-// 控制盘高度自适应：窗口创建时固定 240×192（BubbleToggleCommand HUB_W/HUB_H），
-// 原文内容少（一两行）时预览区大片空白。按内容实际高度收缩窗口（宽度不动），
-// 并保持垂直中心不变——环气泡围绕的是环中心点（与控制盘高度无关），收缩后环绕关系不变。
-const HUB_MAX_H = 192;   // 与创建尺寸一致（只缩不涨）
-const HUB_MIN_H = 112;   // 最小高度：约两行预览 + 导航行 + 内外留白
-let hubFitBusy = false;
-let hubFitPending = false;
-
-async function fitHubHeight(): Promise<void> {
-  if (!isTauri()) return;
-  if (hubFitBusy) { hubFitPending = true; return; }
-  hubFitBusy = true;
-  try {
-    do {
-      hubFitPending = false;
-      await nextTick();
-      const card = document.querySelector('.hub-card') as HTMLElement | null;
-      const source = card?.querySelector('.hub-source') as HTMLElement | null;
-      if (!card || !source) return;
-      // 内容自然高度：预览区不能直接用自身 scrollHeight——内容少时 flex-1 会把它撑大，
-      // 测出来永远是撑大值导致永不收缩；取内部 span 的高度（= 文本真实行数高）。
-      // 内容超长时 span 自身高度即完整内容高，同样正确。
-      const span = source.firstElementChild as HTMLElement | null;
-      const srcH = span ? span.scrollHeight : source.scrollHeight;
-      let contentH = srcH;
-      const rows = card.children;
-      for (let i = 1; i < rows.length; i++) {
-        const el = rows[i] as HTMLElement;
-        if (el instanceof HTMLElement) contentH += el.offsetHeight;
-      }
-      const gaps = 8 * Math.max(0, rows.length - 1);        // flex-col gap-2（行间）
-      const chrome = 20 + 2 + 12;                            // 卡片 py-2.5 + 上下边框 + 外层 p-1.5（×2）
-      const targetCss = Math.min(Math.max(contentH + gaps + chrome, HUB_MIN_H), HUB_MAX_H);
-      const win = getCurrentWindow();
-      const size = await win.outerSize();
-      const pos = await win.outerPosition();
-      const dpr = await win.scaleFactor();
-      const targetPhys = Math.round(targetCss * dpr);
-      if (Math.abs(targetPhys - size.height) < 2) continue;  // 已就位（含每次导航广播的重复触发）
-      await win.setSize(new PhysicalSize(size.width, targetPhys)).catch(() => {});
-      // 垂直中心不动：气泡排布以环中心为基准，中心偏移会破坏环绕视觉
-      const newY = Math.round(pos.y + (size.height - targetPhys) / 2);
-      await win.setPosition(new PhysicalPosition(pos.x, newY)).catch(() => {});
-    } while (hubFitPending);
-  } finally {
-    hubFitBusy = false;
-  }
-}
-
-// 仅内容/页数变化影响高度（选中等导航广播不触发）；AI 阶段二补片段跨页时翻页行出现/消失同样重算
-watch([hubSource, hubPages], () => { void fitHubHeight(); });
+// ===== 环形盘（单 overlay，此处仅数据接收与意图转发） =====
+const ringSegments = ref<RingSegment[]>([]);
+const ringSource = ref('');
+const ringContentHash = ref('');
+const ringAiPending = ref(false);
 
 // ===== 灵动岛提示胶囊（island 模式）=====
 // 停留时长由 useCopyIsland 按设置随 island:show 下发（durationMs），此处仅作兜底默认值
@@ -424,17 +353,15 @@ function clearIslandTimers(): void {
 
 let unlisteners: (() => void)[] = [];
 
-/** 钉住：把当前片段复制为独立常驻小气泡窗（ring 模式与 pin 模式均可触发） */
-async function pinCurrent(): Promise<void> {
-  const text = isRingBubble ? ringText.value : pinnedText.value;
-  if (!isTauri() || !text) return;
-  // 习惯记录：钉住也是一次强偏好信号（ring 模式下上报给管理器落库）
-  if (isRingBubble) void emit('ring:habit', { index: ringIndex, action: 'pin' });
+/** 钉住环片段：把选中片段创建为独立常驻小气泡窗（RingOverlay 钉住按钮触发） */
+async function pinRingSegment(seg: RingSegment): Promise<void> {
+  if (!isTauri() || !seg.text) return;
+  void emit('ring:habit', { action: 'pin', extractorId: seg.extractorId, segmentText: seg.text, contentHash: ringContentHash.value });
   const label = `clipboard-bubble-pin-${Date.now()}`;
   (window as any).__childOpeningUntil = Date.now() + 600;
   const unReady = await listen('bubble:pin:ready', (ev) => {
     if ((ev.payload as string | undefined) !== label) return;
-    void emitTo(label, 'bubble:pin:data', { text });
+    void emitTo(label, 'bubble:pin:data', { text: seg.text });
     unReady();
   });
   setTimeout(() => unReady(), 5000);
@@ -481,34 +408,11 @@ function closePin(): void {
   void getCurrentWindow().close();
 }
 
-// ===== 环形气泡交互 =====
-/** Ctrl+悬停 / 左键点击：请求选中（已选中则不重复发） */
-function ringSelect(): void {
-  if (!ringSelected.value) void emit('ring:select-req', { index: ringIndex });
+// ===== 环形盘意图转发（选中/导航/翻页/键盘全在 RingOverlay 内自治） =====
+function onRingPaste(seg: RingSegment): void {
+  void emit('ring:paste-req', { text: seg.text, extractorId: seg.extractorId, contentHash: ringContentHash.value });
 }
-function ringPointerMove(e: PointerEvent): void {
-  if (e.ctrlKey) ringSelect();
-}
-/** 双击：请求粘贴（管理器统一隐藏全部窗口并模拟粘贴） */
-function ringPaste(): void {
-  void emit('ring:paste-req', { index: ringIndex });
-}
-function ringClose(): void {
-  void emit('ring:close');
-}
-
-// ===== 控制盘指令 =====
-function hubNav(delta: number): void {
-  void emit('ring:nav', { delta });
-}
-/** 键盘方向键：按空间方向导航（管理器按 3×3 网格行/列带折算目标气泡） */
-function hubNavDir(dir: 'up' | 'down' | 'left' | 'right'): void {
-  void emit('ring:nav', { dir });
-}
-function hubPageNav(delta: number): void {
-  void emit('ring:page-nav', { delta });
-}
-function hubClose(): void {
+function onRingClose(): void {
   void emit('ring:close');
 }
 
@@ -543,83 +447,30 @@ onMounted(async () => {
     await emit('bubble:pin:ready', getCurrentWindow().label);
     return;
   }
-  if (isRingBubble) {
-    // 窗口级 listen（同 pin 模式注释）：emitTo 定向投递只命中本窗口，杜绝多气泡文本串台
-    unlisteners.push(await getCurrentWebviewWindow().listen<{ text: string }>('bubble:ring:data', (ev) => {
-      ringText.value = ev.payload.text;
+  if (isRingOverlay) {
+    // 窗口级 listen：emitTo 定向投递只命中本窗口（全局 listen 会被所有同名前缀窗口收到）
+    unlisteners.push(await getCurrentWebviewWindow().listen<{ segments: RingSegment[]; source: string; contentHash: string; aiPending: boolean }>('ring:data', (ev) => {
+      ringSegments.value = ev.payload.segments ?? [];
+      ringSource.value = ev.payload.source ?? '';
+      ringContentHash.value = ev.payload.contentHash ?? '';
+      ringAiPending.value = !!ev.payload.aiPending;
     }));
-    unlisteners.push(await listen<{ selected: number }>('ring:state', (ev) => {
-      ringSelected.value = ev.payload.selected === ringIndex;
+    unlisteners.push(await getCurrentWebviewWindow().listen<{ segments: RingSegment[]; status: 'done' | 'failed' }>('ring:ai-result', (ev) => {
+      ringAiPending.value = false;
+      const added = ev.payload.segments ?? [];
+      if (added.length > 0) ringSegments.value = [...ringSegments.value, ...added];
     }));
-    // ready 握手：通知管理器投递本文本
+    // 失焦自动关环：数据到达前不武装（处理期间窗口尚未显示，焦点抖动不误杀）
+    unlisteners.push(await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused && ringSegments.value.length > 0) onRingClose();
+    }));
+    // ready 握手：通知管理器投递环数据（随后显示窗口并取焦）
     await emit('bubble:ring:ready', getCurrentWindow().label);
-    return;
-  }
-  if (isRingHub) {
-    unlisteners.push(await listen<{ selected: number; page: number; total: number; source?: string }>('ring:state', (ev) => {
-      hubSelected.value = ev.payload.selected;
-      hubTotal.value = ev.payload.total;
-      hubSource.value = ev.payload.source ?? '';
-    }));
-    // ready 握手：通知管理器推送初始状态
-    await emit('bubble:ring:hub-ready', getCurrentWindow().label);
-    // Esc 关闭整个环（控制盘获得焦点时可用）
-    window.addEventListener('keydown', onHubKeydown);
     return;
   }
 });
 
-/**
- * 控制盘键盘导航（控制盘持有系统焦点，是环形系统的唯一键盘入口）：
- * ←↑/→↓ 空间导航（↑↓ 列内上下移动，←→ 行内左右移动，行首/行尾折转最近的上方/下方气泡）
- * · Enter 粘贴选中项 · PgUp/PgDn 翻页 · Esc 关闭整环
- */
-function onHubKeydown(e: KeyboardEvent): void {
-  // Ctrl+B（局部快捷键的环内延伸）：环打开时焦点在本控制盘，主窗口收不到 keydown，
-  // 在此转发 ring:close 保持「Ctrl+B toggle 关环」行为一致
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b') {
-    e.preventDefault();
-    hubClose();
-    return;
-  }
-  switch (e.key) {
-    case 'ArrowLeft':
-      e.preventDefault();
-      hubNavDir('left');
-      break;
-    case 'ArrowUp':
-      e.preventDefault();
-      hubNavDir('up');
-      break;
-    case 'ArrowRight':
-      e.preventDefault();
-      hubNavDir('right');
-      break;
-    case 'ArrowDown':
-      e.preventDefault();
-      hubNavDir('down');
-      break;
-    case 'Enter':
-      e.preventDefault();
-      void emit('ring:paste-req', { index: hubSelected.value });
-      break;
-    case 'PageUp':
-      e.preventDefault();
-      hubPageNav(-1);
-      break;
-    case 'PageDown':
-      e.preventDefault();
-      hubPageNav(1);
-      break;
-    case 'Escape':
-      e.preventDefault();
-      hubClose();
-      break;
-  }
-}
-
 onBeforeUnmount(() => {
-  window.removeEventListener('keydown', onHubKeydown);
   for (const u of unlisteners) u();
   unlisteners = [];
   if (pinCopiedTimer) clearTimeout(pinCopiedTimer);
@@ -738,61 +589,15 @@ onBeforeUnmount(() => {
     </button>
   </div>
 
-  <!-- 环形气泡：独立透明窗口 + 圆润卡片（四周 8px 留白供圆角与阴影渲染，四角透出桌面），
-       选中高亮（金边 + 外发光 + 序号徽章），Ctrl+悬停/点击选中，双击粘贴 -->
-  <div v-else-if="isRingBubble"
-       class="group relative h-screen cursor-pointer rounded-2xl border p-2 shadow-soft transition-all duration-200 ease-soft"
-       :class="[ringSelected
-         ? 'bubble-selected border-gold bg-surface-field ring-2 ring-gold shadow-[0_0_4px_rgb(var(--c-gold)/0.55),0_0_20px_rgb(var(--c-gold)/0.55)]'
-         : 'border-line bg-surface-field/95 hover:border-accent',
-         selPulse ? 'bubble-sel-pulse' : '']"
-       @pointermove="ringPointerMove"
-       @click="ringSelect"
-       @dblclick="ringPaste">
-    <p class="line-clamp-3 text-[11px] leading-relaxed text-ink">{{ ringText }}</p>
-    <button type="button"
-            class="absolute right-1 top-1 hidden rounded-md bg-surface px-1 text-[10px] text-ink-faint shadow-xs transition-colors hover:text-gold group-hover:block"
-            :title="t('bubble.pin')"
-            @click.stop="pinCurrent">📌</button>
-    <span v-if="ringSelected"
-          class="bubble-badge-in absolute bottom-1 right-2 text-[10px] font-semibold tabular-nums text-gold">{{ ringIndex + 1 }}</span>
-  </div>
-
-  <!-- 环心控制盘：极简布局——原文预览 + 片段导航，无标题栏/状态文本/操作提示；
-       Esc 关环、PgUp/PgDn 翻页键盘始终可用（透明窗口 + 圆润卡片，外层 p-1.5 为阴影留白） -->
-  <div v-else-if="isRingHub" class="h-screen p-1.5">
-    <div class="hub-card flex h-full flex-col justify-center gap-2 rounded-2xl border border-accent bg-surface/95 px-3.5 py-2.5 shadow-soft backdrop-blur">
-
-    <!-- 原文预览：环心展示本次拆分的原始 clip 内容（占满剩余空间，超长滚动查看） -->
-    <div class="hub-source min-h-0 flex-1 overflow-y-auto rounded-lg bg-surface-muted/60 px-2 py-1">
-      <span class="whitespace-pre-wrap break-all text-[10px] leading-relaxed text-ink-soft">{{ hubSource }}</span>
-    </div>
-
-    <!-- 片段导航：仅箭头按钮，选中态由环气泡金边高亮呈现 -->
-    <div class="flex items-center justify-center gap-6">
-      <button type="button" class="btn-soft btn-circle p-1 disabled:opacity-30" :title="t('bubble.prev')"
-              @click="hubNav(-1)">
-        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>
-      </button>
-      <button type="button" class="btn-soft btn-circle p-1 disabled:opacity-30" :title="t('bubble.next')"
-              @click="hubNav(1)">
-        <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
-      </button>
-    </div>
-
-    <!-- 翻页：仅多页时显示（单页完全隐藏） -->
-    <div v-if="hubPages > 1" class="flex items-center justify-center gap-6">
-      <button type="button" class="text-ink-faint transition-colors hover:text-gold" :title="t('bubble.prev_page')"
-              @click="hubPageNav(-1)">
-        <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5" /><path d="m18 17-5-5 5-5" /></svg>
-      </button>
-      <button type="button" class="text-ink-faint transition-colors hover:text-gold" :title="t('bubble.next_page')"
-              @click="hubPageNav(1)">
-        <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 17 5-5-5-5" /><path d="m14 17 5-5-5-5" /></svg>
-      </button>
-    </div>
-    </div>
-  </div>
+  <!-- 环形盘（单 overlay）：视觉与交互收口在 RingOverlay，此处只做意图转发 -->
+  <RingOverlay v-else-if="isRingOverlay"
+               :segments="ringSegments"
+               :source="ringSource"
+               :content-hash="ringContentHash"
+               :ai-pending="ringAiPending"
+               @paste="onRingPaste"
+               @pin="pinRingSegment"
+               @close="onRingClose" />
 </template>
 
 <style>
@@ -804,17 +609,6 @@ onBeforeUnmount(() => {
 vue-devtools-anchor {
   display: none !important;
 }
-</style>
-
-<style>
-/* 环心原文预览：窄窗口内使用细滚动条（WebView2 默认滚动条过宽，挤占 240px 环心宽度） */
-.hub-source {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(128, 128, 128, 0.45) transparent;
-}
-.hub-source::-webkit-scrollbar { width: 4px; }
-.hub-source::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.45); border-radius: 2px; }
-.hub-source::-webkit-scrollbar-track { background: transparent; }
 </style>
 
 <style scoped>
@@ -974,30 +768,5 @@ vue-devtools-anchor {
   line-height: 1.4;
   color: rgba(150, 120, 90, 0.85);
   user-select: none;
-}
-/* 选中气泡一次性脉冲：金光闪现渐隐（inset:0 不越窗口裁剪区，透明窗无需担心边缘）；
-   与静态双层辉光叠加：切换瞬间"亮一下"，静止时靠辉光与金边持续辨识 */
-.bubble-sel-pulse::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: rgb(var(--c-gold) / 0.16);
-  border: 2px solid rgb(var(--c-gold) / 0.85);
-  pointer-events: none;
-  animation: bubble-sel-flash 0.6s ease-out forwards;
-}
-@keyframes bubble-sel-flash {
-  0% { opacity: 0; }
-  22% { opacity: 1; }
-  100% { opacity: 0; }
-}
-/* 选中序号徽章入场：随选中切换淡入上浮，与卡片 200ms 高亮过渡 + 金光脉冲衔接成连贯的焦点移动感 */
-.bubble-badge-in {
-  animation: bubble-badge-in 0.2s ease-out both;
-}
-@keyframes bubble-badge-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 </style>

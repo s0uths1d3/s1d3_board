@@ -19,8 +19,7 @@
         "fullscreen": false,
         "decorations": false,
         "transparent": true,
-        "skipTaskbar": true,
-        "theme": "Light"
+        "skipTaskbar": true
       }
     ],
     "security": {

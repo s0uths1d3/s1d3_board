@@ -1,14 +1,16 @@
 //! 灵动岛 API（文档：`.docs/island-api.md`）：仅监听 127.0.0.1 的最小 HTTP/SSE 服务（std 实现，零新增依赖）。
 //!
-//! 端点（API v1.2.0）：
+//! 端点（API v1.5.0）：
 //! - GET  /api/health       → {ok, data:{version, port}}
-//! - POST /api/island/show  → 第三方应用推送灵动岛显示请求（body JSON，可选 Bearer token）
+//! - POST /api/island/show  → 第三方应用推送灵动岛显示请求（body JSON，强制 Bearer token）
 //! - GET  /api/history      → 查询灵动岛历史（?limit=&kind=&from=&to=，DB 归属前端主窗口，
 //!                           Rust 挂起等待 ≤3s，经 island_history_request/result 往返）
 //! - GET  /api/events       → SSE 流（event: island.show）——全量岛显示事件（应用自身 + 第三方）
 //!
-//! 安全边界：仅回环地址绑定 + 可选 Bearer token + CORS 允许任意来源（网页可订阅事件流/调用，
-//! token 为唯一防线）；设置页可开关/改端口。
+//! 安全边界：仅回环地址绑定 + 强制 Bearer token（全端点统一，含 health；token 为空拒绝启动监听）
+//! + CORS 允许任意来源（无 token 的同机网页拿不到任何响应）。token 由前端运行时 CSPRNG 生成
+//! 并持久化 KV（设置页可重新生成），源码中不存在可推导的默认值；SSE EventSource 无法携带
+//! 请求头 → 允许 ?token= query 兜底。设置页可开关/改端口。
 //! 数据流：POST 校验通过 → emit("island-api:show") 交前端灵动岛管理器；前端实际处理时
 //! emit("island:show") → attach_event_bridge 桥接 → SSE 广播。SSE 单点广播 = 实际岛事件，
 //! 应用自身与第三方事件天然去重（延迟合并丢弃的事件不上 SSE；灵动岛总开关只关显示，不拦截广播）。
@@ -88,6 +90,18 @@ struct IslandShowEvent {
 /// 统一错误响应体：{"ok":false,"error":{"code","message"}}
 fn error_body(code: &str, message: &str) -> String {
     serde_json::json!({ "ok": false, "error": { "code": code, "message": message } }).to_string()
+}
+
+/// token 比对：逐字节累积差值，避免短路比较泄漏前缀匹配长度（时序侧信道）
+fn token_matches(configured: &str, provided: &str) -> bool {
+    if configured.len() != provided.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (a, b) in configured.bytes().zip(provided.bytes()) {
+        diff |= a ^ b;
+    }
+    diff == 0
 }
 
 /// 广播文本到全部 SSE 订阅者（写失败者移除）
@@ -361,8 +375,19 @@ fn handle_connection(mut stream: TcpStream, token: String, app: tauri::AppHandle
         return;
     }
 
-    // 可选 token 校验（配置了 token 才强制）
-    if !token.is_empty() && token != req_token {
+    // 强制 token 鉴权（v1.5.0）：token 由 island_api_apply 保证非空，此处空 token（请求未携带）
+    // 必然不匹配 → 401。SSE EventSource 无法携带请求头，Authorization 缺失时允许 ?token= query
+    // 兜底（token 为 64 位 hex，无 URL 编码歧义，仅支持原样拼在 query 上）
+    let req_token = if req_token.is_empty() {
+        path
+            .split_once('?')
+            .and_then(|(_, q)| q.split('&').find_map(|kv| kv.strip_prefix("token=")))
+            .unwrap_or("")
+            .to_string()
+    } else {
+        req_token
+    };
+    if !token_matches(&token, &req_token) {
         respond(&mut stream, "401 Unauthorized", "application/json",
                 &error_body("unauthorized", "missing or invalid bearer token"));
         return;
@@ -426,6 +451,12 @@ static CURRENT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16
 
 /// 服务线程主体：nonblocking accept 轮询 + stop 标志
 fn serve(port: u16, token: String, stop: Arc<AtomicBool>, app: tauri::AppHandle) {
+    // 防御性守卫：无 token 绝不启动监听（island_api_apply 已守门，此处兜底保证不存在无鉴权服务）
+    if token.trim().is_empty() {
+        log::error!("[island-api] 拒绝启动：token 为空（v1.5.0 起强制鉴权）");
+        let _ = app.emit(events::ISLAND_API_FAILED, "token required (mandatory auth)".to_string());
+        return;
+    }
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
         Err(e) => {
@@ -468,7 +499,9 @@ pub fn island_history_result(request_id: String, payload: String) -> bool {
     resolve_history(request_id, payload)
 }
 
-/// 应用/重启/停止灵动岛 API（设置页开关与端口变更时调用），返回实际端口（运行中）或 0（停止）
+/// 应用/重启/停止灵动岛 API（设置页开关与端口变更时调用），返回实际端口（运行中）或 0（停止）。
+/// 强制鉴权（v1.5.0）：enabled 且 token 为空 → 拒绝启动（Err），不存在无鉴权监听状态；
+/// token 非空由前端 ensureIslandApiToken 保证（KV 为空时自动生成并持久化）。
 #[tauri::command]
 pub fn island_api_apply(
     app: tauri::AppHandle,
@@ -476,6 +509,9 @@ pub fn island_api_apply(
     port: u16,
     token: String,
 ) -> Result<u16, String> {
+    if enabled && token.trim().is_empty() {
+        return Err("island-api token is required: mandatory auth since v1.5.0".to_string());
+    }
     let mut running = RUNNING.lock().map_err(|_| "island-api 状态锁中毒")?;
 
     // 配置变化一律先停旧实例（stop 标志 + join）

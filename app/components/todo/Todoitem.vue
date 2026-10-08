@@ -89,8 +89,9 @@
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-3 text-xs text-ink-faint">
               <span>{{ formatDateLocalized(Number(todo.created_at) || 0)}}</span>
+              <!-- 截止时间：始终显示在创建时间右侧（已逾期红色警示）；
+                   未设截止时以灰字占位提示，悬停文案与已设状态区分 -->
               <span
-                  v-if="todo.dueDate"
                   class="flex items-center gap-1"
                   :class="{ 'text-danger': isOverdue && !visualCompleted }"
                   v-tip="t(isOverdue && !visualCompleted ? 'todo.overdue' : 'todo.due_time')"
@@ -99,7 +100,7 @@
                   <path d="M12 7v5l3 2"></path>
                   <circle cx="12" cy="12" r="9"></circle>
                 </svg>
-                {{ formatDueDate }}
+                {{ formatDueDate || t('todo.no_due_set') }}
               </span>
               <!-- 自定义提醒时刻：用户显式设置的闹钟时间也要在卡片上可见
                    （"指定时刻"规则显示最早一条的时间；百分比/提前分钟由截止时间推导，仅显示铃铛），

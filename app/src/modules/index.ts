@@ -9,6 +9,7 @@ import { smartClipModule } from './smartClip.module';
 import { clipboardModule } from './clipboard.module';
 import { islandModule } from './island.module';
 import { statisticsModule } from './statistics.module';
+import { backupModule } from './backup.module';
 import { todoReminderModule } from './todoReminder.module';
 import { shortcutsModule } from './shortcuts.module';
 
@@ -52,6 +53,7 @@ const APP_MODULES: AppModule[] = [
     clipboardModule,
     islandModule,
     statisticsModule,
+    backupModule,
     todoReminderModule,
     shortcutsModule,
 ];

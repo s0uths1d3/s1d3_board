@@ -19,6 +19,8 @@ interface TooltipPayload {
   image?: string;
   /** 图片模式：元信息说明文本（类型/创建时间/使用次数/最后使用） */
   meta?: string;
+  /** 文本模式：换行开关（主窗口设置实时随载荷传入；缺省 false=不折行，超宽横向滚动） */
+  wrap?: boolean;
 }
 
 const visible = ref(false);
@@ -29,6 +31,8 @@ const image = ref('');
 const meta = ref('');
 /** 是否图片模式（image 有值即图片模式，决定渲染分支与尺寸测量） */
 const isImage = computed(() => !!image.value);
+/** 文本换行开关（随载荷更新）：false=每行保持原始单行，超宽由容器横向滚动 */
+const wrap = ref(false);
 
 let unlistenShow: (() => void) | null = null;
 let unlistenHide: (() => void) | null = null;
@@ -180,6 +184,7 @@ async function showTooltip(payload: TooltipPayload) {
   text.value = payload.text ?? '';
   image.value = payload.image ?? '';
   meta.value = payload.meta ?? '';
+  wrap.value = !!payload.wrap;
   visible.value = true;
   // 通知主窗口：tooltip 已激活（正在显示/使用），失焦自动隐藏逻辑应跳过
   emit('tooltip:active', getCurrentWindow().label).catch(() => {});
@@ -299,8 +304,9 @@ onBeforeUnmount(() => {
             class="tooltip-image"
         />
       </div>
-      <!-- 文本模式：逐行带行号（超大内容仅渲染前 MAX_RENDER_LINES 行，剩余在元信息区提示） -->
-      <div v-else class="tooltip-lines">
+      <!-- 文本模式：逐行带行号（超大内容仅渲染前 MAX_RENDER_LINES 行，剩余在元信息区提示）；
+           wrap-off=不折行（每行原始单行，超宽横向滚动）/ wrap-on=长行自动折行 -->
+      <div v-else class="tooltip-lines" :class="wrap ? 'wrap-on' : 'wrap-off'">
         <div v-for="(line, i) in renderedLines" :key="i" class="tooltip-line-row">
           <span class="tooltip-line-num">{{ i + 1 }}</span>
           <span class="tooltip-line">{{ line }}</span>
@@ -353,6 +359,7 @@ onBeforeUnmount(() => {
 }
 .tooltip-lines::-webkit-scrollbar {
   width: 6px;
+  height: 6px; /* 横向滚动条（不换行模式超宽内容时出现） */
 }
 .tooltip-lines::-webkit-scrollbar-thumb {
   background: rgba(150, 120, 90, 0.45);
@@ -360,6 +367,22 @@ onBeforeUnmount(() => {
 }
 .tooltip-lines::-webkit-scrollbar-track {
   background: transparent;
+}
+/* 不换行模式：每行保持原始单行，超出窗口宽度的内容由容器横向滚动查看 */
+.tooltip-lines.wrap-off {
+  overflow-x: auto;
+}
+/* flex 行默认收缩到容器宽度（长行溢出但不产生滚动宽度）：
+   width:max-content 让行按最长内容伸展撑开横向滚动，min-width:100% 保持短行占满对齐。
+   行号随内容横向滚动滚出视野（不做 sticky 固定：固定需不透明底色，
+   会与卡片渐变背景形成突兀色块） */
+.tooltip-lines.wrap-off .tooltip-line-row {
+  width: max-content;
+  min-width: 100%;
+}
+.tooltip-lines.wrap-off .tooltip-line {
+  white-space: pre; /* 保留原始空白，不折行 */
+  flex: none;
 }
 .tooltip-line-row {
   /* 每行：左侧行号 + 右侧文本 横向排列 */
@@ -409,7 +432,9 @@ onBeforeUnmount(() => {
   -webkit-user-drag: none;
 }
 .tooltip-meta {
-  /* 元信息：单行、始终钉在窗口底部（flex 列布局下 margin-top:auto 推至底），小字低对比 */
+  /* 元信息：钉在窗口底部（flex 列布局下 margin-top:auto 推至底），小字低对比。
+     过长时自动折行完整显示（不省略号截断）：折行仅是视觉续行而非新的行项目，
+     续行左侧保持空白——元信息区独立于文本行号网格，本身无行号标识 */
   margin-top: auto;
   padding-top: 0.5rem;
   text-align: center;
@@ -417,8 +442,8 @@ onBeforeUnmount(() => {
   line-height: 1.4;
   opacity: 0.6;
   color: rgb(var(--c-ink-soft));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 </style>

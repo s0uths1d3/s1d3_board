@@ -48,6 +48,11 @@ tauri-plugin-fs = "2"
 # 剪贴板图片可能是其他应用写入的 JPEG/BMP（data URL 前缀统一写 png 不可信）
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif"] }
 base64 = "0.22"
+# 系统通知发送（Windows toast 显式 AppId，修复开发模式下通知来源显示为 PowerShell）
+notify-rust = "4"
+# AI API Key 系统凭据库存储（Windows Credential Manager / macOS Keychain / Linux Secret Service）：
+# Key 明文不再落 SQLite；凭据库故障由前端降级 KV 明文并警示
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 # 二维码识别（quircs：C 库 quirc 的 Rust 绑定，cc 编译）：复制图片时从像素解码 QR 链接
 # （环盘/灵动岛展示）。选型：quirc 是 Android 等主流扫描器的识别引擎，对 Logo 遮挡码
 # （微信/QQ 群二维码）的网格检测与纠错解码比 rqrr 更强；输入为 1 字节/像素灰度缓冲

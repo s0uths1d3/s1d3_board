@@ -5,12 +5,15 @@
  * 到期时刻通知——替代原先内联在 TodoList.vue 的单一定时器方案。
  * 收益：定时器挂在主窗口服务上，切换 Tab（TodoList 卸载）不再丢失；
  * 已发记录持久化到 settings 表，重启后不重复轰炸；错过的提醒按策略补发/汇总。
+ * 另有 30s 兜底扫描：窗口隐藏/系统休眠会让 setTimeout 被大幅节流，扫描把已到点
+ * （fireAt <= now）未触发的条目直接交给触发流程，将提醒延迟上限压到扫描周期内。
  *
  * 生命周期：app.vue onMounted（仅主窗口）调用 start()（随后首个 sync 处于补发阶段），
  * onBeforeUnmount 调用 stop()；TodoList 在每次数据变化（含 1s 轮询兜底）后调用
  * sync(todos)——策略为纯函数，每次全量重算后与现有定时器 diff，增删有序。
  */
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
+import { invoke } from '@tauri-apps/api/core';
 import { watch } from 'vue';
 import dbService from '~/src/db/dbService';
 import { isTauri } from '~/utils/env';
@@ -30,10 +33,14 @@ const FIRED_LOG_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 /** 单条提醒查询失败的最大重试次数（指数退避），超过后放弃 */
 const MAX_FIRE_RETRIES = 5;
+/** 兜底扫描周期：弥补 WebView 隐藏/休眠后 setTimeout 被节流导致的触发延迟 */
+const SWEEP_INTERVAL_MS = 30 * 1000;
 
 interface ScheduledEntry {
   todoId: string;
   stage: ReminderStage;
+  /** 计划触发时刻（毫秒）：兜底扫描据此判断「已到点未触发」 */
+  fireAt: number;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -55,6 +62,10 @@ class ReminderService {
   private catchUpQueue: { todo: Todo; item: PlannedReminder }[] = [];
   /** 权限是否已确认授予（避免每次发送都查询） */
   private permissionGranted = false;
+  /** 兜底扫描定时器（setTimeout 链在窗口隐藏/休眠时可能被大幅节流） */
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  /** 正在触发中的 key：setTimeout 与兜底扫描可能先后触发同一提醒，防并发双发 */
+  private inFlight = new Set<string>();
 
   start(): Promise<void> {
     if (!this.readyPromise) {
@@ -102,11 +113,18 @@ class ReminderService {
         }
       } catch { /* 发送时再兜底请求 */ }
     }
+    // 兜底扫描：firedLog 已就绪后才启动，避免把已发提醒误判为未发
+    this.sweepTimer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
   }
 
   stop(): void {
     for (const entry of this.timers.values()) clearTimeout(entry.timer);
     this.timers.clear();
+    if (this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
+    this.inFlight.clear();
     this.started = false;
     this.inCatchUp = false;
     this.catchUpQueue = [];
@@ -165,11 +183,24 @@ class ReminderService {
     const remaining = fireAt - Date.now();
     if (remaining > MAX_TIMEOUT_MS) {
       const timer = setTimeout(() => this.scheduleTimer(key, todoId, stage, fireAt), MAX_TIMEOUT_MS);
-      this.timers.set(key, { todoId, stage, timer });
+      this.timers.set(key, { todoId, stage, fireAt, timer });
       return;
     }
-    const timer = setTimeout(() => void this.handleFire(key, todoId, stage), Math.max(0, remaining));
-    this.timers.set(key, { todoId, stage, timer });
+    const timer = setTimeout(() => void this.handleFire(key, todoId, stage, fireAt), Math.max(0, remaining));
+    this.timers.set(key, { todoId, stage, fireAt, timer });
+  }
+
+  /** 兜底扫描：WebView 在窗口隐藏/系统休眠恢复后会对 setTimeout 大幅节流，
+   *  仅靠定时器链可能迟到数分钟甚至到窗口重新可见才触发。周期把已到点
+   *  （fireAt <= now）的条目直接交给 handleFire（内部有去重与状态复核）。
+   *  远期任务的分段中间条目 fireAt 为最终触发时刻，不会被误扫。 */
+  private sweep(): void {
+    if (!this.started) return;
+    const now = Date.now();
+    for (const [key, entry] of this.timers) {
+      if (entry.fireAt > now) continue;
+      void this.handleFire(key, entry.todoId, entry.stage, entry.fireAt);
+    }
   }
 
   /** missed 处理：补发阶段入队列；平时标记已发、静默跳过（防反复进入 missed 集合） */
@@ -208,48 +239,54 @@ class ReminderService {
     } catch { /* 补发失败不影响主流程 */ }
   }
 
-  /** 定时器触发：复核最新状态后再发送（期间可能被完成/改期/删除） */
-  private async handleFire(key: string, todoId: string, stage: ReminderStage): Promise<void> {
+  /** 定时器/兜底扫描触发：复核最新状态后再发送（期间可能被完成/改期/删除） */
+  private async handleFire(key: string, todoId: string, stage: ReminderStage, fireAt: number): Promise<void> {
     this.timers.delete(key);
-    if (this.firedLog[key]) return;
-    let todo: Todo | undefined;
+    if (this.firedLog[key] || this.inFlight.has(key)) return;
+    // inFlight 守卫：setTimeout 与兜底扫描可能先后触发同一 key，避免并发双发
+    this.inFlight.add(key);
     try {
-      todo = await dbService.fetchSingleTodo(todoId);
-    } catch {
-      // 查询失败：指数退避重试（未写标记，不会丢提醒）；连续失败达到上限后放弃，
-      // 避免数据库持久故障时每个提醒都常驻一个永久重试定时器
-      const retries = (this.retryCounts.get(key) ?? 0) + 1;
-      if (retries > MAX_FIRE_RETRIES) {
-        this.retryCounts.delete(key);
-        console.error(`[reminder] 提醒 ${key} 连续 ${MAX_FIRE_RETRIES} 次查询失败，放弃本次触发`);
+      let todo: Todo | undefined;
+      try {
+        todo = await dbService.fetchSingleTodo(todoId);
+      } catch {
+        // 查询失败：指数退避重试（未写标记，不会丢提醒）；连续失败达到上限后放弃，
+        // 避免数据库持久故障时每个提醒都常驻一个永久重试定时器
+        const retries = (this.retryCounts.get(key) ?? 0) + 1;
+        if (retries > MAX_FIRE_RETRIES) {
+          this.retryCounts.delete(key);
+          console.error(`[reminder] 提醒 ${key} 连续 ${MAX_FIRE_RETRIES} 次查询失败，放弃本次触发`);
+          return;
+        }
+        this.retryCounts.set(key, retries);
+        const backoff = 5000 * 2 ** (retries - 1);
+        const retry = setTimeout(() => void this.handleFire(key, todoId, stage, fireAt), backoff);
+        this.timers.set(key, { todoId, stage, fireAt, timer: retry });
         return;
       }
-      this.retryCounts.set(key, retries);
-      const backoff = 5000 * 2 ** (retries - 1);
-      const retry = setTimeout(() => void this.handleFire(key, todoId, stage), backoff);
-      this.timers.set(key, { todoId, stage, timer: retry });
-      return;
-    }
-    this.retryCounts.delete(key);
-    // 自定义闹钟（指定时刻）不依赖截止时间也能触发；其余阶段均围绕截止时间
-    if (!todo || todo.completed === 1) return;
-    if (stage !== 'custom' && !todo.dueDate) return;
-    // 复核 key 仍有效（截止时间/闹钟规则未被改删）：
-    // - 智能与到期阶段：key 前缀必须匹配当前截止时间（改期 → 丢弃，sync 重排新 key）
-    // - 自定义闹钟：按规则集合重新规划后仍存在才发送（迟到但在截止前 → 照常提醒）
-    if (stage === 'custom') {
-      if (!hasReminderKey(todo, key, Date.now())) return;
-    } else if (!key.startsWith(`${todo.id}|${todo.dueDate || ''}|${stage}`)) {
-      return;
-    }
-    if (stage !== 'due' && todo.dueDate && new Date(todo.dueDate).getTime() <= Date.now() - 1000) return;
+      this.retryCounts.delete(key);
+      // 自定义闹钟（指定时刻）不依赖截止时间也能触发；其余阶段均围绕截止时间
+      if (!todo || todo.completed === 1) return;
+      if (stage !== 'custom' && !todo.dueDate) return;
+      // 复核 key 仍有效（截止时间/闹钟规则未被改删）：
+      // - 智能与到期阶段：key 前缀必须匹配当前截止时间（改期 → 丢弃，sync 重排新 key）
+      // - 自定义闹钟：按规则集合重新规划后仍存在才发送（迟到但在截止前 → 照常提醒）
+      if (stage === 'custom') {
+        if (!hasReminderKey(todo, key, Date.now())) return;
+      } else if (!key.startsWith(`${todo.id}|${todo.dueDate || ''}|${stage}`)) {
+        return;
+      }
+      if (stage !== 'due' && todo.dueDate && new Date(todo.dueDate).getTime() <= Date.now() - 1000) return;
 
-    this.firedLog[key] = Date.now();
-    this.persistFiredLog();
+      this.firedLog[key] = Date.now();
+      this.persistFiredLog();
 
-    const { title, body } = reminderText(todo, stage, Date.now());
-    this.send(title, body);
-    void statsService.record({ todo_reminded: 1 } as Partial<Record<StatField, number>>);
+      const { title, body } = reminderText(todo, stage, Date.now());
+      this.send(title, body);
+      void statsService.record({ todo_reminded: 1 } as Partial<Record<StatField, number>>);
+    } finally {
+      this.inFlight.delete(key);
+    }
   }
 
   /** 发送：合成提示音 + 系统通知 + 灵动岛提醒（纯 Web 环境仅提示音）。
@@ -270,7 +307,14 @@ class ReminderService {
           }
         }
         if (this.permissionGranted) {
-          await sendNotification({ title, body });
+          // Windows 走 Rust 命令显式携带 AppId（AUMID 已注册本应用名与图标）；
+          // tauri-plugin-notification 在开发/未安装模式下不设置 AppId，
+          // toast 来源会回退显示「Windows PowerShell」，故仅非 Windows 保留插件通道
+          if (navigator.userAgent.includes('Windows')) {
+            await invoke('send_system_notification', { title, body });
+          } else {
+            await sendNotification({ title, body });
+          }
         }
       } catch { /* 通知失败不影响主流程 */ }
     })();

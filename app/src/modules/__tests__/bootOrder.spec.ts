@@ -5,9 +5,10 @@ import { createAppRegistry } from '../index';
 import { initSmartClipListener } from '../../smart-clip/smartClip';
 import { startClipboardListener, stopClipboardListener } from '../../clipboard/clipboardListener';
 import { initCopyIsland } from '~/composables/useCopyIsland';
-import { restoreIslandApiSetting, setupIslandHistoryBridge } from '../../island/islandApi';
+import { restoreIslandApiSetting, setupIslandApiFailureListener, setupIslandHistoryBridge, setupPastePermissionListener } from '../../island/islandApi';
 import { restoreIslandWebhookSetting } from '../../island/islandWebhook';
 import statsService from '../../statistics/statsService';
+import { runDailyAutoBackup } from '../../backup/autoBackup';
 import { restoreAppUsageSetting } from '~/composables/useAppUsage';
 import reminderService from '../../todo/reminderService';
 import { initShortcuts, unregisterAllShortcuts } from '../../commands/shortcuts/InitShortcuts';
@@ -28,6 +29,8 @@ vi.mock('~/composables/useCopyIsland', () => ({ initCopyIsland: vi.fn() }));
 vi.mock('../../island/islandApi', () => ({
     restoreIslandApiSetting: vi.fn(async () => {}),
     setupIslandHistoryBridge: vi.fn(async () => {}),
+    setupIslandApiFailureListener: vi.fn(async () => {}),
+    setupPastePermissionListener: vi.fn(async () => {}),
 }));
 vi.mock('../../island/islandWebhook', () => ({ restoreIslandWebhookSetting: vi.fn(async () => {}) }));
 vi.mock('../../statistics/statsService', () => ({
@@ -41,6 +44,7 @@ vi.mock('../../statistics/statsService', () => ({
     },
 }));
 vi.mock('~/composables/useAppUsage', () => ({ restoreAppUsageSetting: vi.fn(async () => {}) }));
+vi.mock('../../backup/autoBackup', () => ({ runDailyAutoBackup: vi.fn(async () => {}) }));
 vi.mock('../../todo/reminderService', () => ({ default: { start: vi.fn(async () => {}) } }));
 vi.mock('../../commands/shortcuts/InitShortcuts', () => ({
     initShortcuts: vi.fn(async () => {}),
@@ -69,16 +73,19 @@ function makeCtx() {
 }
 
 describe('模块注册表引导顺序（modules/index 装配）', () => {
-    it('boot：smart-clip 监听先挂载 → clipboard 启动 → island → statistics → todo-reminder → shortcuts', async () => {
+    it('boot：smart-clip 监听先挂载 → clipboard 启动 → island → statistics → backup → todo-reminder → shortcuts', async () => {
         const order: string[] = [];
         (initSmartClipListener as Mock).mockImplementation(() => { order.push('smart-clip.init'); });
         (startClipboardListener as Mock).mockImplementation(async () => { order.push('clipboard.start'); });
         (initCopyIsland as Mock).mockImplementation(() => { order.push('island.start'); });
         (restoreIslandApiSetting as Mock).mockImplementation(async () => { order.push('island.start'); });
         (setupIslandHistoryBridge as Mock).mockImplementation(async () => { order.push('island.start'); });
+        (setupIslandApiFailureListener as Mock).mockImplementation(async () => { order.push('island.start'); });
+        (setupPastePermissionListener as Mock).mockImplementation(async () => { order.push('island.start'); });
         (restoreIslandWebhookSetting as Mock).mockImplementation(async () => { order.push('island.start'); });
         (statsService.startUsageTracking as Mock).mockImplementation(() => { order.push('statistics.start'); });
         (restoreAppUsageSetting as Mock).mockImplementation(async () => { order.push('statistics.start'); });
+        (runDailyAutoBackup as Mock).mockImplementation(async () => { order.push('backup.start'); });
         (reminderService.start as Mock).mockImplementation(async () => { order.push('todo-reminder.start'); });
         (initShortcuts as Mock).mockImplementation(async () => { order.push('shortcuts.start'); });
 
@@ -88,8 +95,9 @@ describe('模块注册表引导顺序（modules/index 装配）', () => {
         expect(order).toEqual([
             'smart-clip.init',
             'clipboard.start',
-            'island.start', 'island.start', 'island.start', 'island.start',
+            'island.start', 'island.start', 'island.start', 'island.start', 'island.start', 'island.start',
             'statistics.start', 'statistics.start',
+            'backup.start',
             'todo-reminder.start',
             'shortcuts.start',
         ]);
