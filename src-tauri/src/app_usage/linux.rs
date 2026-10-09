@@ -128,8 +128,9 @@ pub fn list_process_names() -> Vec<String> {
 let mut names = std::collections::HashSet::new();
 if let Ok(entries) = std::fs::read_dir("/proc") {
     for entry in entries.flatten() {
-        // 只关心 PID 目录（/proc 下数字命名）
-        let Some(pid) = entry.file_name().to_str() else { continue };
+        // 只关心 PID 目录（/proc 下数字命名）；into_string 取 owned 值，
+        // 避免 let-else 内借用 file_name() 临时值跨语句存活（E0716）
+        let Some(pid) = entry.file_name().into_string().ok() else { continue };
         if !pid.bytes().all(|b| b.is_ascii_digit()) {
             continue;
         }
