@@ -11,6 +11,9 @@ None
 pub fn icon_of_app(_name: &str) -> Option<String> {
 None
 }
+pub fn list_process_names() -> Vec<String> {
+Vec::new()
+}
 pub fn idle_secs() -> u64 {
 0
 }

@@ -16,7 +16,93 @@ import { CLEAR_BACKUP_TABLES } from './repositories/backupRepository';
  * 此处在连接建立后按 PRAGMA 检查并补齐功能所需列；列已存在则跳过，
  * 与 Rust 侧 migration（同 DDL）互不冲突。
  */
+/**
+ * clipboard.type 约束放宽（兜底，对应 Rust v18）：v3 建列时带 CHECK (type IN ('text','image'))，
+ * 富文本(html)/文件(files)类型无法写入；SQLite 不支持 DROP CONSTRAINT，按标准流程重建表。
+ * 检测 sqlite_master 中的建表 SQL 含旧 CHECK 才重建（幂等：v18 重建后不再命中）。
+ * 重建 DDL 已含 html_content/encrypted 两列，后续 wanted 循环对其余列做兜底补齐。
+ */
+/** clipboard 表新结构 DDL（与 Rust 侧 v18 迁移同构）：CHECK 已放宽，含 html_content/encrypted */
+function clipboardTableDdl(table: string) {
+    return `
+    CREATE TABLE ${table}
+    (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        content      TEXT NOT NULL UNIQUE,
+        created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+        source       TEXT,
+        is_favorite  INTEGER DEFAULT 0 CHECK (is_favorite IN (0, 1)),
+        category     TEXT,
+        count        INTEGER DEFAULT 1,
+        updated_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+        type         TEXT DEFAULT 'text',
+        source_app   TEXT,
+        qr_text      TEXT,
+        html_content TEXT,
+        encrypted    INTEGER NOT NULL DEFAULT 0
+    )
+`;
+}
+
+/** 重建收尾：补齐索引 + 校正 AUTOINCREMENT 序列（无行/无 sqlite_sequence 时 no-op） */
+async function finalizeClipboardRebuild(db: SqlDatabase) {
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON clipboard (created_at DESC)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_source ON clipboard (source)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_favorite ON clipboard (is_favorite)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_clip_updated ON clipboard (updated_at DESC)');
+    try {
+        await db.execute("UPDATE sqlite_sequence SET seq = (SELECT MAX(id) FROM clipboard) WHERE name = 'clipboard'");
+    } catch { /* sqlite_sequence 尚未创建（库内从无 AUTOINCREMENT 插入）：no-op */ }
+}
+
+async function relaxClipboardTypeCheck(db: SqlDatabase) {
+    try {
+        // 同时探测 clipboard 与 clipboard_v18：重建流程非原子（DDL 无法包事务——
+        // tauri-plugin-sql 连接池下 BEGIN/COMMIT 可能落在不同连接），中断会留下半成品状态
+        const tables = await db.select<{ name: string; sql: string }[]>(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name IN ('clipboard', 'clipboard_v18')"
+        );
+        const clipboard = tables?.find((t) => t.name === 'clipboard');
+        const legacy = tables?.find((t) => t.name === 'clipboard_v18');
+
+        // 自愈一：上次重建中断在 DROP 旧表之后 —— clipboard_v18 已含全量数据，补完改名即恢复
+        if (!clipboard && legacy) {
+            await db.execute('ALTER TABLE clipboard_v18 RENAME TO clipboard');
+            await finalizeClipboardRebuild(db);
+            console.info('[db] 检测到 clipboard 表重建中断，已由 clipboard_v18 恢复');
+            return;
+        }
+        // 自愈二：表完全缺失（更早异常遗留）——按新结构兜底建表，避免 no such table 卡死全功能
+        if (!clipboard && !legacy) {
+            await db.execute(clipboardTableDdl('clipboard'));
+            await finalizeClipboardRebuild(db);
+            console.info('[db] clipboard 表缺失，已按 v18 结构兜底重建');
+            return;
+        }
+        // 常规重建：表存在且 DDL 带旧 CHECK 约束。先清上次 INSERT 阶段失败可能残留的 v18，
+        // 否则重试时 CREATE TABLE clipboard_v18 报 already exists、重建永远无法完成
+        const ddl = clipboard!.sql ?? '';
+        if (!ddl.includes("type IN ('text', 'image')") && !ddl.includes("type IN ('text','image')")) return;
+        await db.execute('DROP TABLE IF EXISTS clipboard_v18');
+        await db.execute(clipboardTableDdl('clipboard_v18'));
+        await db.execute(`
+            INSERT INTO clipboard_v18
+                (id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, html_content, encrypted)
+            SELECT id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, NULL, 0
+            FROM clipboard
+        `);
+        await db.execute('DROP TABLE clipboard');
+        await db.execute('ALTER TABLE clipboard_v18 RENAME TO clipboard');
+        await finalizeClipboardRebuild(db);
+        console.info('[db] clipboard 表已重建放宽 type 约束（v18 兜底）');
+    } catch (e) {
+        console.warn('[db] clipboard 表 type 约束放宽失败:', e);
+    }
+}
+
 async function ensureFeatureColumns(db: SqlDatabase) {
+    // type CHECK 放宽先行：重建 DDL 已含 html_content/encrypted，避免重建后重复补列
+    await relaxClipboardTypeCheck(db);
     // 兜底建表：app_usage / app_icons / clip_templates（方案）
     // ——防止旧二进制（无对应迁移）下前端查询/写入报 no such table
     try {
@@ -102,6 +188,12 @@ async function ensureFeatureColumns(db: SqlDatabase) {
         { table: 'clipboard', column: 'source_app', ddl: 'ALTER TABLE clipboard ADD COLUMN source_app TEXT' },
         // 剪贴图片二维码识别结果（复制时 Rust 侧解码；存量未扫描 NULL，已扫无码 ''）
         { table: 'clipboard', column: 'qr_text', ddl: 'ALTER TABLE clipboard ADD COLUMN qr_text TEXT' },
+        // 富文本正文（HTML）：html 类型条目的原始 HTML（content 保持纯文本语义）
+        { table: 'clipboard', column: 'html_content', ddl: 'ALTER TABLE clipboard ADD COLUMN html_content TEXT' },
+        // 字段级加密标记：1 = content 存 S1ENC1 加密载荷（AES-256-GCM，密钥在 OS 凭据库）
+        { table: 'clipboard', column: 'encrypted', ddl: 'ALTER TABLE clipboard ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0' },
+        // 常用剪贴板条目标签（tags 存 JSON 字符串数组，应用层解析）
+        { table: 'pinned_clip', column: 'tags', ddl: 'ALTER TABLE pinned_clip ADD COLUMN tags TEXT' },
     ];
     let addedPriorityLevel = false;
     for (const { table, column, ddl } of wanted) {

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { onTextUpdate, onSomethingUpdate, readImageBase64, startListening } from 'tauri-plugin-clipboard-api';
+import { onTextUpdate, onSomethingUpdate, readImageBase64, readFiles, startListening, hasHTML, readHtml } from 'tauri-plugin-clipboard-api';
 import { bus } from "../core/events";
 import { appConnection } from "../core/db/appConnection";
 import { runDatabaseMigrations } from "../core/db/migrator";
@@ -11,6 +11,7 @@ import {
     ensurePrivacyLoaded, isPrivacyPaused,
     ensureSensitiveFilterLoaded, isSensitiveFilterEnabled,
 } from "../../composables/usePrivacySettings";
+import { ensureIgnoredAppsLoaded, isIgnoredApp } from "../../composables/useIgnoredApps";
 import { isSensitiveText } from "../privacy/sensitive";
 
 /**
@@ -48,8 +49,8 @@ export async function startClipboardListener(): Promise<void> {
     await runDatabaseMigrations(appConnection);
 
     // 隐私开关状态落定后再挂监听：回调内同步读取开关值才有意义
-    // （隐私模式 / 敏感防护；读取失败保持默认值，不阻断监听启动）
-    await Promise.all([ensurePrivacyLoaded(), ensureSensitiveFilterLoaded()]).catch(() => {});
+    // （隐私模式 / 敏感防护 / 来源应用忽略名单；读取失败保持默认值，不阻断监听启动）
+    await Promise.all([ensurePrivacyLoaded(), ensureSensitiveFilterLoaded(), ensureIgnoredAppsLoaded()]).catch(() => {});
 
     // 复制瞬间的来源应用：查询当前前台进程名（复制不切换焦点，监听回调触发时前台仍是复制方）。
     // 查询失败不阻断入库（来源留空，UI 不显示）。
@@ -72,7 +73,23 @@ export async function startClipboardListener(): Promise<void> {
                 bus.emit('island:notice', 'clip.sensitive_blocked');
                 return;
             }
-            await repo.saveClipboard(newText, 'text', await queryForegroundApp());
+            // 来源应用忽略名单：命中应用复制的内容不落库、不弹岛（按应用粒度的选择性忽略）
+            const sourceApp = await queryForegroundApp();
+            if (isIgnoredApp(sourceApp)) return;
+            // 富文本保留：剪贴板同时含 text/html 时按 html 条目入库——content 存纯文本兜底
+            // （列表/搜索/tooltip 全链路按纯文本工作），html_content 单独存 HTML 源码（粘贴还原用）。
+            // readHtml 可能回传 CF_HTML 全文（含 <!--StartFragment--> 注释框架），裁出真实片段；
+            // 读取失败/为空回退纯文本条目，行为不劣化
+            let htmlContent: string | null = null;
+            try {
+                if (await hasHTML()) {
+                    const raw = await readHtml();
+                    const m = raw?.match(/<!--\s*StartFragment\s*-->([\s\S]*?)<!--\s*EndFragment\s*-->/i);
+                    const html = (m ? m[1] : raw)?.trim();
+                    if (html) htmlContent = html;
+                }
+            } catch { /* HTML 读取不可用：回退纯文本条目 */ }
+            await repo.saveClipboard(newText, htmlContent ? 'html' : 'text', sourceApp, null, undefined, htmlContent);
             // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
             bus.emit('clipboard:changed');
         } catch (err) {
@@ -80,12 +97,35 @@ export async function startClipboardListener(): Promise<void> {
         }
     }));
 
-    // 图片更新：onImageUpdate 在某些平台/格式下回传的是文件路径而非 base64，
+    // 图片/文件更新：onImageUpdate 在某些平台/格式下回传的是文件路径而非 base64，
     // 改用 onSomethingUpdate 判定类型后主动 readImageBase64() 获取真实数据。
     unlisteners.push(await onSomethingUpdate(async (updated) => {
+        // ===== 文件复制（资源管理器多选等写入 CF_HDROP）：路径列表落库 =====
+        // content 存 JSON.stringify(paths)（粘贴时解析还原 writeFiles）；
+        // 复制文件不触发文本监听（无 CF_UNICODETEXT），不会与文本条目重复
+        if (updated.files) {
+            try {
+                // 隐私模式：暂停一切记录（路径列表也是敏感信息）
+                if (isPrivacyPaused()) return;
+                // 来源应用忽略名单：命中应用复制的文件不落库、不弹岛
+                const sourceApp = await queryForegroundApp();
+                if (isIgnoredApp(sourceApp)) return;
+                const paths = await readFiles().catch(() => [] as string[]);
+                if (!paths || paths.length === 0) return;
+                await repo.saveClipboard(JSON.stringify(paths), 'files', sourceApp);
+                // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
+                bus.emit('clipboard:changed');
+            } catch (err) {
+                console.error('读取剪贴板文件失败:', err);
+            }
+            return;
+        }
         if (!updated.image) return;
         // 隐私模式：暂停一切记录（快速通道捕获也不做，应用对剪贴板「失明」）
         if (isPrivacyPaused()) return;
+        // 来源应用忽略名单：命中应用复制的图片不落盘、不落库、不弹岛
+        const sourceApp = await queryForegroundApp();
+        if (isIgnoredApp(sourceApp)) return;
         try {
             // ===== 快速通道（Windows）：单命令捕获 =====
             // 旧链路 readImageBase64（数 MB IPC）→ save_clipboard_image（数 MB 回传落盘）→
@@ -102,7 +142,7 @@ export async function startClipboardListener(): Promise<void> {
                 // saveClipboard 写库后的二次派发按同内容去重跳过
                 bus.emit('island:copy', { content: captured.original, type: 'image', thumb: captured.thumb, qrText: captured.qrText });
                 // 落盘已由捕获命令完成，直接存 imgfile: 引用；QR 已扫：无码写 '' 哨兵不再补扫
-                await repo.saveClipboard(captured.fileRef, 'image', await queryForegroundApp(), captured.qrText ?? '', captured.original);
+                await repo.saveClipboard(captured.fileRef, 'image', sourceApp, captured.qrText ?? '', captured.original);
                 // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
                 bus.emit('clipboard:changed');
                 return;
@@ -142,7 +182,7 @@ export async function startClipboardListener(): Promise<void> {
             bus.emit('island:copy', { content: dataUrl, type: 'image', thumb, qrText });
             // 已扫无码写 '' 哨兵（qr_text 非 NULL 不再补扫）；扫描完全不可用留 NULL（列表可见时补解码重试）。
             // 尾参 dataUrl：岛事件语义需要原图（DB 存的是文件引用，见 saveClipboard 注释）
-            await repo.saveClipboard(storeContent, 'image', await queryForegroundApp(), qrScanned ? (qrText ?? '') : null, dataUrl);
+            await repo.saveClipboard(storeContent, 'image', sourceApp, qrScanned ? (qrText ?? '') : null, dataUrl);
             // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
             bus.emit('clipboard:changed');
         } catch (err) {
@@ -151,9 +191,9 @@ export async function startClipboardListener(): Promise<void> {
     }));
 
     // 注意：startListening 的 listenTypes 参数会整体覆盖默认值
-    // （默认 text/html/rtf/image/files 全开），必须显式传入 text + image，
+    // （默认 text/html/rtf/image/files 全开），必须显式传入 text + image + files，
     // 只传 { image: true } 会关闭文本监听，导致 TEXT_CHANGED 永不触发。
-    await startListening({ text: true, image: true });
+    await startListening({ text: true, image: true, files: true });
     console.log("Clipboard listener started");
 }
 

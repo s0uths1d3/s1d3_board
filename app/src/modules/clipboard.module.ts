@@ -23,6 +23,9 @@ export const clipboardModule: AppModule = {
         void clipboardService.cleanupImageStorage().then((r) => {
             if (!r.failed) return clipboardService.finalizeImageCleanup();
         });
+        // 启动时按「保留天数」过期清理（clip_retention_days，未配置=永久；
+        // 删除条件幂等，每次启动执行一次即可，fire-and-forget 不阻塞启动）
+        void clipboardService.purgeExpiredClips().catch(() => {});
     },
     async stop() {
         await stopClipboardListener();

@@ -387,6 +387,55 @@ CREATE TABLE IF NOT EXISTS clip_templates
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
                             "#
+                        },
+                        Migration {
+                            version: 18,
+                            description: "Extend clipboard with rich-text/encrypted columns, relax type CHECK; add pinned_clip tags",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- clipboard.type 在 v3 定义时带 CHECK (type IN ('text','image')) 约束，无法直接存
+-- 富文本(html)/文件(files)类型；SQLite 不支持 DROP CONSTRAINT，按标准流程重建表放宽约束，
+-- 同时补齐富文本与加密标记两列（与前端 ensureFeatureColumns 兜底逻辑同 DDL）。
+CREATE TABLE clipboard_v18
+(
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    content      TEXT NOT NULL UNIQUE,
+    created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+    source       TEXT,
+    is_favorite  INTEGER DEFAULT 0 CHECK (is_favorite IN (0, 1)),
+    category     TEXT,
+    count        INTEGER DEFAULT 1,
+    updated_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+    type         TEXT DEFAULT 'text',
+    source_app   TEXT,
+    qr_text      TEXT,
+    -- 富文本正文（HTML）：仅 html 类型条目有值，content 保持纯文本语义（搜索/岛显示/合并复制）
+    html_content TEXT,
+    -- 字段级加密标记：1 = content 存 S1ENC1 加密载荷（AES-256-GCM，密钥在 OS 凭据库）
+    encrypted    INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO clipboard_v18
+    (id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, html_content, encrypted)
+SELECT
+    id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, NULL, 0
+FROM clipboard;
+
+DROP TABLE clipboard;
+ALTER TABLE clipboard_v18 RENAME TO clipboard;
+
+-- 表重建后原索引随旧表删除，按既有定义重建
+CREATE INDEX IF NOT EXISTS idx_timestamp ON clipboard (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_source ON clipboard (source);
+CREATE INDEX IF NOT EXISTS idx_favorite ON clipboard (is_favorite);
+CREATE INDEX IF NOT EXISTS idx_clip_updated ON clipboard (updated_at DESC);
+
+-- AUTOINCREMENT 序列校正：显式 id 复制后 sqlite_sequence 应已同步，此处兜底（无行时为 no-op）
+UPDATE sqlite_sequence SET seq = (SELECT MAX(id) FROM clipboard) WHERE name = 'clipboard';
+
+-- 常用剪贴板：条目标签（tags 存 JSON 字符串数组，应用层解析）
+ALTER TABLE pinned_clip ADD COLUMN tags TEXT;
+                            "#
                         }
     ]
 }

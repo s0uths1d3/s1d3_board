@@ -15,10 +15,11 @@
  *   （与 DOM「本轮不调用」存在微小差异，现有代码无此依赖场景）。
  */
 
-/** island:copy 载荷：复制行为反馈灵动岛（图片携带岛显示缩略图与二维码识别结果） */
+/** island:copy 载荷：复制行为反馈灵动岛（图片携带岛显示缩略图与二维码识别结果）；
+ *  html/files 条目的 content 均为可展示的普通文本（纯文本兜底 / 文件路径列表） */
 export interface IslandCopyDetail {
     content: string;
-    type: 'text' | 'image';
+    type: 'text' | 'image' | 'html' | 'files';
     thumb?: string | null;
     qrText?: string | null;
 }

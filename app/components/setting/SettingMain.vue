@@ -14,6 +14,31 @@ const undoActive = ref(false);
 const undoRemaining = ref(180);
 let undoCountdownTimer: ReturnType<typeof setInterval> | null = null;
 let undoExpireTimer: ReturnType<typeof setTimeout> | null = null;
+
+// ===== 设置分组顺序（模块级缓存 + 预热）=====
+// 设置页随 Tab 切换被卸载/重建：若顺序在挂载后异步加载，列表会先按默认序渲染、
+// KV 返回后再重排，用户每次进入都看到分组上下跳动。缓存原始顺序字符串并在模块
+// 加载时预热，进入设置页时同步初始化为正确顺序，消除两阶段渲染。
+const SETTING_GROUP_ORDER_KEY = 'setting_group_order';
+let settingOrderCache: string[] | null = null;
+let settingOrderPrefetch: Promise<void> | null = null;
+function prefetchSettingOrder(): Promise<void> {
+  if (!settingOrderPrefetch) {
+    settingOrderPrefetch = (async () => {
+      try {
+        const raw = await dbService.getKeyValue(SETTING_GROUP_ORDER_KEY);
+        if (raw) {
+          const parsed: unknown = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            settingOrderCache = parsed.filter((x): x is string => typeof x === 'string');
+          }
+        }
+      } catch { /* 解析失败使用默认顺序 */ }
+    })();
+  }
+  return settingOrderPrefetch;
+}
+void prefetchSettingOrder();
 </script>
 
 <script setup lang="ts">
@@ -25,6 +50,7 @@ import {
 import { formatShortcutForDisplay, parseKeyEvent } from "~/utils/shortcutFormat";
 import { getOsTypeFromNavigator } from "~/utils/systemOS";
 import dbService from '~/src/db/dbService';
+import statsService from '~/src/statistics/statsService';
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
@@ -59,6 +85,10 @@ import {
     usePrivacyPause, setPrivacyPaused,
     useSensitiveFilter, setSensitiveFilterEnabled,
 } from '~/composables/usePrivacySettings';
+import {
+    useIgnoredApps, ensureIgnoredAppsLoaded,
+    addIgnoredApp, removeIgnoredApp,
+} from '~/composables/useIgnoredApps';
 import { useAutoHide, setAutoHideEnabled } from '~/composables/useAutoHide';
 import { useSearchHighlight } from '~/composables/useSearchHighlight';
 import { appUsageEnabled, setAppUsageEnabled } from '~/composables/useAppUsage';
@@ -68,6 +98,8 @@ import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { writeText } from 'tauri-plugin-clipboard-api';
 import appIcon from '~/assets/icon/icon.png';
+import authorAvatarS1d3 from '~/assets/authtor_avator/79643224.png';
+import authorAvatarZhang from '~/assets/authtor_avator/18749843.png';
 import ShortcutRow from '~/components/setting/ShortcutRow.vue';
 import HighlightText from '~/components/mainpage/HighlightText.vue';
 
@@ -238,6 +270,145 @@ const { sensitiveFilterEnabled } = useSensitiveFilter();
 async function onSensitiveFilterToggle(val: boolean) {
   await setSensitiveFilterEnabled(val);
   showHint(val ? t('setting.general.sensitive_on') : t('setting.general.sensitive_off'));
+}
+
+// ===== 来源应用忽略名单：名单内应用复制的内容不落库不弹岛（useIgnoredApps 共享状态源）=====
+const { ignoredApps } = useIgnoredApps();
+const ignoredAppsPanelOpen = ref(false);
+const ignoredAppInput = ref('');
+/** 已粘贴过的应用清单（去重 + 条数）：面板首次展开时从 DB 拉取（默认列表，点选切换忽略） */
+const distinctApps = ref<{ app: string; cnt: number }[]>([]);
+const distinctAppsLoading = ref(false);
+async function toggleIgnoredAppsPanel() {
+  ignoredAppsPanelOpen.value = !ignoredAppsPanelOpen.value;
+  // 每次展开都刷新运行中进程清单（进程会变；快照枚举毫秒级，失败静默回退）
+  if (ignoredAppsPanelOpen.value) void loadRunningApps();
+  if (!ignoredAppsPanelOpen.value || distinctApps.value.length > 0) return;
+  distinctAppsLoading.value = true;
+  try {
+    await Promise.all([ensureIgnoredAppsLoaded(), dbService.ensureDbInitialized()]);
+    distinctApps.value = await dbService.fetchDistinctSourceApps();
+  } catch { /* 拉取失败留空列表，名单管理不受影响 */ }
+  finally { distinctAppsLoading.value = false; }
+  // 展开即拉应用图标（缓存命中 + Rust 实时提取回填）：写入即生效，失败静默回退首字母占位
+  ensureIgnoredAppIcons([...distinctApps.value.map((r) => r.app), ...ignoredApps.value]);
+}
+/** 点选已粘贴应用：已忽略则移除，未忽略则加入 */
+async function toggleIgnoreApp(app: string) {
+  if (ignoredApps.value.includes(app)) {
+    await removeIgnoredApp(app);
+    showHint(t('setting.general.ignored_apps_removed', { name: app }));
+  } else {
+    await addIgnoredApp(app);
+    showHint(t('setting.general.ignored_apps_added', { name: app }));
+  }
+  ensureIgnoredAppIcons([app]);
+}
+/** 手动输入添加（进程名，自动小写归一） */
+async function addManualIgnoredApp() {
+  const name = ignoredAppInput.value.trim();
+  if (!name) return;
+  await addIgnoredApp(name);
+  ignoredAppInput.value = '';
+  showHint(t('setting.general.ignored_apps_added', { name: name.toLowerCase() }));
+  ensureIgnoredAppIcons([name.toLowerCase()]);
+}
+/** 合并展示行：手动添加（无历史记录）的应用补入列表，已忽略置顶、其余按复制条数降序 */
+const mergedIgnoredRows = computed(() => {
+  const recorded = new Set(distinctApps.value.map((r) => r.app));
+  const rows = [
+    ...distinctApps.value,
+    ...ignoredApps.value.filter((a) => !recorded.has(a)).map((app) => ({ app, cnt: 0 })),
+  ];
+  return rows.sort((a, b) => {
+    const ai = ignoredApps.value.includes(a.app) ? 0 : 1;
+    const bi = ignoredApps.value.includes(b.app) ? 0 : 1;
+    if (ai !== bi) return ai - bi;
+    return b.cnt - a.cnt;
+  });
+});
+/** 应用图标（app_icons 表缓存 + 未命中时 Rust 按名实时提取回填；PNG data URL） */
+const appIcons = ref(new Map<string, string>());
+/** 批量拉取应用图标：命中即写入 Map（缓存语义只增不改，无过期竞态）；失败静默回退首字母 */
+function ensureIgnoredAppIcons(names: string[]) {
+  const missing = [...new Set(names)].filter((n) => n && !appIcons.value.has(n));
+  if (missing.length === 0) return;
+  void statsService.fetchAppIcons(missing).then((got) => {
+    for (const [name, icon] of got) appIcons.value.set(name, icon);
+  }).catch(() => { /* 图标获取失败：条目回退显示首字母占位 */ });
+}
+/** 无图标时的字母占位（进程名首字符大写，与统计页应用榜同款） */
+function appInitial(app: string): string {
+  return app.charAt(0).toUpperCase();
+}
+/** 手动输入建议下拉开关（focus 展开 / blur 收起；建议项 mousedown.prevent 防 blur 吞点击） */
+const appSuggestOpen = ref(false);
+/** 当前运行中的进程名（Rust Toolhelp 枚举，小写去重；面板展开时刷新） */
+const runningApps = ref<string[]>([]);
+/** 系统进程噪音：永远不值得忽略、只会污染建议列表的常见内核/系统进程（小写） */
+const SYSTEM_PROCESS_NOISE = new Set([
+  'system', 'idle', 'registry', 'memcompression', 'svchost', 'dwm', 'wininit', 'winlogon',
+  'csrss', 'smss', 'lsass', 'services', 'spoolsv', 'explorer', 'conhost', 'dllhost',
+  'runtimebroker', 'searchhost', 'shellexperiencehost', 'startmenuexperiencehost', 'textinputhost',
+  'sihost', 'ctfmon', 'fontdrvhost', 'wudfhost', 'audiodg', 'securityhealthservice',
+  'securityhealthsystray', 'widgetservice', 'widgets', 'msedgewebview2',
+]);
+async function loadRunningApps() {
+  try {
+    runningApps.value = await invoke<string[]>('list_process_names');
+  } catch { /* 平台不支持/枚举失败：建议回退为已记录应用 */ }
+}
+/** 输入匹配建议：运行中进程 + 已记录应用合并（去重、过滤系统噪音与已在名单项），
+ *  前缀命中优先 → 运行中优先 → 复制条数降序，最多 5 条 */
+const appInputSuggestions = computed(() => {
+  const q = ignoredAppInput.value.trim().toLowerCase();
+  if (!q) return [];
+  const known = new Map(mergedIgnoredRows.value.map((r) => [r.app, r.cnt]));
+  const candidates = new Map<string, { app: string; cnt: number; running: boolean }>();
+  for (const app of runningApps.value) {
+    if (!SYSTEM_PROCESS_NOISE.has(app)) candidates.set(app, { app, cnt: known.get(app) ?? 0, running: true });
+  }
+  for (const r of mergedIgnoredRows.value) {
+    const prev = candidates.get(r.app);
+    candidates.set(r.app, { app: r.app, cnt: r.cnt, running: prev?.running ?? false });
+  }
+  return [...candidates.values()]
+      .filter((c) => c.app.includes(q) && !ignoredApps.value.includes(c.app))
+      .sort((a, b) => {
+        const ap = a.app.startsWith(q) ? 0 : 1;
+        const bp = b.app.startsWith(q) ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        if (a.running !== b.running) return a.running ? -1 : 1;
+        return b.cnt - a.cnt;
+      })
+      .slice(0, 5);
+});
+/** 点选输入建议：加入忽略名单并清空输入（与手动添加同链路） */
+async function pickAppSuggestion(app: string) {
+  await addIgnoredApp(app);
+  ignoredAppInput.value = '';
+  appSuggestOpen.value = false;
+  showHint(t('setting.general.ignored_apps_added', { name: app }));
+  ensureIgnoredAppIcons([app]);
+}
+// ===== 保留天数（过期清理）：永久/7/30/90/365（clip_retention_days KV，''=永久）=====
+// 变更后立即执行一次过期清理（删除当前已过期条目，收藏项豁免），无需等待下次启动
+const retentionOptions = computed(() => [
+  { value: '', label: t('setting.general.retention_forever') },
+  ...['7', '30', '90', '365'].map((d) => ({ value: d, label: t('setting.general.retention_days', { days: d }) })),
+]);
+const clipRetentionDays = ref('');
+const retentionLabel = computed(() =>
+  retentionOptions.value.find((o) => o.value === clipRetentionDays.value)?.label ?? '',
+);
+async function selectRetention(value: string) {
+  if (value === clipRetentionDays.value) return;
+  clipRetentionDays.value = value;
+  await dbService.setKeyValue('clip_retention_days', value);
+  const purged = await dbService.purgeExpiredClips().catch(() => 0);
+  showHint(purged > 0
+    ? t('setting.general.retention_purged', { count: purged })
+    : t('setting.general.retention_saved'));
 }
 // 粘贴后恢复原剪贴板：粘贴完成约 1 秒后把粘贴前内容写回（默认关闭；pasteUtil 消费此开关）
 const pasteRestoreEnabled = ref(false);
@@ -470,7 +641,8 @@ function selectAiProvider(v: string) {
 }
 /** 宽控件设置项：控件需要整行宽度（纵向布局，标签在上）——AI 提供商（分段器 + 自定义 JSON 编辑器） */
 function isWideSettingItem(item: { label: string }): boolean {
-  return item.label === 'setting.general.ai_provider';
+  // AI 提供商（分段器 + JSON 编辑器）/ 来源应用忽略名单（展开管理面板）：纵向布局占满整行
+  return item.label === 'setting.general.ai_provider' || item.label === 'setting.general.ignored_apps';
 }
 watch(aiProvider, (val) => {
   debouncePersist('ai_provider', () => dbService.setKeyValue('ai_provider', val));
@@ -1336,6 +1508,7 @@ const settings: SettingGroup[] = [
         items: [
           { label: 'setting.general.clipboard_limit', value: '', type: 'input' },
           { label: 'setting.general.image_limit', value: '', type: 'input' },
+          { label: 'setting.general.clip_retention', value: '', type: 'select' },
           { label: 'setting.general.popup_position', value: '', type: 'select' },
           { label: 'setting.general.search_highlight', value: '', type: 'checkbox' },
         ],
@@ -1353,6 +1526,7 @@ const settings: SettingGroup[] = [
         items: [
           { label: 'setting.general.privacy_pause', value: '', type: 'checkbox' },
           { label: 'setting.general.sensitive_filter', value: '', type: 'checkbox' },
+          { label: 'setting.general.ignored_apps', value: '', type: 'action' },
         ],
       },
     ],
@@ -1446,6 +1620,12 @@ watch(activeSetting, async (val) => {
   lastActiveSettingTitle = val?.title ?? null;
   await dbService.setKeyValue('setting_active_tab', val?.title ?? '');
 });
+/** 分组选中判定（左侧导航的竖条/按钮/grip 三处选中态共用）。
+ *  按 title 比较而非对象引用：ref() 会把对象值深度转为 reactive 代理，
+ *  而 v-for 遍历的是原始数组项——代理 ≠ 原始对象，引用比较永远为 false */
+function isGroupActive(setting: SettingGroup) {
+  return activeSetting.value?.title === setting.title;
+}
 
 // ===== 设置搜索：跨分组按当前语言文案/键名过滤，结果复用通用渲染循环展示 =====
 /** 搜索关键词（左侧导航底部搜索框输入，实时过滤无需防抖——数据全在内存） */
@@ -1510,10 +1690,14 @@ onBeforeUnmount(() => bus.off('focus-search', onFocusSearch));
 
 // ===== 关于（版本 / 描述 / 作者 / 主页 / 检查更新）=====
 /** 版本单一来源：tauri.conf.json 的 version（经 getVersion 读取）；纯 Web 环境回退到该常量 */
-const FALLBACK_VERSION = '0.2.1';
+const FALLBACK_VERSION = '0.5.0';
 const APP_REPO = 'https://github.com/s0uths1d3/s1d3_board';
 const APP_RELEASES_API = 'https://api.github.com/repos/s0uths1d3/s1d3_board/releases/latest';
-const APP_AUTHOR = 's1d3';
+/** 关于页作者列表：头像 + 名字（头像置于名字左侧） */
+const APP_AUTHORS = [
+  { name: 's1d3', avatar: authorAvatarS1d3 },
+  { name: 'ZhangJun2017', avatar: authorAvatarZhang },
+];
 
 const appVersion = ref(FALLBACK_VERSION);
 
@@ -1626,22 +1810,21 @@ const navReorder = useLongPressReorder({
 
 /** 设置左侧分类的拖动状态（用 title 标识，因 settings 是普通数组按 title 持久化顺序） */
 const settingGroupDragging = ref<string | null>(null);
-const SETTING_GROUP_ORDER_KEY = 'setting_group_order';
-/** 左侧分类顺序（持久化）；默认按 settings 定义顺序 */
-const settingOrder = ref<string[]>(settings.map(s => s.title));
-/** 加载已保存的分类顺序 */
-async function loadSettingOrder() {
-  try {
-    const raw = await dbService.getKeyValue(SETTING_GROUP_ORDER_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        const valid = new Set(settings.map(s => s.title));
-        settingOrder.value = [...parsed.filter((t: unknown) => typeof t === 'string' && valid.has(t)), ...settings.map(s => s.title).filter(t => !parsed.includes(t))];
-      }
-    }
-  } catch { /* 使用默认顺序 */ }
+/** 左侧分类顺序：优先用模块级缓存同步初始化（预热早已完成，列表零跳动），否则用默认定义顺序 */
+const settingOrder = ref<string[]>(
+  settingOrderCache
+    ? [...settingOrderCache, ...settings.map(s => s.title).filter(t => !settingOrderCache!.includes(t))]
+    : settings.map(s => s.title),
+);
+/** 应用预热的分组顺序（过滤失效 title、追加新增分组；与初始值一致时无副作用） */
+function applySettingOrderCache(): void {
+  if (!settingOrderCache) return;
+  const valid = new Set(settings.map(s => s.title));
+  const cached = settingOrderCache.filter(t => valid.has(t));
+  settingOrder.value = [...cached, ...settings.map(s => s.title).filter(t => !cached.includes(t))];
+  settingOrderCache = [...settingOrder.value];
 }
+void prefetchSettingOrder().then(applySettingOrderCache);
 /** 按用户顺序展示左侧分类 */
 const orderedSettings = computed(() =>
   [...settings].sort((a, b) => settingOrder.value.indexOf(a.title) - settingOrder.value.indexOf(b.title)),
@@ -1660,11 +1843,11 @@ const settingReorder = useLongPressReorder({
     settingOrder.value = order;
   },
   onDrop: () => {
+    settingOrderCache = [...settingOrder.value];
     void dbService.setKeyValue(SETTING_GROUP_ORDER_KEY, JSON.stringify(settingOrder.value));
   },
   onStateChange: (k) => { settingGroupDragging.value = k; },
 });
-void loadSettingOrder();
 
 /** 左侧分类点击：长按拖拽结束后的 click 抑制切换（拖动 ≠ 点击） */
 function onSettingClick(setting: (typeof settings)[number]) {
@@ -1838,6 +2021,8 @@ onMounted(async () => {
   osType.value = getOsTypeFromNavigator();
   maxLimit.value = await dbService.getKeyValue('max_save_count');
   imageLimit.value = await dbService.getKeyValue('image_cache_max_mb');
+  // 保留天数（过期清理）：'' = 永久
+  clipRetentionDays.value = (await dbService.getKeyValue('clip_retention_days')) || '';
   // 粘贴后恢复原剪贴板开关（默认关闭）
   pasteRestoreEnabled.value = (await dbService.getKeyValue('paste_restore_clipboard')) === '1';
   // 图片缓存磁盘占用查询（失败显示统计中占位，不阻塞其余设置恢复）
@@ -1956,19 +2141,31 @@ onMounted(async () => {
           <div
               v-for="setting in orderedSettings"
               :key="setting.title"
-              class="setting-nav-item mb-2"
+              class="setting-nav-item relative mb-2"
               :class="settingGroupDragging === setting.title ? 'opacity-50 scale-95' : ''"
               :data-reorder-key="setting.title"
               @pointerdown="settingReorder.pressStart(setting.title, $event)"
           >
+            <!-- 选中指示竖条：叠于按钮左缘内侧（Tailwind v4 important 为后缀语法，
+                 叠加 btn-soft 难以保证覆盖——选中态改用完整独立样式类，零优先级冲突） -->
+            <span
+                v-if="isGroupActive(setting)"
+                class="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-full bg-gold"
+            />
             <button
-                class="btn-soft btn-block w-full"
-                :class="{ 'border-gold bg-secondary text-gold': activeSetting === setting }"
+                class="w-full rounded-xl px-4 py-2 text-sm transition-all duration-300 ease-soft"
+                :class="isGroupActive(setting)
+                  ? 'border border-gold bg-gold/10 font-semibold text-gold hover:bg-gold/20'
+                  : 'btn-soft'"
                 @click="onSettingClick(setting)"
             >
               <!-- 文字左侧 grip：提示分组按钮可长按拖动排序；grip 固定列对齐，文字在其右侧左对齐 -->
               <span class="flex items-center gap-1.5">
-                <svg class="h-3 w-3 shrink-0 opacity-45" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <svg
+                    class="h-3 w-3 shrink-0"
+                    :class="isGroupActive(setting) ? 'text-gold opacity-70' : 'opacity-45'"
+                    viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"
+                >
                   <circle cx="9" cy="5" r="1.8" /><circle cx="15" cy="5" r="1.8" />
                   <circle cx="9" cy="12" r="1.8" /><circle cx="15" cy="12" r="1.8" />
                   <circle cx="9" cy="19" r="1.8" /><circle cx="15" cy="19" r="1.8" />
@@ -2079,7 +2276,13 @@ onMounted(async () => {
                     <span class="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-xs text-gold tabular-nums">v{{ appVersion }}</span>
                   </div>
                   <p class="mt-1 text-xs leading-relaxed text-ink-faint">{{ t('setting.about.description') }}</p>
-                  <p class="mt-1 text-xs text-ink-faint">{{ t('setting.about.author_label') }}<span class="text-ink-soft">{{ APP_AUTHOR }}</span></p>
+                  <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-faint">
+                    <span>{{ t('setting.about.author_label') }}</span>
+                    <span v-for="author in APP_AUTHORS" :key="author.name" class="flex items-center gap-1.5">
+                      <img :src="author.avatar" :alt="author.name" class="h-4 w-4 shrink-0 rounded-full object-cover" />
+                      <span class="text-ink-soft">{{ author.name }}</span>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2676,6 +2879,112 @@ onMounted(async () => {
                       :label="t('setting.general.sensitive_filter')"
                       @change="onSensitiveFilterToggle"
                   />
+                  <!-- 来源应用忽略名单：折叠态显示数量摘要，展开后集中管理（手动添加 + 单一应用列表点选切换） -->
+                  <template v-else-if="item.type === 'action' && item.label === 'setting.general.ignored_apps'">
+                    <div class="flex items-center justify-between gap-3">
+                      <p class="min-w-0 truncate text-xs text-ink-faint">
+                        {{ t('setting.general.ignored_apps_summary', { count: ignoredApps.length }) }}
+                      </p>
+                      <button type="button" class="btn-soft shrink-0 px-3 py-1.5 text-xs" @click="toggleIgnoredAppsPanel">
+                        {{ ignoredAppsPanelOpen ? t('common.cancel') : t('setting.general.ignored_apps_manage') }}
+                      </button>
+                    </div>
+                    <!-- 展开/收起渐变动画：与待办卡片 edit-panel 同一套观感（淡入 + 轻微下移） -->
+                    <Transition name="edit-panel">
+                      <div v-if="ignoredAppsPanelOpen" class="mt-2 space-y-2">
+                      <!-- 手动添加：进程名（与列表展示一致，小写）；输入时按已知应用给匹配建议 -->
+                      <div class="flex gap-2">
+                        <input
+                            v-model="ignoredAppInput"
+                            type="text"
+                            class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-3 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                            :placeholder="t('setting.general.ignored_apps_input_hint')"
+                            @keydown.enter="addManualIgnoredApp"
+                            @focus="appSuggestOpen = true"
+                            @blur="appSuggestOpen = false"
+                        />
+                        <button type="button" class="btn-soft shrink-0 px-3 py-1.5 text-xs" @click="addManualIgnoredApp">
+                          {{ t('setting.general.ignored_apps_add') }}
+                        </button>
+                      </div>
+                      <!-- 匹配建议（最多 5 条）：点选即加入忽略名单；mousedown.prevent 防 blur 吞掉点击 -->
+                      <ul v-if="appSuggestOpen && appInputSuggestions.length > 0" class="space-y-1">
+                        <li v-for="s in appInputSuggestions" :key="s.app">
+                          <button
+                              type="button"
+                              class="flex w-full items-center justify-between rounded-lg border border-line bg-surface-field px-3 py-1.5 text-xs transition-colors hover:border-accent"
+                              @mousedown.prevent
+                              @click="pickAppSuggestion(s.app)"
+                          >
+                            <span class="flex min-w-0 items-center gap-1.5">
+                              <img
+                                  v-if="appIcons.get(s.app)"
+                                  :src="appIcons.get(s.app)"
+                                  class="size-4 shrink-0 rounded object-contain"
+                                  alt=""
+                              />
+                              <span
+                                  v-else
+                                  class="flex size-4 shrink-0 items-center justify-center rounded bg-gold/15 text-[10px] font-bold text-gold"
+                              >{{ appInitial(s.app) }}</span>
+                              <span class="truncate text-ink">{{ s.app }}</span>
+                              <!-- 运行中标识：绿点（数据源为实时进程枚举的项显示） -->
+                              <span
+                                  v-if="s.running"
+                                  class="size-1.5 shrink-0 rounded-full bg-green-500"
+                                  v-tip="t('setting.general.ignored_apps_running')"
+                              />
+                            </span>
+                            <span v-if="s.cnt > 0" class="shrink-0 text-ink-faint tabular-nums">
+                              {{ t('setting.general.ignored_apps_count', { count: s.cnt }) }}
+                            </span>
+                          </button>
+                        </li>
+                      </ul>
+                      <!-- 应用列表：手动添加（无记录）的应用合并展示；已忽略置顶高亮，点选切换 -->
+                      <p class="text-xs text-ink-faint">{{ t('setting.general.ignored_apps_list_title') }}</p>
+                      <p v-if="distinctAppsLoading" class="text-xs text-ink-faint">
+                        {{ t('setting.general.ignored_apps_loading') }}
+                      </p>
+                      <p v-else-if="mergedIgnoredRows.length === 0" class="text-xs text-ink-faint">
+                        {{ t('setting.general.ignored_apps_no_record') }}
+                      </p>
+                      <ul v-else class="max-h-56 space-y-1 overflow-y-auto pr-1">
+                        <li v-for="row in mergedIgnoredRows" :key="row.app">
+                          <button
+                              type="button"
+                              class="flex w-full items-center justify-between rounded-lg border px-3 py-1.5 text-xs transition-colors"
+                              :class="ignoredApps.includes(row.app)
+                                ? 'border-accent bg-surface-field hover:border-accent'
+                                : 'border-line bg-surface-field hover:border-accent'"
+                              @click="toggleIgnoreApp(row.app)"
+                          >
+                            <span class="flex min-w-0 items-center gap-1.5">
+                              <!-- 应用图标：Rust 采样提取的 PNG；缺失时用首字母占位 -->
+                              <img
+                                  v-if="appIcons.get(row.app)"
+                                  :src="appIcons.get(row.app)"
+                                  class="size-4 shrink-0 rounded object-contain"
+                                  alt=""
+                              />
+                              <span
+                                  v-else
+                                  class="flex size-4 shrink-0 items-center justify-center rounded bg-gold/15 text-[10px] font-bold text-gold"
+                              >{{ appInitial(row.app) }}</span>
+                              <svg v-if="ignoredApps.includes(row.app)" class="size-3.5 shrink-0 text-gold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M20 6 9 17l-5-5" />
+                              </svg>
+                              <span class="truncate" :class="ignoredApps.includes(row.app) ? 'text-gold' : 'text-ink'">{{ row.app }}</span>
+                            </span>
+                            <span v-if="row.cnt > 0" class="shrink-0 text-ink-faint tabular-nums">
+                              {{ t('setting.general.ignored_apps_count', { count: row.cnt }) }}
+                            </span>
+                          </button>
+                        </li>
+                      </ul>
+                      </div>
+                    </Transition>
+                  </template>
                   <!-- 粘贴后恢复原剪贴板：粘贴完成约 1 秒后写回粘贴前内容（默认关闭） -->
                   <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === 'setting.general.paste_restore_clipboard'"
@@ -2727,6 +3036,39 @@ onMounted(async () => {
                         >
                           <span>{{ opt.label }}</span>
                           <svg v-if="localeMode === opt.value" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        </button>
+                      </li>
+                    </ul>
+                  </UiDropdown>
+                  <!-- 保留天数（过期清理）：永久/7/30/90/365，变更立即执行一次清理 -->
+                  <UiDropdown
+                      v-else-if="item.type === 'select' && item.label === 'setting.general.clip_retention'"
+                      class="w-full"
+                      align="end"
+                      match-trigger-width
+                      :aria-label="t('setting.general.clip_retention')"
+                      panel-class="glass-card menu w-full rounded-2xl p-2"
+                  >
+                    <template #trigger="{ open }">
+                      <button type="button" tabindex="-1" class="btn-soft flex w-full items-center justify-between rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink">
+                        <span>{{ retentionLabel }}</span>
+                        <svg class="h-4 w-4 opacity-60 transition-transform duration-200" :class="open ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+                    </template>
+                    <ul class="menu p-2">
+                      <li v-for="opt in retentionOptions" :key="opt.value">
+                        <button
+                            type="button"
+                            class="flex w-full items-center justify-between rounded-xl"
+                            :class="clipRetentionDays === opt.value ? 'text-gold' : ''"
+                            @click="selectRetention(opt.value)"
+                        >
+                          <span>{{ opt.label }}</span>
+                          <svg v-if="clipRetentionDays === opt.value" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M20 6 9 17l-5-5" />
                           </svg>
                         </button>

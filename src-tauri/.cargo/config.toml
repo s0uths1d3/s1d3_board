@@ -1,0 +1,4 @@
+# 开发机局部覆盖：全局 git http.proxy 指向本地 Clash（127.0.0.1:7890），
+# 代理未运行时 crates.io 拉取失败；此文件仅覆盖 http 代理为直连。
+[http]
+proxy = ""

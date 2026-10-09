@@ -5,14 +5,21 @@ export interface ClipboardData {
     source: string;
     is_favorite: number;
     category: string;
-    /** 条目类型：'text' 文本 / 'image' 图片（content 存 base64） */
-    type: 'text' | 'image';
+    /**
+     * 条目类型：'text' 纯文本 / 'image' 图片（content 存 imgfile: 引用或 base64）/
+     * 'html' 富文本（content 纯文本、html_content 原始 HTML）/ 'files' 文件列表（content 存 JSON 路径数组）
+     */
+    type: 'text' | 'image' | 'html' | 'files';
     count: number;
     updated_at: string;
     /** 来源应用：复制瞬间的前台进程名（小写、去 .exe）；存量数据/查询失败为空，UI 空值不显示 */
     source_app?: string | null;
     /** 二维码识别结果：图片条目解码出的文本（链接等）；存量未扫描为 NULL，已扫无码为 ''（防重复扫描） */
     qr_text?: string | null;
+    /** 富文本正文（HTML）：仅 type='html' 条目有值 */
+    html_content?: string | null;
+    /** 字段级加密标记：1 = content 存 S1ENC1 加密载荷（AES-256-GCM，密钥在 OS 凭据库），仅文本条目可标记 */
+    encrypted?: number;
 }
 
 export interface PinnedClip {
@@ -28,6 +35,8 @@ export interface PinnedClip {
     source?: string;
     /** 置顶时间戳（置顶后非空，排序置顶优先） */
     pinned_at?: string;
+    /** 条目标签（DB 存 JSON 字符串数组，应用层解析；空数组/未设置可空） */
+    tags?: string | null;
     created_at: string;
     updated_at: string;
 }

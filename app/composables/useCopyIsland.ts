@@ -126,6 +126,24 @@ const ISLAND_H = 56;
 /** 文本预览长度上限（页面内还会做单行 truncate） */
 const PREVIEW_MAX = 120;
 
+/**
+ * 文件条目展示文本：content（JSON 路径数组）→ 各路径的文件名序列。
+ * 独立导出：主列表（index.vue）渲染文件条目与岛胶囊共用同一格式。
+ * 解析失败/非数组返回空串（条目按无文本处理，不显示 JSON 原串）。
+ */
+export function clipFilesPreview(content: string): string {
+    try {
+        const paths: unknown = JSON.parse(content);
+        if (!Array.isArray(paths)) return '';
+        return paths
+            .filter((p): p is string => typeof p === 'string')
+            .map((p) => p.split(/[\\/]/).pop() || p)
+            .join('  ');
+    } catch {
+        return '';
+    }
+}
+
 let islandWin: WebviewWindow | null = null;
 let islandReady = false;
 let islandCreating: Promise<WebviewWindow | null> | null = null;
@@ -141,7 +159,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastPollText: string | null = null;
 /** 最近一次由快速通道显示的复制内容（短期内同内容的原生事件不再重复弹岛；文本与图片均生效——
  *  图片路径监听回调先行派发带缩略图的岛事件，saveClipboard 写库后的二次派发据此去重） */
-let lastShownCopy: { type: 'text' | 'image'; content: string; until: number } | null = null;
+let lastShownCopy: { type: 'text' | 'image' | 'html' | 'files'; content: string; until: number } | null = null;
 
 function startIslandPoller(): void {
   if (pollTimer || !isTauri()) return;
@@ -178,8 +196,9 @@ function normalizeImageDataUrl(src: string): string {
 }
 
 /** 粘贴提示：显示"已粘贴"胶囊（pasteUtil 写剪贴板后调用）。
- *  图片粘贴携带 image（data URL），岛内胶囊渲染缩略图（与复制图片一致，悬停可放大预览） */
-export function notifyIslandPaste(content: string, type: 'text' | 'image'): void {
+ *  图片粘贴携带 image（data URL），岛内胶囊渲染缩略图（与复制图片一致，悬停可放大预览）；
+ *  富文本/文件列表按文本预览展示（html 显示纯文本兜底、files 显示 JSON 路径列表） */
+export function notifyIslandPaste(content: string, type: 'text' | 'image' | 'html' | 'files'): void {
   void showIsland({
     kind: 'paste',
     text: type === 'image' ? '' : String(content).slice(0, PREVIEW_MAX),
@@ -487,19 +506,22 @@ export function initCopyIsland(): void {
     // Ctrl+X 感知窗口内的剪贴板变化（文本与图片均可）按"已剪切"提示（快速通道已显示的同一文本内容已被上方去重跳过）
     const cut = consumeCut();
     lastShownCopy = { type: d.type, content: d.content, until: Date.now() + 900 };
+    // 文件条目：content 是 JSON 路径数组，岛胶囊只展示文件名序列（JSON 串对用户无意义）
+    const isFiles = d.type === 'files';
+    const filesText = isFiles ? clipFilesPreview(d.content) : '';
     // 二维码图片：链接写入 text（胶囊文本与缩略图并存）并随 qrText 出站；无识别结果维持纯图片语义
     const qr = d.qrText || undefined;
     void showIsland(cut
       ? {
           kind: 'cut',
-          text: d.type === 'text' ? d.content.slice(0, PREVIEW_MAX) : (qr ?? ''),
+          text: d.type === 'text' || isFiles ? (isFiles ? filesText : d.content).slice(0, PREVIEW_MAX) : (qr ?? ''),
           image: d.type === 'image' ? d.content : undefined,
           thumb: d.type === 'image' && d.thumb ? d.thumb : undefined,
           qrText: d.type === 'image' ? qr : undefined,
         }
       : d.type === 'image'
         ? { kind: 'copy-image', text: qr, image: d.content, thumb: d.thumb ?? undefined, qrText: qr }
-        : { kind: 'copy', text: d.content.slice(0, PREVIEW_MAX) });
+        : { kind: 'copy', text: (isFiles ? filesText : d.content).slice(0, PREVIEW_MAX) });
   });
   // 系统提示（如敏感内容拦截）：纯文字 info 胶囊——载荷是 i18n key，此处翻译；
   // 历史里只留提示文字，敏感内容本身不回显不入库。

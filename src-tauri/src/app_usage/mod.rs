@@ -354,6 +354,13 @@ pub fn app_icon_by_name(name: String) -> Option<String> {
     platform::icon_of_app(trimmed)
 }
 
+/// 枚举当前运行中的进程名（小写、去重、排序）：供设置页「忽略来源应用」手动输入的
+/// 匹配建议（数据源之一，与已记录来源应用合并）；平台不支持返回空列表。
+#[tauri::command]
+pub fn list_process_names() -> Vec<String> {
+    platform::list_process_names()
+}
+
 // ===================== trait 实现（lib.rs 装配注入） =====================
 
 /// traits::ForegroundSource 的平台实现：委托当前编译目标的 platform 模块前台采样。

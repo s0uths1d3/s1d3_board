@@ -36,23 +36,12 @@
               <path d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
-          <!-- 当前/全部 分段切换：仅搜索态显示（左=当前匹配位置，右=匹配总数），非搜索态整体隐藏 -->
-          <UiSegmented
-              v-if="noteSearch.trim()"
-              class="h-8 shrink-0"
-              size="sm"
-              :model-value="searchScope"
-              :options="[
-                { value: 'current', label: positionLabel, tip: t('note.current_tip') },
-                { value: 'all', label: totalLabel, tip: t('note.all_tip') },
-              ]"
-              :label="t('note.search_scope')"
-              @update:model-value="searchScope = $event as 'current' | 'all'"
-          />
         </div>
       </div>
 
-      <div ref="gridEl" class="columns-1 gap-4 sm:columns-2 md:columns-3 lg:columns-4 xl:columns-5">
+      <!-- Grid 行优先布局（从左到右、从上到下）：原 columns 多列为列优先填充，
+           便签顺序视觉跳跃（右侧列空缺、后续跑到下一行）；items-start 保证同行卡片顶对齐、高度独立 -->
+      <div ref="gridEl" class="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         <StickyNoteItem
             v-for="(note, idx) in displayNotes"
             :key="note.id"
@@ -160,13 +149,6 @@ const displayNotes = computed(() => {
   }
   return notes.value
 })
-
-/** 左侧标签：当前位置数字（1-based，钳制到匹配范围内）；控件仅搜索态渲染 */
-const positionLabel = computed(() =>
-    displayNotes.value.length ? String(Math.min(selectedIndex.value + 1, displayNotes.value.length)) : '—',
-)
-/** 右侧标签：匹配总数；控件仅搜索态渲染 */
-const totalLabel = computed(() => (displayNotes.value.length ? String(displayNotes.value.length) : '—'))
 
 /** 搜索范围切换到"全部"时：重新查库，确保涵盖未加载的便签；清空搜索时恢复全量。
  *  加 300ms trailing 防抖：此前每个按键立即查库，连续输入 = 连续 SQL */

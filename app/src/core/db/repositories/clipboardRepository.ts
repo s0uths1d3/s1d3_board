@@ -3,6 +3,7 @@ import type { DatabaseConnection } from '../connection';
 import type { ClipboardData } from '../../../entities';
 import { bus } from '../../events';
 import { resolveImageRows, deleteImageFileByRef, invalidateImageCache } from '../imageRef';
+import { encryptClipText, decryptClipText, isEncryptedContent } from '../../../clipboard/encryption';
 import { escapeLike, withPage, parseSearchTokens, likePatternFromToken, type PageQuery } from '../sql';
 import { toDateString } from '../../../../utils/datetime';
 import type { RecordStats } from './noteRepository';
@@ -125,7 +126,7 @@ export interface ClipboardRepository {
      * - source_app / qr_text 仅在新插入时写入：应用自身粘贴也会写剪贴板（触发本函数），
      *   冲突时若更新会把历史条目的原始来源/识别结果覆盖为本次写入。
      */
-    saveClipboard(content: string, type: 'text' | 'image', sourceApp?: string | null, qrText?: string | null, islandImageContent?: string): Promise<void>;
+    saveClipboard(content: string, type: 'text' | 'image' | 'html' | 'files', sourceApp?: string | null, qrText?: string | null, islandImageContent?: string, htmlContent?: string | null): Promise<void>;
     /** 标记"即将由本应用粘贴流程写剪贴板"：与 suppressIslandCopy 同源时序，写入前调用 */
     suppressUseCountBump(ms?: number): void;
     /** 存量图片条目的二维码补识别（见 dbService 门面同名方法的完整注释） */
@@ -140,6 +141,23 @@ export interface ClipboardRepository {
     purgeClipboardData(id: number): Promise<void>;
     /** 区间内按来源应用聚合的复制条数 Top N（统计页"来源应用"榜；startMs 含、endMs 不含） */
     fetchSourceAppTop(startMs: number, endMs: number, limit: number): Promise<{ app: string; cnt: number }[]>;
+    /** 已记录条目的来源应用清单（全量去重 + 出现条数，按条数降序）：设置页"忽略来源应用"默认列表 */
+    fetchDistinctSourceApps(): Promise<{ app: string; cnt: number }[]>;
+    /**
+     * 按保留天数过期清理（clip_retention_days：''/0/无效 = 永久保留，直接返回 0）：
+     * 删除创建时间早于 cutoff 的条目（收藏项豁免，与上限裁剪同语义），图片条目联动删原图文件。
+     * 触发点：应用启动（clipboard 模块 start，fire-and-forget）与设置变更（立即生效）。
+     * 返回本次删除的条目数（仅日志/提示用）。
+     */
+    purgeExpiredClips(): Promise<number>;
+    /**
+     * 字段级加密标记切换（仅文本条目；加密实现见 src-tauri/src/commands/secure.rs）：
+     * - encrypted=true：content 原地替换为 S1ENC1: 载荷（AES-256-GCM，密钥在 OS 凭据库），
+     *   encrypted 标记 1，明文派生列（html_content/qr_text）置 NULL——密文以 content UNIQUE 存储不破坏约束；
+     * - encrypted=false：载荷解密回明文，标记 0。
+     * 已处于目标状态时幂等返回；失败（凭据库不可用/密钥不符）抛出由调用方提示。
+     */
+    setClipboardEncrypted(id: number, encrypted: boolean): Promise<void>;
     /**
      * 磁盘图片缓存清理（可撤回清理的第一阶段，与「清空数据库」同款交互）：
      * 总占用超出「图片缓存上限」（image_cache_max_mb，默认 256MB）时，孤儿文件直接清、
@@ -342,7 +360,7 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats, revo
             useCountSuppressUntil = Date.now() + ms;
         },
 
-        async saveClipboard(content: string, type: 'text' | 'image', sourceApp?: string | null, qrText?: string | null, islandImageContent?: string): Promise<void> {
+        async saveClipboard(content: string, type: 'text' | 'image' | 'html' | 'files', sourceApp?: string | null, qrText?: string | null, islandImageContent?: string, htmlContent?: string | null): Promise<void> {
             const db = await conn.ready();
             const now = Math.floor(Date.now());
             // 先查一次用于区分"新插入 / 计数递增"（统计与裁剪只应发生在新插入时）；
@@ -356,9 +374,9 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats, revo
             const bump = Date.now() >= useCountSuppressUntil ? 1 : 0;
 
             const result = await conn.executeWithRetry<{ lastInsertId?: number | bigint }>(
-                "INSERT INTO clipboard (content, category, type, created_at, updated_at, source_app, qr_text) VALUES ($1, $2, $3, $4, $5, $7, $8) " +
+                "INSERT INTO clipboard (content, category, type, created_at, updated_at, source_app, qr_text, html_content) VALUES ($1, $2, $3, $4, $5, $7, $8, $9) " +
                 "ON CONFLICT(content) DO UPDATE SET count = count + $6, updated_at = $5",
-                [content, 'T', type, now, now, bump, sourceApp ?? null, qrText ?? null]
+                [content, 'T', type, now, now, bump, sourceApp ?? null, qrText ?? null, htmlContent ?? null]
             );
             console.log(`Clipboard ${type} saved (upsert):`, result);
             // 灵动岛：复制行为反馈（文本/图片、重复复制同一内容同样提示；
@@ -370,9 +388,12 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats, revo
             });
             if (!isNew) return;
 
-            // 统计埋点（fire-and-forget）：新插入文本/图片剪贴 +1；文本额外累加字符量（图片 base64 不计入"打字量"）
-            if (type === 'text') {
+            // 统计埋点（fire-and-forget）：新插入文本/富文本剪贴 +1（字符量按纯文本兜底计）；
+            // 图片 base64 / 文件路径列表不计入"打字量"（files 按文本类计数但仅 +1 不计字符）
+            if (type === 'text' || type === 'html') {
                 void recordStats({ clip_text: 1, clip_chars: content.length });
+            } else if (type === 'files') {
+                void recordStats({ clip_text: 1 });
             } else {
                 void recordStats({ clip_image: 1 });
             }
@@ -453,22 +474,22 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats, revo
                     params.push(pattern);
                 }
             } else if (type === 'text') {
-                // 仅文本：按内容逐词匹配
-                conds.push("type = 'text'");
+                // 仅文本：按内容逐词匹配（富文本条目随纯文本兜底一并命中）
+                conds.push("type IN ('text', 'html')");
                 for (const pattern of patterns) {
                     paramIdx += 1;
                     conds.push(`content LIKE $${paramIdx} ESCAPE '\\'`);
                     params.push(pattern);
                 }
             } else {
-                // 默认（全部）：文本条目按内容匹配、图片条目按二维码识别结果匹配，
+                // 默认（全部）：文本/富文本条目按内容匹配、图片条目按二维码识别结果匹配，
                 // 每个词命中任一即可；搜索词转义 % _ \，保证按字面匹配
                 for (const pattern of patterns) {
                     paramIdx += 1;
                     const pContent = paramIdx;
                     paramIdx += 1;
                     const pQr = paramIdx;
-                    conds.push(`((type = 'text' AND content LIKE $${pContent} ESCAPE '\\') OR qr_text LIKE $${pQr} ESCAPE '\\')`);
+                    conds.push(`((type IN ('text', 'html') AND content LIKE $${pContent} ESCAPE '\\') OR qr_text LIKE $${pQr} ESCAPE '\\')`);
                     params.push(pattern, pattern);
                 }
             }
@@ -556,12 +577,15 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats, revo
         async purgeClipboardData(id: number): Promise<void> {
             const db = await conn.ready();
             const rows = await db.select(
-                "SELECT type, content, created_at FROM clipboard WHERE id = $1", [id]
-            ) as { type: string; content: string; created_at: number }[];
+                "SELECT type, content, created_at, encrypted FROM clipboard WHERE id = $1", [id]
+            ) as { type: string; content: string; created_at: number; encrypted?: number }[];
             const row = rows[0];
             if (!row) return;
             await db.execute("DELETE FROM clipboard WHERE id = $1", [id]);
             if (row.type === 'image') deleteImageFileByRef(row.content);
+            // 加密条目的 content 是密文载荷（长度≠明文长度），当初计入统计的是明文长度且
+            // 明文已不可恢复（解密列已清）——跳过回冲，宁可统计多计也不写入错误扣减
+            if (row.encrypted === 1) return;
             if (row.type === 'text' && typeof row.content === 'string' && row.content.length > 0) {
                 await revokeStats?.(toDateString(new Date(row.created_at)), { clip_chars: row.content.length });
             }
@@ -576,6 +600,78 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats, revo
                  GROUP BY source_app ORDER BY cnt DESC LIMIT $3`,
                 [startMs, endMs, limit]
             );
+        },
+
+        async fetchDistinctSourceApps(): Promise<{ app: string; cnt: number }[]> {
+            const db = await conn.ready();
+            return await db.select<{ app: string; cnt: number }[]>(
+                `SELECT source_app AS app, COUNT(*) AS cnt FROM clipboard
+                 WHERE source_app IS NOT NULL AND source_app <> ''
+                 GROUP BY source_app ORDER BY cnt DESC`
+            );
+        },
+
+        async purgeExpiredClips(): Promise<number> {
+            // 未配置/无效/0 → 永久保留（0 无"存 0 天"的实际意义，与 max_save_count 同口径）
+            const raw = await getKeyValue('clip_retention_days');
+            const days = parseInt(raw ?? '', 10);
+            if (!Number.isFinite(days) || days <= 0) return 0;
+
+            const db = await conn.ready();
+            const cutoff = Date.now() - days * 86_400_000;
+            // 收藏项豁免（用户显式标记要留的内容，与上限裁剪同语义）。
+            // created_at 为毫秒数字（saveClipboard 写入）；极早期 TEXT 存量行在类型序中恒大于数字，
+            // 不会被选中（漏删无害，避免 CAST 兜底误删全部老数据的反噬）。
+            const victims: { id: number; type: string; content: string }[] = await db.select(
+                "SELECT id, type, content FROM clipboard WHERE is_favorite <> 1 AND created_at < $1",
+                [cutoff]
+            );
+            if (victims.length === 0) return 0;
+
+            // 分批按 id 删除（SQL 参数上限约束，与 trimClipboard 同款）
+            const ids = victims.map((v) => v.id);
+            for (let i = 0; i < ids.length; i += 500) {
+                const chunk = ids.slice(i, i + 500);
+                await conn.executeWithRetry(
+                    `DELETE FROM clipboard WHERE id IN (${chunk.map((_, j) => `$${j + 1}`).join(',')})`,
+                    chunk
+                );
+            }
+            // 图片条目联动删除原图文件（imgfile: 引用；失败容忍，孤儿文件由图片缓存清理兜底）
+            for (const v of victims) {
+                if (v.type === 'image') deleteImageFileByRef(v.content);
+            }
+            console.info(`[clipboard] 过期清理完成：删除 ${victims.length} 条（保留 ${days} 天）`);
+            return victims.length;
+        },
+
+        async setClipboardEncrypted(id: number, encrypted: boolean): Promise<void> {
+            const db = await conn.ready();
+            const rows = await db.select<{ content: string; type: string }[]>(
+                "SELECT content, type FROM clipboard WHERE id = $1", [id]
+            );
+            const row = rows[0];
+            if (!row) throw new Error('clipboard entry not found');
+            if (row.type !== 'text') throw new Error('only text entries can be encrypted');
+            if (encrypted) {
+                if (isEncryptedContent(row.content)) return; // 已加密：幂等
+                const payload = await encryptClipText(row.content);
+                // 密文以 content UNIQUE 存储（明文丢失，但载荷仍可识别/解密回写）；
+                // 明文派生列一并清除（密文条目不留任何可读明文）
+                await conn.executeWithRetry(
+                    "UPDATE clipboard SET content = $1, encrypted = 1, html_content = NULL, qr_text = NULL WHERE id = $2",
+                    [payload, id]
+                );
+            } else {
+                if (!isEncryptedContent(row.content)) return; // 未加密：幂等
+                const plaintext = await decryptClipText(row.content);
+                await conn.executeWithRetry(
+                    "UPDATE clipboard SET content = $1, encrypted = 0 WHERE id = $2",
+                    [plaintext, id]
+                );
+            }
+            // 通知前端列表立即刷新（密文占位 ↔ 明文展示切换）
+            bus.emit('clipboard:changed');
         },
     };
 }

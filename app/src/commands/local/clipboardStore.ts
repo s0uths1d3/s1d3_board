@@ -1,4 +1,4 @@
-import { ref, nextTick } from 'vue';
+import { ref, computed, nextTick } from 'vue';
 import type { ClipboardData } from '~/src/entities';
 import clipboardService from '~/src/db/dbService';
 import { bus } from '~/src/core/events';
@@ -212,11 +212,11 @@ export function getSelectedItem(): ClipboardData | undefined {
   return data.value[selectedRowIndex.value];
 }
 
-/** 当前选中条目的内容（PasteCommand 粘贴时使用），含类型以便区分文本/图片 */
-export function getSelectedContent(): { content: string; type: 'text' | 'image' } | undefined {
+/** 当前选中条目的内容（PasteCommand 粘贴时使用），含类型以区分文本/图片/富文本/文件 */
+export function getSelectedContent(): { content: string; type: 'text' | 'image' | 'html' | 'files'; htmlContent?: string | null } | undefined {
   const item = data.value[selectedRowIndex.value];
   if (!item) return undefined;
-  return { content: item.content, type: item.type ?? 'text' };
+  return { content: item.content, type: item.type ?? 'text', htmlContent: item.html_content };
 }
 
 /** 点击列表行时选中指定索引并滚动到可见位置 */
@@ -225,6 +225,45 @@ export function selectRow(index: number) {
     selectedRowIndex.value = index;
     scrollToSelectedRow();
   }
+}
+
+// ===== 序列粘贴：批量选择的条目按选择顺序组成队列，Enter 逐条粘贴到目标应用（循环步进） =====
+
+/** 序列队列（条目 id，按用户点选顺序）；长度 < 2 视为未启用 */
+export const sequenceQueueIds = ref<number[]>([]);
+
+/** 当前游标（指向下一个待粘贴条目在队列中的下标） */
+export const sequenceCursor = ref(0);
+
+/** 序列粘贴模式是否激活（至少 2 条才有意义） */
+export const sequenceActive = computed(() => sequenceQueueIds.value.length >= 2);
+
+/** 设置序列队列（批量多选后调用；游标归零从第一条开始） */
+export function setSequenceQueue(ids: number[]) {
+  sequenceQueueIds.value = ids;
+  sequenceCursor.value = 0;
+}
+
+/** 退出序列粘贴模式 */
+export function exitSequence() {
+  sequenceQueueIds.value = [];
+  sequenceCursor.value = 0;
+}
+
+/** 当前游标指向的待粘贴条目（条目已不在加载数据中时返回 undefined） */
+export function peekSequenceItem(): ClipboardData | undefined {
+  const ids = sequenceQueueIds.value;
+  if (ids.length < 2) return undefined;
+  const id = ids[sequenceCursor.value % ids.length];
+  return data.value.find((it) => it.id === id);
+}
+
+/** 步进游标（循环），返回刚粘贴条目的 1-based 序号与队列总数（进度展示用） */
+export function advanceSequenceCursor(): { index: number; total: number } {
+  const ids = sequenceQueueIds.value;
+  const index = (sequenceCursor.value % Math.max(ids.length, 1)) + 1;
+  sequenceCursor.value = (sequenceCursor.value + 1) % Math.max(ids.length, 1);
+  return { index, total: ids.length };
 }
 
 /** 方向键上下移动选中项（-1 上移，+1 下移），统一在列表本地处理，避免丢失焦点导致只能移动一格 */

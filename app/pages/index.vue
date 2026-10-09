@@ -11,12 +11,13 @@ import {
   fetchData, getSelectedItem, moveSelection, loadMoreClips, resetClips,
   restoreAdvancedSearch, setAdvancedSearch,
   batchSelectedIds, toggleBatchSelect, selectBatchRange, clearBatchSelection,
+  sequenceActive, sequenceQueueIds, setSequenceQueue, exitSequence,
 } from '~/src/commands/local/clipboardStore';
 import HighlightText from "~/components/mainpage/HighlightText.vue";
 import {isTauri} from "~/utils/env";
 import clipboardService from "~/src/db/dbService";
 import statsService from "~/src/statistics/statsService";
-import { writeText } from 'tauri-plugin-clipboard-api';
+import { writeText, writeHtmlAndText, writeFiles } from 'tauri-plugin-clipboard-api';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -35,6 +36,8 @@ import { isTooltipWrapEnabled } from "~/composables/useTooltipWrap";
 import { useSearchHighlight } from "~/composables/useSearchHighlight";
 import { useI18n } from "~/composables/useI18n";
 import { notifyIsland, type IslandKind } from "~/composables/useCopyIsland";
+import { decryptClipText, isEncryptedContent } from "~/src/clipboard/encryption";
+import { clipFilesPreview } from "~/composables/useCopyIsland";
 // 统计页懒加载（§14.5）：统计 Tab 非首屏，异步加载降低主窗口初始包体与内存
 import { defineAsyncComponent } from "vue";
 const StatsPage = defineAsyncComponent(() => import("~/components/statistics/StatsPage.vue"));
@@ -390,6 +393,11 @@ function onListKeydown(e: KeyboardEvent) {
 function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
   // 设置项「提示窗口」关闭时不弹出 tooltip
   if (!tooltipEnabled.value) return;
+  // 加密条目不出 tooltip：tooltip 是独立窗口，明文预览会绕过「落盘加密」的防护边界
+  if (item.encrypted === 1) {
+    scheduleHideTooltip();
+    return;
+  }
   // 环盘（Ctrl+B 气泡环）显示期间禁止 tooltip：主窗口被 __ringActive 豁免保持可见，
   // 悬停 clip 列表不应再弹出 tooltip 窗口；关环（__ringActive 置 false）后自动恢复
   if ((window as any).__ringActive) return;
@@ -431,7 +439,8 @@ function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
       bottom: rect.bottom,
     };
   } else {
-    const text = item.content;
+    // 文件条目 tooltip 展示文件名序列（content 是 JSON 路径数组，原串无阅读价值）
+    const text = item.type === 'files' ? (clipFilesPreview(item.content) || item.content) : item.content;
     // 仅当文本在列表中被截断（CSS 省略号生效）或原文超过 2 行时，才用 tooltip 展示完整内容，
     // 避免单行完整内容也弹出 tooltip。
     const textEl = el.querySelector('span') as HTMLElement | null;
@@ -692,12 +701,14 @@ const batchItems = computed(() => {
   return picked;
 });
 
-/** 批量复制：选中文本条目按选择顺序合并（换行分隔）写入系统剪贴板 */
+/** 批量复制：选中可复制条目（文本/富文本）按选择顺序合并（换行分隔，富文本取纯文本兜底）写入系统剪贴板；加密条目先解密为明文 */
 async function batchCopy() {
   const items = batchItems.value;
-  const texts = items
-    .filter((it: ClipboardData) => (it.type ?? 'text') === 'text')
-    .map((it: ClipboardData) => it.content);
+  const texts = (await Promise.all(items
+    .filter((it: ClipboardData) => (it.type ?? 'text') === 'text' || it.type === 'html')
+    .map(async (it: ClipboardData) => it.encrypted === 1 ? await decryptClipText(it.content) : it.content)))
+    // 加密条目解密失败（密钥不符/凭据库不可用）时返回原文密文，剔除避免把密文写进剪贴板
+    .filter((t) => !isEncryptedContent(t));
   if (texts.length === 0) {
     showPinnedHint(t('clip.batch_copy_no_text'), 'info');
     return;
@@ -730,6 +741,18 @@ async function batchFavorite() {
     console.error('批量收藏失败:', e);
     showPinnedHint(t('clip.batch_favorite_failed'), 'error');
   }
+}
+
+/** 设为序列粘贴队列：批量选择（≥2 条）按点选顺序入队，Enter 逐条粘贴（循环步进） */
+function batchSetSequence() {
+  const items = batchItems.value;
+  if (items.length < 2) {
+    showPinnedHint(t('clip.sequence_needs_two'), 'info');
+    return;
+  }
+  setSequenceQueue(items.map((it: ClipboardData) => it.id));
+  showPinnedHint(t('clip.sequence_started', { n: items.length }));
+  clearBatchSelection();
 }
 
 /** 批量删除：先经确认框，逐条删除后刷新 */
@@ -781,6 +804,11 @@ function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
       label: item.is_favorite === 1 ? t('clip.ctx_unfavorite') : t('clip.ctx_favorite'),
       action: () => favorite(item.id, item.is_favorite === 1 ? 0 : 1),
     },
+    // 字段级加密切换（仅文本条目）：落盘密文 + 界面不回显明文；图片条目无此入口
+    ...((item.type ?? 'text') === 'text' ? [{
+      label: item.encrypted === 1 ? t('clip.ctx_decrypt') : t('clip.ctx_encrypt'),
+      action: () => toggleEncrypt(item),
+    }] : []),
     // 普通删除：弹内联确认框（与列表行删除按钮一致；anchor 为空走居中兜底）
     { label: t('clip.delete'), danger: true, action: () => handleDelete(item) },
     // 永久抹除：条目 + 统计字符计数一起清（敏感内容防护闭环，danger 红字警示）
@@ -826,15 +854,33 @@ async function copyQrContent(item: ClipboardData) {
   }
 }
 
-/** 右键「复制」：文本写系统剪贴板（触发既有弹岛链路）；图片项不支持（data URL 直接回写
- *  无意义且会污染剪贴板历史），提示引导用双击查看大图 */
+/** 右键「复制」：文本写系统剪贴板（触发既有弹岛链路）；富文本条目 HTML+纯文本双写还原格式；
+ *  文件条目还原 CF_HDROP（解析路径列表 writeFiles）；图片项不支持（data URL 直接回写
+ *  无意义且会污染剪贴板历史），提示引导用双击查看大图；加密条目先解密再写入明文 */
 async function copyClipItem(item: ClipboardData) {
   if ((item.type ?? 'text') === 'image') {
     showPinnedHint(t('clip.ctx_copy_image_unsupported'), 'info');
     return;
   }
   try {
-    await writeText(item.content);
+    if (item.type === 'files') {
+      const paths = JSON.parse(item.content) as unknown;
+      if (Array.isArray(paths) && paths.length > 0) {
+        await writeFiles(paths.map(String));
+        showPinnedHint(t('clip.copied'));
+        return;
+      }
+      // 解析失败回退按纯文本复制
+      await writeText(item.content);
+      showPinnedHint(t('clip.copied'));
+      return;
+    }
+    const text = item.encrypted === 1 ? await decryptClipText(item.content) : item.content;
+    if (item.type === 'html' && item.html_content) {
+      await writeHtmlAndText(item.html_content, text);
+    } else {
+      await writeText(text);
+    }
     showPinnedHint(t('clip.copied'));
   } catch (e) {
     console.error('复制剪贴项失败:', e);
@@ -842,11 +888,36 @@ async function copyClipItem(item: ClipboardData) {
   }
 }
 
+/** 右键「加密存储/解除加密」：字段级 AES-256-GCM 加密切换（仅文本条目，密钥在系统凭据库），
+ *  完成后刷新列表让界面按 encrypted 标记渲染锁态 */
+async function toggleEncrypt(item: ClipboardData) {
+  const target = item.encrypted !== 1;
+  try {
+    await clipboardService.setClipboardEncrypted(item.id, target);
+    await fetchData();
+    showPinnedHint(t(target ? 'clip.encrypt_success' : 'clip.decrypt_success'));
+  } catch (e) {
+    console.error('加密状态切换失败:', e);
+    showPinnedHint(t('clip.encrypt_failed'), 'error');
+  }
+}
+
 /** 把当前剪贴项（文本/图片）添加到常用剪贴板列表末尾 */
 async function addToPinned(item: ClipboardData) {
   if (!item?.content) return;
+  // 加密条目不进常用剪贴板：内容为密文，收藏副本无意义且扩大密文扩散面
+  if (item.encrypted === 1) {
+    showPinnedHint(t('clip.encrypted_no_pinned'), 'info');
+    return;
+  }
+  // 文件条目不进常用剪贴板：常用剪贴粘贴通道只支持文本/图片，收藏路径列表无法还原 CF_HDROP
+  if (item.type === 'files') {
+    showPinnedHint(t('clip.files_no_pinned'), 'info');
+    return;
+  }
   try {
-    const type = (item.type ?? 'text') as 'text' | 'image';
+    // 富文本条目按纯文本兜底收进常用剪贴板（常用剪贴不保存 HTML 源码，粘贴回纯文本）
+    const type: 'text' | 'image' = item.type === 'image' ? 'image' : 'text';
     const exists = await clipboardService.isPinnedContentExist(item.content, type);
     if (exists) {
       showPinnedHint(t('clip.exists_in_pinned'), 'info');
@@ -994,7 +1065,23 @@ function getFirstTwoLines(input: string): string {
   return lines[0] + '\n' + lines[1];
 }
 
+/** 文件条目的路径数（content 为 JSON 路径数组；解析失败按 0 计，仅用于徽章计数展示） */
+function clipFileCount(content: string): number {
+  try {
+    const paths: unknown = JSON.parse(content);
+    return Array.isArray(paths) ? paths.filter((p): p is string => typeof p === 'string').length : 0;
+  } catch { return 0; }
+}
+
 function handleDragStart(item: ClipboardData, event: DragEvent) {
+  // 加密条目不参与拖拽：dragstart 是同步事件，无法等待异步解密，置空载荷防密文外泄
+  if (item.encrypted === 1) return;
+  // 文件条目拖出仅携带纯文本路径列表（WebView 无法还原 CF_HDROP 拖放语义）
+  if (item.type === 'files') {
+    const names = clipFilesPreview(item.content);
+    if (names) event.dataTransfer?.setData('text/plain', names);
+    return;
+  }
   event.dataTransfer?.setData('text/plain', item.content);
 }
 
@@ -1202,8 +1289,24 @@ async function openImageViewer(item: ClipboardData) {
                 <span class="text-ink-soft">{{ t('clip.batch_selected', { n: batchCount }) }}</span>
                 <button type="button" class="btn-soft px-2 py-1 text-xs" @click="batchCopy">{{ t('clip.batch_copy') }}</button>
                 <button type="button" class="btn-soft px-2 py-1 text-xs text-gold" @click="batchFavorite">{{ t('clip.batch_favorite') }}</button>
+                <!-- 序列粘贴：≥2 条可把选择顺序设为队列，Enter 逐条粘贴（循环步进） -->
+                <button
+                  v-if="batchCount >= 2"
+                  type="button"
+                  class="btn-soft px-2 py-1 text-xs"
+                  :class="sequenceActive ? 'text-gold bg-gold/15 border-gold/60' : ''"
+                  @click="batchSetSequence"
+                >{{ t('clip.sequence_set') }}</button>
                 <button type="button" class="btn-soft px-2 py-1 text-xs text-danger" @click="batchDeleteConfirmVisible = true">{{ t('clip.batch_delete') }}</button>
                 <button type="button" class="btn-soft px-2 py-1 text-xs" @click="clearBatchSelection">{{ t('clip.batch_cancel') }}</button>
+              </div>
+              <!-- 序列粘贴进行中（批量选择已清空）：状态条 + 退出入口 -->
+              <div
+                  v-else-if="sequenceActive"
+                  class="glass-card mb-2 flex flex-wrap items-center gap-2 rounded-2xl px-4 py-2 text-sm"
+              >
+                <span class="text-gold">{{ t('clip.sequence_active', { n: sequenceQueueIds.length }) }}</span>
+                <button type="button" class="btn-soft px-2 py-1 text-xs" @click="exitSequence">{{ t('clip.sequence_exit') }}</button>
               </div>
 
               <ul
@@ -1255,13 +1358,33 @@ async function openImageViewer(item: ClipboardData) {
                         :ref="(el) => observeImagePlaceholder(el, item.id)"
                         class="h-[3.6em] w-[6em] rounded-md bg-surface-field"
                       ></div>
-                      <!-- 文本条目 -->
+                      <!-- 文本条目；加密条目不回显明文，锁形占位替代内容；文件条目显示文件名序列 -->
+                      <span
+                        v-else-if="item.type === 'files'"
+                        class="tabular-nums overflow-hidden text-ellipsis whitespace-nowrap p-[3px] inline-flex items-center gap-1"
+                      >
+                        <svg class="h-3.5 w-3.5 shrink-0 text-ink-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                          <polyline points="13 2 13 9 20 9" />
+                        </svg>
+                        <span class="truncate">{{ clipFilesPreview(item.content) }}</span>
+                      </span>
                       <span
                         v-else
                         class="tabular-nums overflow-hidden text-ellipsis break-words whitespace-pre-wrap p-[3px]"
                         style="display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2"
                       >
+                        <template v-if="item.encrypted === 1">
+                          <span class="inline-flex items-center gap-1 text-ink-faint" v-tip="t('clip.encrypted_tip')">
+                            <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                            </svg>
+                            {{ t('clip.encrypted_placeholder') }}
+                          </span>
+                        </template>
                         <HighlightText
+                          v-else
                           :text="getFirstTwoLines(item.content)"
                           :highlightString="highlightContent" :advanced="filter.advanced"
                           :active="searchHighlightEnabled"
@@ -1306,7 +1429,30 @@ async function openImageViewer(item: ClipboardData) {
                         </svg>
                         {{ t('clip.favorited') }}
                       </span>
-                      <span class="opacity-60">{{ t(item.type === 'image' ? 'common.image' : 'common.text') }}
+                      <!-- 加密徽章：落盘为密文（与列表锁形占位呼应） -->
+                      <span
+                        v-if="item.encrypted === 1"
+                        class="inline-flex items-center gap-1 rounded-full bg-surface-field px-1.5 py-px text-ink-faint"
+                        v-tip="t('clip.encrypted_tip')"
+                      >
+                        <svg class="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                        {{ t('clip.encrypted_placeholder') }}
+                      </span>
+                      <!-- 文件徽章：路径条数 -->
+                      <span
+                        v-if="item.type === 'files'"
+                        class="inline-flex items-center gap-1 rounded-full bg-surface-field px-1.5 py-px text-ink-faint"
+                      >
+                        <svg class="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                          <polyline points="13 2 13 9 20 9" />
+                        </svg>
+                        {{ t('clip.files_badge', { n: clipFileCount(item.content) }) }}
+                      </span>
+                      <span class="opacity-60">{{ t(item.type === 'image' ? 'common.image' : item.type === 'html' ? 'common.rich_text' : item.type === 'files' ? 'common.files' : 'common.text') }}
                       {{ t('clip.created_at') }}{{ formatDateLocalized(parseInt(item.created_at)) }}</span>
                       <span class="opacity-60">{{ t('clip.use_count') }}{{ item.count }}</span>
                       <span class="opacity-60">{{ t('clip.last_used_at') }}{{ formatDateLocalized(parseInt(item.updated_at)) }}</span>

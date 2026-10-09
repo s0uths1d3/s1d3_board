@@ -16,7 +16,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
 
 ![License](https://img.shields.io/badge/License-Apache_2.0-D22128?style=flat-square)
-![Version](https://img.shields.io/badge/Version-0.4.0-2ea44f?style=flat-square)
+![Version](https://img.shields.io/badge/Version-0.5.0-2ea44f?style=flat-square)
 ![Status](https://img.shields.io/badge/Status-active_development-2ea043?style=flat-square)
 
 </div>
@@ -57,8 +57,8 @@ It isn't a window you keep open all day. It stays in the tray until a global sho
 
 | Module | What it solves | Key capabilities |
 |---|---|---|
-| 📋 **Clipboard** | Copied things vanish | Text & images captured automatically, full-text search, favorites, one-key paste, image viewer |
-| 📌 **Pinned** | Re-finding the same snippets | Pin frequent items, paste directly with `Ctrl+1 ~ Ctrl+0` |
+| 📋 **Clipboard** | Copied things vanish | Text / images / rich text / files captured automatically, full-text search, favorites, sequence paste, per-item encryption, retention & ignore rules |
+| 📌 **Pinned** | Re-finding the same snippets | Pin frequent items with custom name & tags, paste directly with `Ctrl+1 ~ Ctrl+0` |
 | ✅ **Todo** | Things living in your head | Priority, category, due date, smart/custom recurring reminders |
 | 🗒️ **Notes** | Nowhere to put stray thoughts | Multi-color masonry notes, `Ctrl+N` to create, `Ctrl+Enter` to save |
 | 📊 **Statistics** | Not knowing where time goes | Multi-dimensional usage data, range switching, fun facts & persona tags |
@@ -73,13 +73,19 @@ Key capabilities by module:
 
 ### 📋 Clipboard
 - **Automatic capture**: copied text and images are stored on the fly; the oldest entries are evicted past the configured limit
+- **Rich text & files**: formatted copies keep their HTML — pasting into capable apps restores the formatting while plain-text targets get the fallback text; file copies keep real file semantics (`N files` entries, pasting duplicates the files)
 - **Full-text search**: keyword filtering with golden highlighting on matches
 - **Favorites**: `Ctrl+L` to star / unstar
 - **One-key paste**: `Enter` pastes the selection; `Ctrl+Shift+1 ~ Ctrl+Shift+0` pastes the top 10 globally
+- **Sequence paste**: multi-select entries into a queue and step through it with `Enter` — the island capsule shows the progress
+- **Per-item encryption**: any text entry can be stored as AES-256-GCM ciphertext (lock placeholder everywhere, paste decrypts on the fly); the key lives in the OS credential manager and never leaves the Rust process
 - **Dedicated viewers**: a hover tooltip shows full content (original indentation preserved); an image viewer supports zoom / rotate / switching
+
+> Full implementation notes: [.docs/clipboard-features.md](.docs/clipboard-features.md)
 
 ### 📌 Pinned
 - Pin frequently used clips as fast-paste items, shown in a masonry layout
+- Each item carries a custom name and space-separated tags, shown right on the card
 - `Ctrl+U` adds the current selection, `Ctrl+1 ~ Ctrl+0` pastes the top 10 directly
 - **Arrow-key navigation**: `↑↓←→` picks the geometrically nearest item, `Delete` removes it (inline confirm)
 
@@ -139,6 +145,8 @@ Copied content flows through an "**extractor → scheme → smart segmentation**
 - **Language**: follow system / 中文 / English
 - **Popup position**: at cursor / last position / centered on the cursor's screen
 - **Toggles**: launch at login, max clipboard entries, hover tooltip, search highlight, smart reminders, app-usage tracking
+- **History retention**: permanent / 7 / 30 / 90 / 365 days — expired entries are cleaned on startup and on change (image files included)
+- **Ignored apps**: copies made in blacklisted apps never enter the history or the island; the panel lists apps you have copied from (with entry counts) and accepts manual process names, with suggestions from running apps
 - **Shortcuts**: record / toggle / reset (individually or per group)
 - **Navigation**: tab order (long-press drag or move up/down) and visibility — Clipboard and Settings are locked
 - **Data**: clear the database, with a **5-second undo window**
@@ -167,8 +175,9 @@ Copied content flows through an "**extractor → scheme → smart segmentation**
 |---|---|
 | Desktop shell | [Tauri 2](https://tauri.app) |
 | Frontend | [Nuxt 4](https://nuxt.com) + [Vue 3](https://vuejs.org) |
-| Styling | [Tailwind CSS 3](https://tailwindcss.com) |
+| Styling | [Tailwind CSS 4](https://tailwindcss.com) (CSS-first `@theme` configuration) |
 | Database | SQLite ([@tauri-apps/plugin-sql](https://github.com/tauri-apps/plugins-workspace/tree/v2/plugins/sql)) |
+| Encryption | AES-256-GCM field-level encryption for sensitive clipboard entries; keys via the OS credential store ([keyring](https://crates.io/crates/keyring)) |
 | System | global shortcuts, clipboard read/write, notifications, window control, tray, autostart, single instance, external links |
 | Open API | loopback HTTP/SSE server + outbound webhooks (Rust side, listens on `127.0.0.1` only) |
 | Data collection | Rust foreground-app watcher (per-platform for Windows / macOS / Linux, 30s segments) |
@@ -286,11 +295,10 @@ For a build with debug symbols (troubleshooting): `npm run tauri build -- --debu
 │       ├── clipboard/       # thumb (resize + QR scan), image_store (content-addressed file storage)
 │       ├── island/          # api (loopback HTTP/SSE + history query), webhook (HMAC push + retry)
 │       ├── ai/              # AI provider proxy (OpenAI-compatible / Anthropic / custom JSON, SSE)
-│       ├── commands/        # lifecycle / menu / paste
+│       ├── commands/        # lifecycle / menu / paste / secure (field-level AES-256-GCM encryption)
 │       └── app_usage/       # Foreground app tracking (windows / macos / linux / unsupported)
-├── .docs/                   # Design docs (architecture / database / island-api / smart-clip AI analysis)
+├── .docs/                   # Design docs (architecture / database / clipboard features / island-api / smart-clip AI analysis)
 ├── nuxt.config.ts
-├── tailwind.config.js
 └── tsconfig.json
 ```
 
@@ -305,6 +313,7 @@ For a build with debug symbols (troubleshooting): `npm run tauri build -- --debu
 - **Batched statistics writes**: counters accumulate in memory, flush through throttled UPSERTs and force-flush on exit (no data loss)
 - **App usage pipeline**: Rust accumulates foreground time in 30s segments (nothing is collected while the toggle is off); the frontend pulls deltas into the `app_usage` table and the page aggregates by range
 - **Smart clipboard pipeline**: local segmentation and pre-judgment tagging are pure functions (zero AI cost, silent); only pressing `Ctrl+B` triggers an AI call; results are cooldown-cached and failures never pollute
+- **Clipboard safety net**: ignored-app blocking and retention cleanup run inside the clipboard listener before anything is written; sensitive entries are encrypted in place with AES-256-GCM — the payload carries a `S1ENC1:` sentinel prefix and the key is kept in the OS credential manager, never in the database
 - **Dynamic island pipeline**: copy / paste / cut and operation feedback from every module funnel through the island service; third parties push via the loopback API or subscribe via SSE / webhooks
 - **Multi-window collaboration**: the main window and the dynamic island / ring bubbles / tooltip / image viewer / delete confirm windows communicate over Tauri events (show, hide, hover, activate); theme and language changes broadcast to every window
 - **Settings persistence**: lightweight settings live in a `settings` key-value table (`getKeyValue/setKeyValue`); text inputs debounce before writing and flush on unmount

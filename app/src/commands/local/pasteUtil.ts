@@ -1,4 +1,4 @@
-import { writeText, writeImageBase64, readText } from 'tauri-plugin-clipboard-api';
+import { writeText, writeImageBase64, writeHtmlAndText, writeFiles, readText } from 'tauri-plugin-clipboard-api';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isTauri } from '~/utils/env';
@@ -7,6 +7,12 @@ import dbService from '~/src/db/dbService';
 
 /** 粘贴完成后恢复原剪贴板的延迟：等目标应用完成剪贴板读取后再写回 */
 const PASTE_RESTORE_DELAY_MS = 800;
+
+/**
+ * 粘贴条目类型：'text' 纯文本 / 'image' 图片（base64）/ 'html' 富文本（htmlContent 传原始
+ * HTML，content 为纯文本兜底）/ 'files' 文件列表（content 为 JSON 路径数组字符串）
+ */
+export type PasteType = 'text' | 'image' | 'html' | 'files';
 
 /**
  * 将指定内容粘贴到唤起剪贴板窗口前的目标输入框。
@@ -22,7 +28,7 @@ const PASTE_RESTORE_DELAY_MS = 800;
  * 若先模拟粘贴再隐藏窗口，按键会落在 clip 窗口自身，导致粘贴失败。
  * 该工具供 Enter 粘贴、Ctrl+数字 快捷粘贴等命令复用。
  */
-export async function pasteContentToActiveApp(content: string, type: 'text' | 'image'): Promise<void> {
+export async function pasteContentToActiveApp(content: string, type: PasteType, htmlContent?: string): Promise<void> {
     if (!content) return;
 
     // 恢复原剪贴板（开关默认关闭）：写剪贴板前先记录当前文本（仅文本；当前为图片/读不到时跳过）。
@@ -46,6 +52,17 @@ export async function pasteContentToActiveApp(content: string, type: 'text' | 'i
         if (isTauri()) {
             if (type === 'image') {
                 await writeImageBase64(content);
+            } else if (type === 'html') {
+                // 富文本：HTML + 纯文本双格式写入，目标应用按能力择优（支持 HTML 的取富文本）
+                await writeHtmlAndText(htmlContent || content, content);
+            } else if (type === 'files') {
+                // 文件列表：content 为 JSON 路径数组字符串（解析失败回退按文本写入）
+                const paths = JSON.parse(content);
+                if (Array.isArray(paths) && paths.length > 0) {
+                    await writeFiles(paths.map(String));
+                } else {
+                    await writeText(content);
+                }
             } else {
                 await writeText(content);
             }

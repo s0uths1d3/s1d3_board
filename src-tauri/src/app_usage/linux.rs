@@ -122,6 +122,29 @@ foreground_sample(app).map(|s| s.name)
 pub fn icon_of_app(name: &str) -> Option<String> {
 linux_icon::icon_data_url_of_app(name)
 }
+/// 枚举当前运行中的进程名（/proc/{pid}/comm，小写、去重后排序）：
+/// 供设置页「忽略来源应用」手动输入的匹配建议（与前台采样命名一致）。
+pub fn list_process_names() -> Vec<String> {
+let mut names = std::collections::HashSet::new();
+if let Ok(entries) = std::fs::read_dir("/proc") {
+    for entry in entries.flatten() {
+        // 只关心 PID 目录（/proc 下数字命名）
+        let Some(pid) = entry.file_name().to_str() else { continue };
+        if !pid.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        if let Ok(comm) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+            let trimmed = comm.trim().to_lowercase();
+            if !trimmed.is_empty() {
+                names.insert(trimmed);
+            }
+        }
+    }
+}
+let mut out: Vec<String> = names.into_iter().collect();
+out.sort();
+out
+}
 pub fn idle_secs() -> u64 {
 // XScreenSaver 扩展：ms_since_user_input 为距上次输入的毫秒数；
 // 扩展不可用（Wayland 等）时按 0 处理（全算活跃）

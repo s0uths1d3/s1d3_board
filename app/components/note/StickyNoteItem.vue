@@ -1,6 +1,6 @@
 <template>
   <div
-      class="sticky-note-card glass-card group relative mb-4 flex min-h-[200px] cursor-pointer break-inside-avoid flex-col rounded-2xl border p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
+      class="sticky-note-card glass-card group relative flex min-h-[200px] cursor-pointer flex-col rounded-2xl border p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
       :class="[selected ? '!border-gold ring-2 ring-gold/60 shadow-[0_0_22px_-2px_rgba(196,167,125,0.6)]' : '', saved ? 'note-saved' : '']"
       :style="noteStyle"
       @click="$emit('select')"

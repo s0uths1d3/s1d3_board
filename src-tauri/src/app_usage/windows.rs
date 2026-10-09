@@ -153,6 +153,39 @@ unsafe {
     found
 }
 }
+/// 枚举当前运行中的进程名（szExeFile 去 .exe 后缀、小写、去重后排序）：
+/// 供设置页「忽略来源应用」手动输入的匹配建议（与前台采样/source_app 命名对齐）。
+pub fn list_process_names() -> Vec<String> {
+unsafe {
+    let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if snap == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
+    let mut names = std::collections::HashSet::new();
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..std::mem::zeroed()
+    };
+    if Process32FirstW(snap, &mut entry) != 0 {
+        loop {
+            let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+            let exe = String::from_utf16_lossy(&entry.szExeFile[..len]);
+            // 与前台采样命名对齐：去掉 .exe 后缀再小写（同名多进程只留一份）
+            let exe_name = exe.strip_suffix(".exe").unwrap_or(&exe).to_lowercase();
+            if !exe_name.is_empty() {
+                names.insert(exe_name);
+            }
+            if Process32NextW(snap, &mut entry) == 0 {
+                break;
+            }
+        }
+    }
+    CloseHandle(snap);
+    let mut out: Vec<String> = names.into_iter().collect();
+    out.sort();
+    out
+}
+}
 /// exe 路径 → 图标 PNG data URL（SHGetFileInfo 取大图标 → GetDIBits 转 RGBA → PNG）
 fn icon_data_url_of_path(path: &str) -> Option<String> {
 unsafe {

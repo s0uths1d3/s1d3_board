@@ -68,6 +68,11 @@ unsafe {
 pub fn icon_of_app(_name: &str) -> Option<String> {
 None
 }
+/// 枚举运行中进程名：macOS 暂不支持（与 icon_of_app 同因，进程名获取链路未接），
+/// 返回空列表由前端回退为已记录来源应用建议
+pub fn list_process_names() -> Vec<String> {
+Vec::new()
+}
 pub fn idle_secs() -> u64 {
 // CoreGraphics 手动绑定：kCGEventSourceStateHIDSystemState = 1，kCGAnyInputEventType = u64::MAX
 unsafe { CGEventSourceSecondsSinceLastEventType(1, u64::MAX) as u64 }

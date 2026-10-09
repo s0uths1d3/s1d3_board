@@ -16,7 +16,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
 
 ![License](https://img.shields.io/badge/License-Apache_2.0-D22128?style=flat-square)
-![Version](https://img.shields.io/badge/Version-0.4.0-2ea44f?style=flat-square)
+![Version](https://img.shields.io/badge/Version-0.5.0-2ea44f?style=flat-square)
 ![Status](https://img.shields.io/badge/Status-active_development-2ea043?style=flat-square)
 
 </div>
@@ -58,8 +58,8 @@ S1d3 Board 想做的不是"再来一个效率应用"，而是把这些高频琐�
 
 | 模块 | 解决什么 | 关键能力 |
 |---|---|---|
-| 📋 **剪贴板** | 复制过的内容找不回来 | 自动记录文本与图片、全文搜索、收藏、一键粘贴、图片查看器 |
-| 📌 **常用剪贴板** | 高频内容每次都要重新找 | 置顶固定常用项，`Ctrl+1 ~ Ctrl+0` 直达粘贴 |
+| 📋 **剪贴板** | 复制过的内容找不回来 | 自动记录文本 / 图片 / 富文本 / 文件、全文搜索、收藏、序列粘贴、条目级加密、保留时间与忽略应用 |
+| 📌 **常用剪贴板** | 高频内容每次都要重新找 | 置顶固定常用项（自定义名称与标签），`Ctrl+1 ~ Ctrl+0` 直达粘贴 |
 | ✅ **待办** | 临时事项记在脑子里 | 优先级、分类、截止日期、智能/自定义重复提醒 |
 | 🗒️ **便签** | 零散想法无处安放 | 多色瀑布流便签，`Ctrl+N` 新建、`Ctrl+Enter` 保存 |
 | 📊 **统计** | 不知道时间花在哪 | 多维使用数据、时间范围切换、趣味数据与用户画像标签 |
@@ -74,13 +74,19 @@ S1d3 Board 想做的不是"再来一个效率应用"，而是把这些高频琐�
 
 ### 📋 剪贴板（clip）
 - **自动记录**：复制的文本与图片自动入库，超出上限自动淘汰最旧记录
+- **富文本与文件**：带格式复制保留 HTML 源码——粘贴到支持格式的应用还原原样，纯文本目标自动降级；文件复制保留真实文件语义（「N 个文件」条目，粘贴即复制出这些文件）
 - **全文搜索**：关键词过滤 + 匹配文本金色高亮
 - **收藏夹**：`Ctrl+L` 一键收藏/取消收藏
 - **一键粘贴**：`Enter` 粘贴选中项，`Ctrl+Shift+1 ~ Ctrl+Shift+0` 全局粘贴前 10 项
+- **序列粘贴**：多条目设为队列，`Enter` 逐步粘贴，灵动岛胶囊展示进度
+- **条目级加密**：任意文本条目可加密存储（AES-256-GCM，全界面锁形占位，粘贴自动解密）；密钥存操作系统凭据库，永不离开 Rust 进程
 - **独立查看窗口**：悬停提示展示完整内容（保留原始缩进），图片查看器支持缩放 / 旋转 / 多图切换
+
+> 完整实现说明见 [.docs/clipboard-features.md](.docs/clipboard-features.md)
 
 ### 📌 常用剪贴板（pinned）
 - 将常用内容**置顶固定**为可快速粘贴的常用项，瀑布流布局
+- 每条常用项可自定义名称与空格分隔的标签，卡片直接展示
 - `Ctrl+U` 添加选中项，`Ctrl+1 ~ Ctrl+0` 直接粘贴前 10 项
 - **方向键导航**：`↑↓←→` 几何最近邻选中，`Delete` 删除（内联确认框）
 
@@ -140,6 +146,8 @@ S1d3 Board 想做的不是"再来一个效率应用"，而是把这些高频琐�
 - **语言**：跟随系统 / 中文 / English
 - **窗口弹出位置**：光标处 / 上次打开位置 / 光标所在屏幕居中
 - **开关项**：开机自启、剪贴板最大存储数量、悬停提示、搜索高亮、智能提醒、应用时长记录
+- **历史保留时间**：永久 / 7 / 30 / 90 / 365 天，到期条目在启动与变更时清理（含图片文件）
+- **忽略的应用**：黑名单应用中的复制不落库、不弹岛；面板默认列出已记录的来源应用（按条数排序），也支持手动输入进程名（含运行中进程建议）
 - **快捷键**：录制 / 启停 / 重置（单个与分组）
 - **导航配置**：标签页顺序（长按拖拽或上下移）与启停，剪贴板与设置强制保留
 - **数据**：清空数据库，提供 **5 秒撤回窗口**
@@ -168,8 +176,9 @@ S1d3 Board 想做的不是"再来一个效率应用"，而是把这些高频琐�
 |---|---|
 | 桌面容器 | [Tauri 2](https://tauri.app) |
 | 前端框架 | [Nuxt 4](https://nuxt.com) + [Vue 3](https://vuejs.org) |
-| 样式 | [Tailwind CSS 3](https://tailwindcss.com) |
+| 样式 | [Tailwind CSS 4](https://tailwindcss.com)（CSS-first `@theme` 配置） |
 | 数据库 | SQLite（[@tauri-apps/plugin-sql](https://github.com/tauri-apps/plugins-workspace/tree/v2/plugins/sql)） |
+| 数据加密 | 剪贴板敏感条目 AES-256-GCM 字段级加密，密钥经 [keyring](https://crates.io/crates/keyring) 存操作系统凭据库 |
 | 系统能力 | 全局快捷键、剪贴板监听与写入、通知、窗口控制、托盘、开机自启、单实例、外部链接打开 |
 | 开放 API | 回环 HTTP/SSE 服务 + Webhook 出站推送（Rust 实现，仅监听 `127.0.0.1`） |
 | 数据采集 | Rust 前台应用监听（Windows / macOS / Linux 分平台实现，30s 分段结算） |
@@ -286,11 +295,10 @@ npm run tauri:build
 │       ├── clipboard/       # thumb（缩略图 + 二维码扫描）、image_store（内容寻址落盘）
 │       ├── island/          # api（回环 HTTP/SSE + 历史查询）、webhook（HMAC 推送 + 重试）
 │       ├── ai/              # AI 提供商代理（OpenAI 兼容 / Anthropic / 自定义 JSON，SSE 流式）
-│       ├── commands/        # lifecycle / menu / paste
+│       ├── commands/        # lifecycle / menu / paste / secure（字段级 AES-256-GCM 加密）
 │       └── app_usage/       # 前台应用时长采集（windows / macos / linux / unsupported）
-├── .docs/                   # 设计文档（架构 / 数据库 / 灵动岛 API / 智能剪贴 AI 分析）
+├── .docs/                   # 设计文档（架构 / 数据库 / 剪贴板功能 / 灵动岛 API / 智能剪贴 AI 分析）
 ├── nuxt.config.ts
-├── tailwind.config.js
 └── tsconfig.json
 ```
 
@@ -305,6 +313,7 @@ npm run tauri:build
 - **统计写入合并**：统计埋点先入内存累加器，节流批量 UPSERT，退出时强制落库（数据零丢失）
 - **应用时长链路**：Rust 侧监听前台窗口并按 30s 分段累计（开关关闭时不采集），前端定时拉取增量写入 `app_usage` 表，页面再按范围聚合
 - **智能剪贴板管线**：本地切分与预判打标为纯函数层（零 AI 成本、静默），`Ctrl+B` 手动触发才发起 AI 分析；结果冷却缓存，失败不污染
+- **剪贴板安全网**：忽略应用拦截与保留期清理在监听层落库前执行（不写库、不弹岛）；敏感条目 AES-256-GCM 原地加密，载荷带 `S1ENC1:` 前缀哨兵，密钥存操作系统凭据库、不入数据库
 - **灵动岛链路**：复制 / 粘贴 / 剪切与各模块操作反馈统一经灵动岛服务弹岛，第三方可经回环 API 推送或经 SSE / Webhook 订阅事件
 - **多窗口协作**：主窗口与灵动岛 / 环形气泡 / tooltip / 图片查看器 / 删除确认窗口通过 Tauri 事件通信（显示、隐藏、悬停、激活），配色与语言切换广播同步到所有窗口
 - **设置持久化**：轻量设置统一走 `settings` 键值表（`getKeyValue/setKeyValue`），文本类输入防抖落库，卸载前强制写入

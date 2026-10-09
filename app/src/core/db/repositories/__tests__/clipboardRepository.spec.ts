@@ -31,7 +31,7 @@ describe('clipboardRepository', () => {
         expect(probe?.params).toEqual(['hello']);
         expect(executes[0]?.sql).toContain('INSERT INTO clipboard');
         expect(executes[0]?.sql).toContain('ON CONFLICT(content) DO UPDATE SET count = count + $6, updated_at = $5');
-        expect(executes[0]?.params).toEqual(['hello', 'T', 'text', expect.any(Number), expect.any(Number), 1, null, null]);
+        expect(executes[0]?.params).toEqual(['hello', 'T', 'text', expect.any(Number), expect.any(Number), 1, null, null, null]);
         // 岛事件 + 文本才有的 smart-clip 广播（lastInsertId 来自 execute 桩）
         expect(emitSpy).toHaveBeenCalledWith('island:copy', { content: 'hello', type: 'text', qrText: undefined });
         expect(emitSpy).toHaveBeenCalledWith('smart-clip:copy', { id: 101, content: 'hello', ts: expect.any(Number) });
@@ -97,7 +97,7 @@ describe('clipboardRepository', () => {
 
         await repo.fetchClipboardData({ value: { favorite: 0, searchContent: 'a%b_c', type: 'all' } });
 
-        expect(selects.at(-1)?.sql).toContain("((type = 'text' AND content LIKE $1 ESCAPE '\\') OR qr_text LIKE $2 ESCAPE '\\')");
+        expect(selects.at(-1)?.sql).toContain("((type IN ('text', 'html') AND content LIKE $1 ESCAPE '\\') OR qr_text LIKE $2 ESCAPE '\\')");
         expect(selects.at(-1)?.params).toEqual(['%a\\%b\\_c%', '%a\\%b\\_c%']);
     });
 

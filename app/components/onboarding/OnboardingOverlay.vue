@@ -37,7 +37,8 @@
 
 <script setup lang="ts">
 /**
- * 首次使用引导层（分步轮播，3 步）：
+ * 首次使用引导层（分步轮播，7 步）：欢迎与唤出 → 剪贴板/常用剪贴板 → 待办便签 →
+ * 统计与应用时长 → 灵动岛 → 智能剪贴板 → 个性化与回看入口。
  * - 门控：KV first_run_done !== '1' 时主窗口挂载后自动弹出（读失败不弹，避免阻塞主界面）；
  * - 完成/跳过均落 KV '1'（幂等，回看后再完成只是重复写入）；
  * - 回看：设置页「回看使用引导」入口派发 bus 'onboarding:replay' → 重置到第一步重新弹出。
@@ -55,6 +56,10 @@ const STEPS = [
   { title: 'onboarding.step1_title', body: 'onboarding.step1_body' },
   { title: 'onboarding.step2_title', body: 'onboarding.step2_body' },
   { title: 'onboarding.step3_title', body: 'onboarding.step3_body' },
+  { title: 'onboarding.step4_title', body: 'onboarding.step4_body' },
+  { title: 'onboarding.step5_title', body: 'onboarding.step5_body' },
+  { title: 'onboarding.step6_title', body: 'onboarding.step6_body' },
+  { title: 'onboarding.step7_title', body: 'onboarding.step7_body' },
 ] as const;
 
 const FIRST_RUN_KEY = 'first_run_done';

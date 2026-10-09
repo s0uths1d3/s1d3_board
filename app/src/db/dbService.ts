@@ -102,6 +102,24 @@ class DatabaseService {
         return this.clipboard.fetchSourceAppTop(startMs, endMs, limit);
     }
 
+    /** 已记录条目的来源应用清单（全量去重 + 出现条数）：设置页"忽略来源应用"默认列表 */
+    public async fetchDistinctSourceApps(): Promise<{ app: string; cnt: number }[]> {
+        await this.ensureDbInitialized();
+        return this.clipboard.fetchDistinctSourceApps();
+    }
+
+    /** 按保留天数过期清理（clip_retention_days，未配置=永久）：启动与设置变更时触发，返回删除条数 */
+    public async purgeExpiredClips(): Promise<number> {
+        await this.ensureDbInitialized();
+        return this.clipboard.purgeExpiredClips();
+    }
+
+    /** 字段级加密标记切换（仅文本条目；加密/解密在 Rust 侧完成，密钥不出进程） */
+    public async setClipboardEncrypted(id: number, encrypted: boolean): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.clipboard.setClipboardEncrypted(id, encrypted);
+    }
+
     /** 磁盘图片缓存清理（图片缓存上限可设置，默认 256MB；孤儿文件 + 不常用原图优先淘汰）。
      * 可撤回第一阶段：只删 DB 行（victim 行备份到 image_cleanup_backup），文件延迟到 finalizeImageCleanup 删除；
      * 返回清理结果：设置页手动「立即清理」按结果开启撤回窗口，启动/入库联动场景忽略返回值 */
@@ -170,9 +188,11 @@ class DatabaseService {
         return this.pinnedClip.isPinnedContentExist(content, type);
     }
 
-    public async updatePinnedClip(id: number, content: string, name: string, type: 'text' | 'image'): Promise<void> {
+    /** 更新常用剪贴项：tags 可选（undefined=不变，null/''=清空，tags 数组序列化 JSON） */
+    public async updatePinnedClip(id: number, content: string, name: string, type: 'text' | 'image',
+        tags?: string[] | null): Promise<void> {
         await this.ensureDbInitialized();
-        return this.pinnedClip.updatePinnedClip(id, content, name, type);
+        return this.pinnedClip.updatePinnedClip(id, content, name, type, tags);
     }
 
     public async pinPinnedClip(id: number, pinned: boolean): Promise<void> {
