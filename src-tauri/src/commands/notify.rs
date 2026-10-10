@@ -25,6 +25,11 @@ const TOAST_ICON_PNG: &[u8] = include_bytes!("../../icons/icon.png");
 pub fn register_toast_identity(app: &tauri::AppHandle) {
     #[cfg(windows)]
     {
+        // CREATE_NO_WINDOW：GUI 进程（windows_subsystem = "windows"）派生控制台
+        // 程序（reg.exe）时，Windows 会为其分配**可见的新控制台窗口**——启动时
+        // 闪现 cmd 黑框的根源；此标志阻止分配（对 GUI 子进程无效果，无害）
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let dir = match app.path().app_data_dir() {
             Ok(d) => d,
             Err(e) => {
@@ -51,6 +56,7 @@ pub fn register_toast_identity(app: &tauri::AppHandle) {
         for (name, value) in [("DisplayName", DISPLAY_NAME), ("IconUri", uri.as_str())] {
             if let Err(e) = std::process::Command::new("reg")
                 .args(["add", &format!(r"HKCU\{key}"), "/v", name, "/t", "REG_SZ", "/d", value, "/f"])
+                .creation_flags(CREATE_NO_WINDOW)
                 .status()
             {
                 eprintln!("[notify] 注册 AUMID {name} 失败: {e}");

@@ -98,7 +98,7 @@
 
         <!-- 新增任务：在搜索框所在卡片内部下拉/收起，与搜索框贴合 -->
         <div
-            class="add-form-wrap"
+            class="collapse-wrap"
             :class="showAddForm ? 'is-open' : ''"
         >
           <div class="min-h-0">

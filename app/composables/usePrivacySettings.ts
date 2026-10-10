@@ -36,6 +36,12 @@ export function ensurePrivacyLoaded(): Promise<void> {
   return privacySetting.ensureLoaded();
 }
 
+/** 强制重读隐私状态（绕过 once 缓存）：常驻托盘菜单窗口每次展示前调用，
+ *  规避设置页在另一窗口切换后勾选态陈旧 */
+export function reloadPrivacy(): Promise<void> {
+  return privacySetting.reload();
+}
+
 /** 设置页绑定：敏感内容防护开关（共享同一状态源） */
 export function useSensitiveFilter() {
   const sensitiveFilterEnabled = sensitiveSetting.useSetting();

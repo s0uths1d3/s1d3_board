@@ -16,6 +16,10 @@ export type ColorSchemeMode = 'system' | 'default' | 'light' | 'dark';
 export type ColorScheme = 'default' | 'light' | 'dark';
 
 const SCHEME_KEY = 'color_scheme';
+/** localStorage 镜像键：KV（SQLite 经 IPC）读取是异步的，等它回来才应用持久化配色
+ *  会让首帧先渲染默认配色再「快切」到真实配色。镜像在每次切换时同步双写，
+ *  启动时首帧前同步恢复；所有 Tauri 窗口同源共享，子窗口同样受益 */
+const SCHEME_LS_KEY = 'color_scheme';
 /** 跨窗口同步事件：设置页/快捷键切换后广播给 tooltip/viewer 等子窗口 */
 const SCHEME_EVENT = 'scheme:changed';
 
@@ -72,10 +76,16 @@ export function useColorScheme() {
       if (mediaQuery.addEventListener) mediaQuery.addEventListener('change', onMediaChange);
       else (mediaQuery as unknown as { addListener: (cb: (e: MediaQueryListEvent) => void) => void }).addListener(onMediaChange);
     }
-    // 启动时读取持久化的配色模式（每个窗口独立执行，子窗口也能正确着色）
+    // 启动恢复配色：先同步读 localStorage 镜像（首帧前生效，消除启动快切），
+    // KV 异步读为准校正（首次使用/镜像缺失时才可能不同）并回写镜像
+    try {
+      const cached = localStorage.getItem(SCHEME_LS_KEY);
+      if (isColorSchemeMode(cached)) mode.value = cached;
+    } catch { /* localStorage 不可用退回纯异步恢复 */ }
     dbService.getKeyValue(SCHEME_KEY).then((v) => {
       if (isColorSchemeMode(v)) {
-        mode.value = v;
+        if (v !== mode.value) mode.value = v;
+        try { localStorage.setItem(SCHEME_LS_KEY, v); } catch { /* 镜像写失败不影响功能 */ }
         applyScheme(resolvedScheme.value);
       }
     }).catch(() => { /* 读不到则保持跟随系统 */ });
@@ -110,10 +120,13 @@ export function useColorScheme() {
   return { scheme: mode, resolvedScheme };
 }
 
-/** 切换配色模式：应用 + 持久化 + 广播给其他窗口 */
+/** 切换配色模式：应用 + 双写（localStorage 同步镜像 + KV 持久化）+ 广播给其他窗口 */
 export async function setColorScheme(m: ColorSchemeMode): Promise<void> {
   mode.value = m;
   applyScheme(resolvedScheme.value);
+  try {
+    localStorage.setItem(SCHEME_LS_KEY, m);
+  } catch { /* 镜像写失败仅损失下次启动的同步恢复 */ }
   try {
     await dbService.setKeyValue(SCHEME_KEY, m);
   } catch { /* 写入失败不影响本次会话 */ }

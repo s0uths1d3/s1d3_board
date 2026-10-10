@@ -399,6 +399,8 @@ onBeforeUnmount(() => {
   line-height: inherit;
   color: rgba(150, 120, 90, 0.85);
   white-space: nowrap;
+  /* 行号仅作标识：禁止选中，复制正文时不会带上行号 */
+  user-select: none;
 }
 .tooltip-line {
   /* 完整显示：保留原始空白（tab/连续空格），超长行自动换行展示全部内容（不再省略号截断）；

@@ -2245,18 +2245,23 @@ onMounted(async () => {
                   </button>
                 </div>
               </div>
-              <ul v-show="!collapsed[cg.key]">
-                <li v-for="item in cg.items" :key="item.id">
-                  <ShortcutRow
-                      :item="item"
-                      :recording="recordingId === item.id"
-                      :error="shortcutRowError(item.id)"
-                      @toggle="toggleShortcutWithHint(item.id)"
-                      @record="startRecording(item.id)"
-                      @reset="resetOne(item.id)"
-                  />
-                </li>
-              </ul>
+              <!-- 折叠动画与待办「新增任务」同款：collapse-wrap grid-rows 高度过渡 -->
+              <div class="collapse-wrap" :class="{ 'is-open': !collapsed[cg.key] }">
+                <div>
+                  <ul>
+                    <li v-for="item in cg.items" :key="item.id">
+                      <ShortcutRow
+                          :item="item"
+                          :recording="recordingId === item.id"
+                          :error="shortcutRowError(item.id)"
+                          @toggle="toggleShortcutWithHint(item.id)"
+                          @record="startRecording(item.id)"
+                          @reset="resetOne(item.id)"
+                      />
+                    </li>
+                  </ul>
+                </div>
+              </div>
             </div>
 
             <p class="text-xs text-ink-faint">
@@ -2370,23 +2375,25 @@ onMounted(async () => {
               </div>
 
               <!-- AI 生成专属方案：一句话描述 → 标题/描述 + 成员组合 -->
-              <Transition name="edit-panel">
-                <div v-if="addingAiScheme" class="mb-2 rounded-xl border border-gold/40 bg-surface-field/60 p-2">
-                  <div class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.ai_generate_scheme') }}</div>
-                  <textarea v-model="aiSchemeDesc" rows="3"
-                            class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                            :placeholder="t('smart.ai_scheme_desc_ph')"></textarea>
-                  <div class="mt-1.5 flex justify-end gap-2">
-                    <button type="button" class="btn-soft px-2 py-0.5 text-xs"
-                            @click="addingAiScheme = false">{{ t('common.cancel') }}</button>
-                    <button type="button" class="btn-gold px-2 py-0.5 text-xs"
-                            :disabled="generatingScheme"
-                            @click="generateSchemeByAi">
-                      {{ generatingScheme ? t('smart.ai_generating') : t('smart.ai_generate') }}
-                    </button>
+              <div class="collapse-wrap" :class="{ 'is-open': addingAiScheme }">
+                <div>
+                  <div class="mb-2 rounded-xl border border-gold/40 bg-surface-field/60 p-2">
+                    <div class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.ai_generate_scheme') }}</div>
+                    <textarea v-model="aiSchemeDesc" rows="3"
+                              class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                              :placeholder="t('smart.ai_scheme_desc_ph')"></textarea>
+                    <div class="mt-1.5 flex justify-end gap-2">
+                      <button type="button" class="btn-soft px-2 py-0.5 text-xs"
+                              @click="addingAiScheme = false">{{ t('common.cancel') }}</button>
+                      <button type="button" class="btn-gold px-2 py-0.5 text-xs"
+                              :disabled="generatingScheme"
+                              @click="generateSchemeByAi">
+                        {{ generatingScheme ? t('smart.ai_generating') : t('smart.ai_generate') }}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </Transition>
+              </div>
 
               <div v-for="s in schemes" :key="s.id" class="mb-2 rounded-xl border border-line bg-surface-field/40 p-2">
                 <!-- 折叠态：标题 + 描述，点「编辑」展开 -->
@@ -2410,33 +2417,35 @@ onMounted(async () => {
                   <button type="button" class="text-ink-faint transition-colors hover:text-danger"
                           @click="removeScheme(s)">✕</button>
                 </div>
-                <Transition name="edit-panel">
-                  <div v-if="editingSchemeId === s.id" class="mt-2">
-                    <input v-model="s.title" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                           :placeholder="t('smart.scheme_title_ph')" @change="saveScheme(s)" />
-                    <input v-model="s.description" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-[10px] text-ink"
-                           :placeholder="t('smart.scheme_desc_ph')" @change="saveScheme(s)" />
+                <div class="collapse-wrap" :class="{ 'is-open': editingSchemeId === s.id }">
+                  <div>
+                    <div class="pt-2">
+                      <input v-model="s.title" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                             :placeholder="t('smart.scheme_title_ph')" @change="saveScheme(s)" />
+                      <input v-model="s.description" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-[10px] text-ink"
+                             :placeholder="t('smart.scheme_desc_ph')" @change="saveScheme(s)" />
 
-                    <!-- 成员提取器：空 = 自动接入全部；芯片可移除 -->
-                    <div class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.scheme_members_label') }}</div>
-                    <p v-if="(s.members ?? []).length === 0" class="mb-1 text-[10px] text-ink-faint">{{ t('smart.scheme_members_auto') }}</p>
-                    <div v-else class="mb-1 flex flex-wrap gap-1">
-                      <span v-for="mid in s.members" :key="mid"
-                            class="flex items-center gap-1 rounded-full border border-line bg-surface-field px-2 py-0.5 text-[10px] text-ink">
-                        {{ extractorName(mid) }}
-                        <button type="button" class="text-ink-faint transition-colors hover:text-danger"
-                                @click="removeMember(s, mid)">✕</button>
-                      </span>
-                      <button type="button" class="rounded-full border border-line px-2 py-0.5 text-[10px] text-ink-faint transition-colors hover:text-gold"
-                              @click="resetMembers(s)">{{ t('smart.scheme_reset_members') }}</button>
+                      <!-- 成员提取器：空 = 自动接入全部；芯片可移除 -->
+                      <div class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.scheme_members_label') }}</div>
+                      <p v-if="(s.members ?? []).length === 0" class="mb-1 text-[10px] text-ink-faint">{{ t('smart.scheme_members_auto') }}</p>
+                      <div v-else class="mb-1 flex flex-wrap gap-1">
+                        <span v-for="mid in s.members" :key="mid"
+                              class="flex items-center gap-1 rounded-full border border-line bg-surface-field px-2 py-0.5 text-[10px] text-ink">
+                          {{ extractorName(mid) }}
+                          <button type="button" class="text-ink-faint transition-colors hover:text-danger"
+                                  @click="removeMember(s, mid)">✕</button>
+                        </span>
+                        <button type="button" class="rounded-full border border-line px-2 py-0.5 text-[10px] text-ink-faint transition-colors hover:text-gold"
+                                @click="resetMembers(s)">{{ t('smart.scheme_reset_members') }}</button>
+                      </div>
+                      <p class="mb-1.5 text-[10px] leading-relaxed text-ink-faint">{{ t('smart.scheme_members_hint') }}</p>
+
+                      <textarea v-model="s.body" rows="5"
+                                class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
+                                :placeholder="t('smart.scheme_body_ph')" @change="saveScheme(s)"></textarea>
                     </div>
-                    <p class="mb-1.5 text-[10px] leading-relaxed text-ink-faint">{{ t('smart.scheme_members_hint') }}</p>
-
-                    <textarea v-model="s.body" rows="5"
-                              class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
-                              :placeholder="t('smart.scheme_body_ph')" @change="saveScheme(s)"></textarea>
                   </div>
-                </Transition>
+                </div>
               </div>
             </div>
 
@@ -2460,51 +2469,53 @@ onMounted(async () => {
               </div>
 
               <!-- 新增提取器：AI 快捷生成（一句话回填表单）+ 手动配置；生成后确认再添加 -->
-              <Transition name="edit-panel">
-                <div v-if="addingExtractor" class="mb-2 rounded-xl border border-gold/40 bg-surface-field/60 p-2">
-                  <div class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.add_extractor') }}</div>
-                  <!-- AI 快捷生成：单行输入，回车即生成，产出回填下方表单 -->
-                  <div class="mb-1.5 flex items-center gap-1">
-                    <input v-model="aiExtractorDesc"
-                           class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                           :placeholder="t('smart.ai_desc_ph')"
-                           @keydown.enter.prevent="generateExtractorByAi" />
-                    <button type="button" class="btn-soft shrink-0 px-2 py-0.5 text-xs"
-                            :disabled="generatingExtractor || !aiExtractorDesc.trim()"
-                            @click="generateExtractorByAi">
-                      {{ generatingExtractor ? t('smart.ai_generating') : t('smart.ai_generate') }}
-                    </button>
-                  </div>
-                  <div class="mb-1.5 grid grid-cols-2 gap-1.5">
-                    <input v-model="newExtractorName"
+              <div class="collapse-wrap" :class="{ 'is-open': addingExtractor }">
+                <div>
+                  <div class="mb-2 rounded-xl border border-gold/40 bg-surface-field/60 p-2">
+                    <div class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.add_extractor') }}</div>
+                    <!-- AI 快捷生成：单行输入，回车即生成，产出回填下方表单 -->
+                    <div class="mb-1.5 flex items-center gap-1">
+                      <input v-model="aiExtractorDesc"
+                             class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                             :placeholder="t('smart.ai_desc_ph')"
+                             @keydown.enter.prevent="generateExtractorByAi" />
+                      <button type="button" class="btn-soft shrink-0 px-2 py-0.5 text-xs"
+                              :disabled="generatingExtractor || !aiExtractorDesc.trim()"
+                              @click="generateExtractorByAi">
+                        {{ generatingExtractor ? t('smart.ai_generating') : t('smart.ai_generate') }}
+                      </button>
+                    </div>
+                    <div class="mb-1.5 grid grid-cols-2 gap-1.5">
+                      <input v-model="newExtractorName"
+                             class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                             :placeholder="t('smart.extractor_name_ph')" />
+                      <input v-model="newExtractorDesc"
+                             class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                             :placeholder="t('smart.extractor_desc_ph')" />
+                    </div>
+                    <div class="mb-1.5">
+                      <UiSegmented :model-value="newExtractorMethod" :options="EXTRACTOR_METHOD_OPTIONS"
+                                   :label="t('smart.extractor_method')"
+                                   @update:model-value="(v: string) => newExtractorMethod = v as ClipExtractor['method']" />
+                    </div>
+                    <input v-if="newExtractorMethod === 'separator'" v-model="draftSeparator"
                            class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                           :placeholder="t('smart.extractor_name_ph')" />
-                    <input v-model="newExtractorDesc"
-                           class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                           :placeholder="t('smart.extractor_desc_ph')" />
-                  </div>
-                  <div class="mb-1.5">
-                    <UiSegmented :model-value="newExtractorMethod" :options="EXTRACTOR_METHOD_OPTIONS"
-                                 :label="t('smart.extractor_method')"
-                                 @update:model-value="(v: string) => newExtractorMethod = v as ClipExtractor['method']" />
-                  </div>
-                  <input v-if="newExtractorMethod === 'separator'" v-model="draftSeparator"
-                         class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                         :placeholder="t('smart.extractor_separator_ph')" />
-                  <textarea v-else-if="newExtractorMethod === 'regex'" v-model="draftRegex" rows="3"
-                            class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
-                            :placeholder="t('smart.extractor_regex_ph')"></textarea>
-                  <textarea v-else v-model="draftAi" rows="5"
-                            class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
-                            :placeholder="t('smart.extractor_ai_ph')"></textarea>
-                  <div class="mt-1.5 flex justify-end gap-2">
-                    <button type="button" class="btn-soft px-2 py-0.5 text-xs"
-                            @click="resetExtractorDrafts(); addingExtractor = false">{{ t('common.cancel') }}</button>
-                    <button type="button" class="btn-gold px-2 py-0.5 text-xs"
-                            @click="submitNewExtractor">{{ t('smart.add_extractor_submit') }}</button>
+                           :placeholder="t('smart.extractor_separator_ph')" />
+                    <textarea v-else-if="newExtractorMethod === 'regex'" v-model="draftRegex" rows="3"
+                              class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
+                              :placeholder="t('smart.extractor_regex_ph')"></textarea>
+                    <textarea v-else v-model="draftAi" rows="5"
+                              class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
+                              :placeholder="t('smart.extractor_ai_ph')"></textarea>
+                    <div class="mt-1.5 flex justify-end gap-2">
+                      <button type="button" class="btn-soft px-2 py-0.5 text-xs"
+                              @click="resetExtractorDrafts(); addingExtractor = false">{{ t('common.cancel') }}</button>
+                      <button type="button" class="btn-gold px-2 py-0.5 text-xs"
+                              @click="submitNewExtractor">{{ t('smart.add_extractor_submit') }}</button>
+                    </div>
                   </div>
                 </div>
-              </Transition>
+              </div>
 
               <p v-if="extractors.length === 0" class="text-xs text-ink-faint">{{ t('smart.no_extractors') }}</p>
               <!-- 长按拖动排序（与导航配置同一套交互），TransitionGroup 提供平滑让位 -->
@@ -2550,26 +2561,28 @@ onMounted(async () => {
                     <button type="button" class="text-ink-faint transition-colors hover:text-danger"
                             @click="removeExtractor(x)">✕</button>
                   </div>
-                <Transition name="edit-panel">
-                  <div v-if="editingExtractorId === x.id" class="mt-2">
-                    <input v-model="x.name" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                           :placeholder="t('smart.extractor_name_ph')" @change="saveExtractor(x)" />
-                    <input v-model="x.desc" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-[10px] text-ink"
-                           :placeholder="t('smart.extractor_desc_ph')" @change="saveExtractor(x)" />
-                    <div class="mb-1.5">
-                      <UiSegmented :model-value="x.method" :options="EXTRACTOR_METHOD_OPTIONS"
-                                   :label="t('smart.extractor_method')"
-                                   @update:model-value="(v: string) => { x.method = v as ClipExtractor['method']; saveExtractor(x); }" />
+                <div class="collapse-wrap" :class="{ 'is-open': editingExtractorId === x.id }">
+                  <div>
+                    <div class="pt-2">
+                      <input v-model="x.name" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                             :placeholder="t('smart.extractor_name_ph')" @change="saveExtractor(x)" />
+                      <input v-model="x.desc" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-[10px] text-ink"
+                             :placeholder="t('smart.extractor_desc_ph')" @change="saveExtractor(x)" />
+                      <div class="mb-1.5">
+                        <UiSegmented :model-value="x.method" :options="EXTRACTOR_METHOD_OPTIONS"
+                                     :label="t('smart.extractor_method')"
+                                     @update:model-value="(v: string) => { x.method = v as ClipExtractor['method']; saveExtractor(x); }" />
+                      </div>
+                      <textarea v-model="x.expression" rows="6"
+                                class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
+                                :placeholder="x.method === 'ai' ? t('smart.extractor_ai_ph') : (x.method === 'separator' ? t('smart.extractor_separator_ph') : t('smart.extractor_regex_ph'))"
+                                @change="saveExtractor(x)"></textarea>
+                      <textarea v-model="x.sample" rows="3"
+                                class="mt-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-[10px] text-ink"
+                                :placeholder="t('smart.extractor_sample_ph')" @change="saveExtractor(x)"></textarea>
                     </div>
-                    <textarea v-model="x.expression" rows="6"
-                              class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
-                              :placeholder="x.method === 'ai' ? t('smart.extractor_ai_ph') : (x.method === 'separator' ? t('smart.extractor_separator_ph') : t('smart.extractor_regex_ph'))"
-                              @change="saveExtractor(x)"></textarea>
-                    <textarea v-model="x.sample" rows="3"
-                              class="mt-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-[10px] text-ink"
-                              :placeholder="t('smart.extractor_sample_ph')" @change="saveExtractor(x)"></textarea>
                   </div>
-                </Transition>
+                </div>
               </div>
               </TransitionGroup>
               <div class="mt-2 flex items-center justify-between gap-2 border-t border-line pt-2">
@@ -2712,7 +2725,10 @@ onMounted(async () => {
                         {{ t('setting.general.auto_backup_hint') }}
                       </div>
                     </div>
-                    <div v-if="autoBackupOpen" class="mt-1 space-y-1">
+                    <!-- 展开列表与待办「新增任务」同款折叠动画：collapse-wrap -->
+                    <div class="collapse-wrap" :class="{ 'is-open': autoBackupOpen }">
+                      <div>
+                        <div class="mt-1 space-y-1">
                       <p v-if="autoBackupLoadingList" class="text-xs text-ink-faint">
                         {{ t('setting.general.auto_backup_loading') }}
                       </p>
@@ -2731,6 +2747,8 @@ onMounted(async () => {
                           </button>
                         </div>
                       </template>
+                        </div>
+                      </div>
                     </div>
                   </template>
                   <!-- AI 连接测试：invoke Rust ai_test_connection（设计文档 §4.2） -->
@@ -2889,9 +2907,10 @@ onMounted(async () => {
                         {{ ignoredAppsPanelOpen ? t('common.cancel') : t('setting.general.ignored_apps_manage') }}
                       </button>
                     </div>
-                    <!-- 展开/收起渐变动画：与待办卡片 edit-panel 同一套观感（淡入 + 轻微下移） -->
-                    <Transition name="edit-panel">
-                      <div v-if="ignoredAppsPanelOpen" class="mt-2 space-y-2">
+                    <!-- 展开/收起动画与待办「新增任务」同款：collapse-wrap grid-rows 高度过渡 -->
+                    <div class="collapse-wrap" :class="{ 'is-open': ignoredAppsPanelOpen }">
+                      <div>
+                        <div class="mt-2 space-y-2">
                       <!-- 手动添加：进程名（与列表展示一致，小写）；输入时按已知应用给匹配建议 -->
                       <div class="flex gap-2">
                         <input
@@ -2982,8 +3001,9 @@ onMounted(async () => {
                           </button>
                         </li>
                       </ul>
+                        </div>
                       </div>
-                    </Transition>
+                    </div>
                   </template>
                   <!-- 粘贴后恢复原剪贴板：粘贴完成约 1 秒后写回粘贴前内容（默认关闭） -->
                   <UiToggleSwitch
@@ -3133,9 +3153,12 @@ onMounted(async () => {
                 </div>
                 <!-- 图片缓存展开区：名称前箭头切换（默认折叠）；跨全行布局，进度条不再被右列宽度挤压 -->
                 <div
-                    v-if="item.type === 'input' && item.label === 'setting.general.image_limit' && imageCacheOpsOpen"
-                    class="flex w-full min-w-0 basis-full flex-wrap items-center gap-x-3 gap-y-2"
+                    v-if="item.type === 'input' && item.label === 'setting.general.image_limit'"
+                    class="collapse-wrap w-full min-w-0 basis-full"
+                    :class="{ 'is-open': imageCacheOpsOpen }"
                 >
+                  <div>
+                    <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
                   <div class="h-1.5 min-w-40 flex-1 overflow-hidden rounded-full bg-secondary">
                     <div
                         class="h-full rounded-full bg-gold transition-[width] duration-500"
@@ -3195,6 +3218,8 @@ onMounted(async () => {
                       {{ t('setting.general.clear_undo_btn') }}
                     </button>
                   </div>
+                    </div>
+                  </div>
                 </div>
                 <!-- AI 连接测试结果：显示在测试按钮下方（跨全行），错误格式化为状态行 + 可读原因 -->
                 <div v-if="item.type === 'action' && item.label === 'setting.general.ai_test' && aiTestState !== 'idle'"
@@ -3247,7 +3272,7 @@ onMounted(async () => {
               <div class="flex items-center justify-between">
                 <button type="button" class="flex select-none items-center gap-1.5 text-ink-faint transition-colors hover:text-ink"
                         :aria-expanded="islandApiOpen" @click="islandApiOpen = !islandApiOpen">
-                  <svg class="h-3 w-3 transition-transform duration-200" :class="islandApiOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <svg class="h-3 w-3 transition-transform duration-300 ease-soft" :class="islandApiOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="m9 6 6 6-6 6" />
                   </svg>
                   <span class="text-xs uppercase tracking-wide">
@@ -3259,28 +3284,32 @@ onMounted(async () => {
                 <UiToggleSwitch v-model="islandApiEnabled" :label="''" />
               </div>
               <!-- 间距放内容区而非标题行：折叠时标题行零余量，与 Webhook 卡片同高同居中 -->
-              <div v-show="islandApiOpen" class="mt-3">
-                <div class="flex items-center gap-2">
-                  <input v-model="islandApiPort" class="w-28 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                         :placeholder="t('island_api.port')" @change="islandApiPort = String(Number(islandApiPort) || ISLAND_API_DEFAULT_PORT)" />
-                  <input v-model="islandApiToken" type="password" autocomplete="off" spellcheck="false"
-                         class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs text-ink"
-                         :placeholder="t('island_api.token')" />
-                  <button class="shrink-0 rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field"
-                          @click="copyIslandApiToken">
-                    {{ t('island_api.copy') }}
-                  </button>
-                  <button class="shrink-0 rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field"
-                          @click="regenerateIslandApiToken">
-                    {{ t('island_api.regenerate') }}
-                  </button>
+              <div class="collapse-wrap" :class="{ 'is-open': islandApiOpen }">
+                <div>
+                  <div class="mt-3">
+                    <div class="flex items-center gap-2">
+                      <input v-model="islandApiPort" class="w-28 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                             :placeholder="t('island_api.port')" @change="islandApiPort = String(Number(islandApiPort) || ISLAND_API_DEFAULT_PORT)" />
+                      <input v-model="islandApiToken" type="password" autocomplete="off" spellcheck="false"
+                             class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs text-ink"
+                             :placeholder="t('island_api.token')" />
+                      <button class="shrink-0 rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field"
+                              @click="copyIslandApiToken">
+                        {{ t('island_api.copy') }}
+                      </button>
+                      <button class="shrink-0 rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field"
+                              @click="regenerateIslandApiToken">
+                        {{ t('island_api.regenerate') }}
+                      </button>
+                    </div>
+                    <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
+                      {{ t('island_api.hint', { port: islandApiPort }) }}
+                    </p>
+                    <p v-if="islandApiError" class="mt-1 text-[10px] leading-relaxed text-red-600 dark:text-red-400">
+                      {{ t('island_api.failed', { reason: islandApiError }) }}
+                    </p>
+                  </div>
                 </div>
-                <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
-                  {{ t('island_api.hint', { port: islandApiPort }) }}
-                </p>
-                <p v-if="islandApiError" class="mt-1 text-[10px] leading-relaxed text-red-600 dark:text-red-400">
-                  {{ t('island_api.failed', { reason: islandApiError }) }}
-                </p>
               </div>
             </div>
 
@@ -3290,7 +3319,7 @@ onMounted(async () => {
               <div class="flex items-center justify-between">
                 <button type="button" class="flex select-none items-center gap-1.5 text-ink-faint transition-colors hover:text-ink"
                         :aria-expanded="webhookOpen" @click="webhookOpen = !webhookOpen">
-                  <svg class="h-3 w-3 transition-transform duration-200" :class="webhookOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <svg class="h-3 w-3 transition-transform duration-300 ease-soft" :class="webhookOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="m9 6 6 6-6 6" />
                   </svg>
                   <span class="text-xs uppercase tracking-wide">
@@ -3301,36 +3330,40 @@ onMounted(async () => {
                 <UiToggleSwitch v-model="webhookEnabled" :label="''" />
               </div>
               <!-- 间距放内容区（与灵动岛 API 卡片同款）：折叠时标题行零余量 -->
-              <div v-show="webhookOpen" class="mt-3">
-                <ul v-if="webhookTargets.length" class="flex flex-col gap-2">
-                  <li v-for="tg in webhookTargets" :key="tg.id" class="flex items-center gap-2">
-                    <input v-model="tg.url" :placeholder="t('island_webhook.url')"
-                           class="min-w-0 flex-1 rounded-lg border bg-surface-field px-2 py-1 text-xs text-ink"
-                           :class="tg.url.trim() && !validateWebhookUrl(tg.url.trim()) ? 'border-danger' : 'border-line'" />
-                    <input v-model="tg.secret" :placeholder="t('island_webhook.secret')"
-                           class="w-24 shrink-0 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink" />
-                    <button class="shrink-0 rounded-lg p-1 text-ink-faint transition-colors hover:bg-danger/10 hover:text-danger"
-                            :title="t('island_webhook.remove')" @click="removeWebhookTarget(tg.id)">
-                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                        <path d="M18 6L6 18M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </li>
-                </ul>
-                <div class="mt-2 flex items-center gap-2">
-                  <button class="rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field"
-                          @click="addWebhookTarget">
-                    {{ t('island_webhook.add') }}
-                  </button>
-                  <button :disabled="webhookTesting || !editingWebhookTargets.length"
-                          class="rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field disabled:cursor-not-allowed disabled:opacity-50"
-                          @click="testWebhook">
-                    {{ t('island_webhook.test') }}
-                  </button>
+              <div class="collapse-wrap" :class="{ 'is-open': webhookOpen }">
+                <div>
+                  <div class="mt-3">
+                    <ul v-if="webhookTargets.length" class="flex flex-col gap-2">
+                      <li v-for="tg in webhookTargets" :key="tg.id" class="flex items-center gap-2">
+                        <input v-model="tg.url" :placeholder="t('island_webhook.url')"
+                               class="min-w-0 flex-1 rounded-lg border bg-surface-field px-2 py-1 text-xs text-ink"
+                               :class="tg.url.trim() && !validateWebhookUrl(tg.url.trim()) ? 'border-danger' : 'border-line'" />
+                        <input v-model="tg.secret" :placeholder="t('island_webhook.secret')"
+                               class="w-24 shrink-0 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink" />
+                        <button class="shrink-0 rounded-lg p-1 text-ink-faint transition-colors hover:bg-danger/10 hover:text-danger"
+                                :title="t('island_webhook.remove')" @click="removeWebhookTarget(tg.id)">
+                          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                            <path d="M18 6L6 18M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </li>
+                    </ul>
+                    <div class="mt-2 flex items-center gap-2">
+                      <button class="rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field"
+                              @click="addWebhookTarget">
+                        {{ t('island_webhook.add') }}
+                      </button>
+                      <button :disabled="webhookTesting || !editingWebhookTargets.length"
+                              class="rounded-lg border border-line px-2.5 py-1 text-[11px] text-ink transition-colors hover:bg-surface-field disabled:cursor-not-allowed disabled:opacity-50"
+                              @click="testWebhook">
+                        {{ t('island_webhook.test') }}
+                      </button>
+                    </div>
+                    <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
+                      {{ t('island_webhook.hint') }}
+                    </p>
+                  </div>
                 </div>
-                <p class="mt-2 text-[10px] leading-relaxed text-ink-faint">
-                  {{ t('island_webhook.hint') }}
-                </p>
               </div>
             </div>
           </div>
@@ -3400,23 +3433,3 @@ onMounted(async () => {
   </div>
 </template>
 
-<style scoped>
-/* 折叠编辑区展开/收起动画：与待办卡片（Todoitem）的 edit-panel 同一套观感
-   （淡入 + 轻微下移 + 缩放），保证设置页与待办页的展开反馈一致 */
-.edit-panel-enter-active {
-  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.edit-panel-enter-from {
-  opacity: 0;
-  transform: translateY(-6px) scale(0.98);
-}
-.edit-panel-leave-active {
-  transition: opacity 0.16s ease-in,
-    transform 0.16s cubic-bezier(0.4, 0, 1, 1);
-}
-.edit-panel-leave-to {
-  opacity: 0;
-  transform: translateY(-4px) scale(0.99);
-}
-</style>

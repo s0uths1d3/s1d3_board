@@ -30,11 +30,20 @@ export function createBooleanSetting(key: string, defaultOn: boolean) {
     return loadPromise ?? Promise.resolve();
   }
 
+  /** 强制重读持久化值（绕过 once 守卫）：常驻隐藏子窗口（托盘菜单等）每次展示前
+   *  刷新缓存——设置页在另一窗口改值后，子窗口模块级 ref 不会自行更新 */
+  async function reload(): Promise<void> {
+    try {
+      const v = await dbService.getKeyValue(key);
+      if (v !== '') enabled.value = v === '1';
+    } catch { /* 读取失败保持当前值 */ }
+  }
+
   /** 持久化当前状态（设置页 watch/@change 调用） */
   async function persist(value: boolean): Promise<void> {
     enabled.value = value;
     await dbService.setKeyValue(key, value ? '1' : '0');
   }
 
-  return { useSetting, enabled, persist, ensureLoaded };
+  return { useSetting, enabled, persist, ensureLoaded, reload };
 }

@@ -67,6 +67,17 @@ const registry = createAppRegistry();
 onMounted(async () => {
   if (!isMainWindow()) return;
 
+  // 首帧就绪后再显示主窗口：打包环境下 WebView 加载 SPA + 模块引导需要一段时间，
+  // 窗口若创建即显示，透明窗口（transparent: true）会裸露桌面内容。窗口配置改为
+  // visible: false（tauri.conf.json），这里挂载 + 双 rAF（首帧真实绘制）后 show——
+  // 与下方模块引导解耦：先见壳，数据异步续载，不做黑等
+  if (isTauri()) {
+    await nextTick();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      getCurrentWindow().show();
+    }));
+  }
+
   // 模块引导（依赖声明固化原启动顺序硬约束）：
   // smart-clip 挂处理层监听 → clipboard 启动剪贴板监听器（不遗漏最早复制事件）→
   // island（消费 island:copy）→ statistics → todo-reminder → shortcuts。
@@ -100,6 +111,8 @@ onMounted(async () => {
               if (w.label === 'main') continue;
               // 灵动岛独立运行：主窗口隐藏到托盘后岛仍正常提供复制/粘贴反馈
               if (w.label === 'clipboard-bubble-island' || w.label === 'island-history') continue;
+              // 托盘菜单常驻热窗口：保持存活（右键秒开），且其失焦自收起不受影响
+              if (w.label === 'tray-menu') continue;
               if (await w.isVisible()) await w.close();
             } catch { /* 忽略单窗关闭失败 */ }
           }

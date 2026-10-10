@@ -4,7 +4,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {resolveResource} from '@tauri-apps/api/path';
 import {WebviewWindow} from '@tauri-apps/api/webviewWindow';
 import {getCurrentWindow} from "@tauri-apps/api/window";
-import {listen} from '@tauri-apps/api/event';
+import {listen, emit} from '@tauri-apps/api/event';
 import {isTauri} from "~/utils/env";
 import statsService from "~/src/statistics/statsService";
 import { ensurePrivacyLoaded, isPrivacyPaused, setPrivacyPaused } from "~/composables/usePrivacySettings";
@@ -19,7 +19,8 @@ const i18nReady = initI18n().catch(() => {});
 // ===== 自绘托盘菜单：原生菜单（Menu.new）由系统渲染，无法自定义配色/圆角/字体，
 // 且 Windows SetPreferredAppMode 在 Win11 上经常不生效（菜单永远跟随系统深浅色）——
 // 改为 tray-menu 无边框透明小窗口自绘（与主窗口同 token 样式，页面内 useColorScheme
-// 主题实时跟随）。托盘 click → 显示窗口；点击菜单项 emit('tray-menu:action') →
+// 主题实时跟随）。窗口常驻隐藏（启动预热），收起 = hide 不销毁，保证右键秒开。
+// 托盘 click → 定位并显示；点击菜单项 emit('tray-menu:action') →
 // 主窗口执行动作（toggle/privacy/quit 的状态逻辑集中在主窗口，子窗口纯展示）。
 
 /** 托盘菜单动作执行（主窗口侧） */
@@ -62,40 +63,50 @@ interface TrayRectPayload {
     position: { x: number; y: number };
 }
 
+/** 获取或创建托盘菜单窗口。窗口**常驻隐藏**（启动即预热建窗并加载页面），
+ *  右键只做定位+显示——此前每次弹出都重建 WebView（窗口创建 + 页面加载，
+ *  随机数百 ms）且关闭即销毁，是菜单打开忽快忽慢的根源 */
+async function ensureTrayMenuWindow(): Promise<WebviewWindow | null> {
+    const existing = await WebviewWindow.getByLabel(TRAY_MENU_LABEL).catch(() => null);
+    if (existing) return existing;
+    const win = new WebviewWindow(TRAY_MENU_LABEL, {
+        url: '/tray-menu',
+        width: TRAY_MENU_W,
+        height: TRAY_MENU_H,
+        visible: false,      // 先隐藏创建：PhysicalPosition 定位完成后再显示
+        resizable: false,
+        decorations: false,  // 无原生窗口栏：页面自绘圆角卡片（同 note-colors 模式）
+        transparent: true,   // 透明窗口：卡片自绘圆角，规避 Win11 系统圆角残角
+        shadow: false,       // 关 DWM 阴影：无边框窗口阴影黑线难看，层次由卡片阴影承载
+        skipTaskbar: true,
+        alwaysOnTop: true,
+        focus: true,         // 失焦自收起依赖焦点
+        maximizable: false,
+        minimizable: false,
+    });
+    const created = await new Promise<boolean>((resolve) => {
+        win.once('tauri://created', () => resolve(true));
+        win.once('tauri://error', () => resolve(false));
+    });
+    return created ? win : null;
+}
+
+/** 收起菜单窗口：隐藏而非销毁——常驻热窗口下次右键免重建直接显示 */
+function hideTrayMenuWindow(win: WebviewWindow) {
+    void win.hide().catch(() => { /* 隐藏失败由下次 show 兜底 */ });
+}
+
 /** 显示自绘托盘菜单窗口（先定位后显示，避免闪现在默认位置）。
  *  toggle 语义与系统菜单一致：菜单已显示时再次点击托盘 = 收起 */
 async function showTrayMenuWindow(event: TrayRectPayload) {
-    const existing = await WebviewWindow.getByLabel(TRAY_MENU_LABEL).catch(() => null);
-    if (existing && await existing.isVisible().catch(() => false)) {
-        await existing.close().catch(() => { /* 关闭失败下次点击重建兜底 */ });
+    const win = await ensureTrayMenuWindow();
+    if (!win) return;
+    if (await win.isVisible().catch(() => false)) {
+        hideTrayMenuWindow(win);
         return;
     }
-    // close 后立即重建可能撞上销毁进行中：销毁是异步的，getByLabel 仍返回旧实例时
-    // new 会报 label 冲突——稍等一拍让销毁落定
-    if (existing) await new Promise(r => setTimeout(r, 120));
-    let win = await WebviewWindow.getByLabel(TRAY_MENU_LABEL).catch(() => null);
-    if (!win) {
-        win = new WebviewWindow(TRAY_MENU_LABEL, {
-            url: '/tray-menu',
-            width: TRAY_MENU_W,
-            height: TRAY_MENU_H,
-            visible: false,      // 先隐藏创建：PhysicalPosition 定位完成后再显示
-            resizable: false,
-            decorations: false,  // 无原生窗口栏：页面自绘圆角卡片（同 note-colors 模式）
-            transparent: true,   // 透明窗口：卡片自绘圆角，规避 Win11 系统圆角残角
-            shadow: false,       // 关 DWM 阴影：无边框窗口阴影黑线难看，层次由卡片阴影承载
-            skipTaskbar: true,
-            alwaysOnTop: true,
-            focus: true,         // 失焦自关依赖焦点
-            maximizable: false,
-            minimizable: false,
-        });
-        const created = await new Promise<boolean>((resolve) => {
-            win!.once('tauri://created', () => resolve(true));
-            win!.once('tauri://error', () => resolve(false));
-        });
-        if (!created) return;
-    }
+    // 常驻窗口页面只挂载一次：每次展示前通知页面重置弹出守卫、现读勾选态与文案
+    await emit('tray-menu:show').catch(() => {});
     try {
         // 定位：以点击光标为锚（托盘图标位置）——菜单弹在光标上方水平居中，
         // 上方放不下（顶部任务栏）→ 翻到光标下方；clamp 进显示器**工作区**
@@ -150,6 +161,10 @@ export default defineNuxtPlugin(async (nuxtApp) => {
 
     // 隐私开关状态落定后再创建托盘（悬浮提示后缀读取该状态；失败按默认关闭处理）
     await ensurePrivacyLoaded().catch(() => {});
+
+    // 预热托盘菜单窗口：启动即隐藏建窗并加载 /tray-menu 页面，首次右键也免 WebView
+    // 创建等待（置于托盘复用分支之前——两条路径都需要热窗口）
+    void ensureTrayMenuWindow().catch(() => { /* 预热失败由右键时重建兜底 */ });
 
     // 隐私模式开关变化（设置页/托盘菜单任一入口）→ 刷新悬浮提示状态后缀
     // （自绘菜单的勾选态由菜单窗口每次打开时现读，无需事件联动）

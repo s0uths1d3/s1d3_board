@@ -16,7 +16,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
 
 ![License](https://img.shields.io/badge/License-Apache_2.0-D22128?style=flat-square)
-![Version](https://img.shields.io/badge/Version-0.5.0-2ea44f?style=flat-square)
+![Version](https://img.shields.io/badge/Version-0.5.1-2ea44f?style=flat-square)
 ![Status](https://img.shields.io/badge/Status-active_development-2ea043?style=flat-square)
 
 </div>

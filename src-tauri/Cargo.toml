@@ -1,6 +1,6 @@
 [package]
 name = "s1d3_board"
-version = "0.5.0"
+version = "0.5.1"
 description = "Lightweight tray-resident productivity panel: clipboard, todos, notes & app stats. Local-first, Rust-powered, one shortcut away."
 authors = ["s1d3"]
 license = "Apache-2.0 license"

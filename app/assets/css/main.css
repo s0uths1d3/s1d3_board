@@ -453,24 +453,26 @@ body::after {
   transform: translateY(var(--pop-shift, 6px)) scale(0.98);
 }
 
-/* ===== 待办「添加新任务」收起/展开：grid-rows 平滑高度 + 透明度渐变 =====
+/* ===== 折叠/展开通用动画：grid-rows 平滑高度 + 透明度渐变 =====
+   待办「新增任务」与设置页各折叠区共用同一套观感。
    使用 grid-template-rows 0fr→1fr 实现不依赖 JS 测高的高度过渡，
-   内层需 min-h-0 防止内容溢出撑断动画 */
-.add-form-wrap {
+   内层需 min-h-0 防止内容溢出撑断动画；visibility 随折叠过渡
+   （展开瞬间可见、收起全程可见至结束），保证折叠态内容不可聚焦/点击 */
+.collapse-wrap {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  margin-top: 0;
+  visibility: hidden;
   transition: grid-template-rows 0.32s cubic-bezier(0.22, 1, 0.36, 1),
     opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    margin-top 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+    visibility 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.add-form-wrap.is-open {
+.collapse-wrap.is-open {
   grid-template-rows: 1fr;
   opacity: 1;
-  margin-top: 0;
+  visibility: visible;
 }
-.add-form-wrap > div {
+.collapse-wrap > div {
   min-height: 0;
   overflow: hidden;
 }
