@@ -26,6 +26,9 @@ const props = withDefaults(defineProps<{
   disabled?: boolean;
   /** 无障碍标签 */
   ariaLabel?: string;
+  /** 面板定位锚点覆盖：默认锚定触发器自身；外部有多个入口（如卡片徽章 + 图标按钮）
+   *  共用本下拉时，由调用方在打开前把实际点击元素传入，面板跟随出现点击处附近 */
+  anchorEl?: HTMLElement | null;
 }>(), {
   align: 'start',
   direction: 'down',
@@ -34,6 +37,7 @@ const props = withDefaults(defineProps<{
   closeOnSelect: true,
   disabled: false,
   ariaLabel: '',
+  anchorEl: null,
 });
 
 const emit = defineEmits<{
@@ -74,7 +78,8 @@ function close() {
  * 并内部滚动（内容永不超出窗口边缘被裁切）。失败时静默保持原位置，不阻塞面板显示。
  */
 function positionPanel() {
-  const trigger = triggerEl.value;
+  // 锚点覆盖优先：多入口共用下拉时跟随实际点击元素（无效引用回退触发器自身）
+  const trigger = props.anchorEl?.isConnected ? props.anchorEl : triggerEl.value;
   const panel = panelEl.value;
   if (!trigger || !panel) return;
   try {

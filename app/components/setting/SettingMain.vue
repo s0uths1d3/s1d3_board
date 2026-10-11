@@ -72,6 +72,7 @@ import { clampAnalysisMaxChars } from '~/src/smart-clip/analyzer';
 import { AI_CUSTOM_TEMPLATE, loadAiApiKey, migrateAiApiKey, storeAiApiKey } from '~/src/smart-clip/aiClient';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/utils/env';
+import { configureVTip } from '~/utils/vTip';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
 import { useIslandEnabled, setIslandEnabled, useIslandTiming, ensureIslandTimingLoaded, setIslandDelayMs, setIslandDurationMs, notifyIsland, type IslandKind, ISLAND_DELAY_DEFAULT, ISLAND_DURATION_DEFAULT } from '~/composables/useCopyIsland';
 import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
@@ -90,7 +91,6 @@ import {
     addIgnoredApp, removeIgnoredApp,
 } from '~/composables/useIgnoredApps';
 import { useAutoHide, setAutoHideEnabled } from '~/composables/useAutoHide';
-import { useSearchHighlight } from '~/composables/useSearchHighlight';
 import { appUsageEnabled, setAppUsageEnabled } from '~/composables/useAppUsage';
 import { navRows, reorderTab, persistNavConfig, setTabEnabled } from '~/composables/useTabs';
 import { useLongPressReorder } from '~/composables/useLongPressReorder';
@@ -145,6 +145,12 @@ async function selectColorScheme(value: ColorSchemeMode) {
 }
 // ===== 语言：跟随系统 / 中文 / English（useI18n 统一管理，含首次系统探测与跨窗口同步）=====
 const { localeMode, t } = useI18n();
+
+/** 设置项悬停说明：按 "<label>_tip" 约定取文案；未配置说明的项 t() 原样返回 key，据此回退为空串（不弹气泡） */
+function settingTip(label: string): string {
+  const key = `${label}_tip`;
+  return t(key) === key ? '' : t(key);
+}
 const localeOptions = computed(() => [
   { value: 'system' as const, label: t('locale.system') },
   ...LOCALES.map((l) => ({ value: l.value, label: l.label })),
@@ -223,8 +229,6 @@ function selectPopupPosition(v: string) {
   void setPopupPositionMode(mode);
   showHint(t('setting.general.popup_position_saved'));
 }
-/** 是否开启搜索高亮，与所有搜索框共享同一状态 */
-const { searchHighlightEnabled } = useSearchHighlight();
 /** 待办智能提醒（提前 30/10/5 分钟 + 自定义提醒）；关闭后仅保留到期时刻通知。
  *  必须走 setTodoSmartRemindEnabled 持久化：直接改共享 ref 不会写库，重启后设置回滚。 */
 const { smartRemindEnabled } = useTodoSmartRemind();
@@ -422,9 +426,6 @@ async function onTooltipWrapToggle(val: boolean) {
   await setTooltipWrapEnabled(val);
   showHint(val ? t('setting.general.tooltip_wrap_on') : t('setting.general.tooltip_wrap_off'));
 }
-watch(searchHighlightEnabled, async (val) => {
-  await dbService.setKeyValue('search_highlight_enabled', val ? '1' : '0');
-});
 // 实时保存：文本输入加 400ms 防抖——API key / 最大数量是逐字符输入，
 // 每键一次 INSERT...ON CONFLICT 写库纯属浪费；停止输入后统一落库一次。
 // Map 存 { timer, write }：卸载/切语言时能取出 write 闭包立即执行（flush），
@@ -1117,6 +1118,9 @@ onMounted(() => {
   unsubIslandApiFailure = bus.on('island-api:failed', (reason) => { islandApiError.value = reason; });
 });
 onBeforeUnmount(() => { unsubIslandApiFailure?.(); });
+// 设置页信息密度高、提示多为控件口径说明：注入更短的弹出延时；卸载时还原 v-tip 默认值
+onMounted(() => configureVTip({ showDelay: 300 }));
+onBeforeUnmount(() => configureVTip({ showDelay: 1000 }));
 watch([islandApiEnabled, islandApiPort, islandApiToken], async ([en, p, tk]) => {
   if (islandApiLoading.value) return;
   const portNum = Number(p);
@@ -1211,7 +1215,7 @@ watch(defaultSchemeId, (val) => {
   refreshSmartClipConfig();
 });
 
-// 提示窗口 / 搜索高亮的切换提示已在模板 @change 中内联处理
+// 提示窗口的切换提示已在模板 @change 中内联处理
 
 // 开机自启：切换时调用系统 autostart 插件（enable/disable）
 watch(autoStartEnabled, async (val) => {
@@ -1510,7 +1514,6 @@ const settings: SettingGroup[] = [
           { label: 'setting.general.image_limit', value: '', type: 'input' },
           { label: 'setting.general.clip_retention', value: '', type: 'select' },
           { label: 'setting.general.popup_position', value: '', type: 'select' },
-          { label: 'setting.general.search_highlight', value: '', type: 'checkbox' },
         ],
       },
       {
@@ -2658,7 +2661,9 @@ onMounted(async () => {
                     {{ t('setting.general.import_confirm_text') }}
                   </div>
                 </div>
-                <div class="shrink-0" :class="isWideSettingItem(item) ? 'w-full' : 'w-56'">
+                <!-- 控件侧容器挂悬停说明（<label>_tip，未配置不弹）：气泡贴着胶囊按钮/输入框出现，
+                     与标题栏切换配色等 v-tip 行为一致；控件自带的更具体 tip 在其上优先生效 -->
+                <div class="shrink-0" :class="isWideSettingItem(item) ? 'w-full' : 'w-56'" v-tip="settingTip(item.label)">
                   <!-- 操作型设置项（如清空数据库）：二次确认 -->
                   <template v-if="item.type === 'action' && item.label === 'setting.general.clear_database'">
                     <button v-if="!showClearConfirm" type="button"
@@ -2677,18 +2682,14 @@ onMounted(async () => {
                       </button>
                     </div>
                   </template>
-                  <!-- 数据备份：导出 JSON（图片以 dataUrl 自包含），一键换机迁移 -->
+                  <!-- 数据备份：导出 JSON（图片以 dataUrl 自包含），一键换机迁移；
+                       范围说明（备份不含设置与快捷键）走 v-tip：贴按钮弹出、自动避让，不再压住下方行 -->
                   <template v-else-if="item.type === 'action' && item.label === 'setting.general.export_data'">
-                    <div class="group relative">
-                      <button type="button" class="btn-soft w-full"
-                              :disabled="exportingData" @click="exportData">
-                        {{ exportingData ? t('setting.general.export_data_doing') : t('setting.general.export_data') }}
-                      </button>
-                      <!-- 范围说明（备份不含设置与快捷键）：hover 按钮时浮出，不常驻挤占版面 -->
-                      <div class="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-72 rounded-lg bg-black/85 px-3 py-2 text-xs leading-relaxed text-white group-hover:block">
-                        {{ t('setting.general.export_scope_note') }}
-                      </div>
-                    </div>
+                    <button type="button" class="btn-soft w-full"
+                            v-tip="t('setting.general.export_scope_note')"
+                            :disabled="exportingData" @click="exportData">
+                      {{ exportingData ? t('setting.general.export_data_doing') : t('setting.general.export_data') }}
+                    </button>
                   </template>
                   <!-- 导入备份：二次确认（替换式恢复）→ 系统文件对话框 -->
                   <template v-else-if="item.type === 'action' && item.label === 'setting.general.import_data'">
@@ -2715,16 +2716,12 @@ onMounted(async () => {
                   </template>
                   <!-- 自动备份恢复：展开每日快照列表（保留 7 份），同条目两步确认后替换式恢复 -->
                   <template v-else-if="item.type === 'action' && item.label === 'setting.general.auto_backup_restore'">
-                    <div class="group relative">
-                      <button type="button" class="btn-soft w-full"
-                              :disabled="restoringBackup !== ''" @click="toggleAutoBackupList">
-                        {{ autoBackupOpen ? t('common.cancel') : t('setting.general.auto_backup_restore_btn') }}
-                      </button>
-                      <!-- 范围与覆盖警告说明：hover 按钮时浮出，不常驻挤占版面 -->
-                      <div class="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-72 rounded-lg bg-black/85 px-3 py-2 text-xs leading-relaxed text-white group-hover:block">
-                        {{ t('setting.general.auto_backup_hint') }}
-                      </div>
-                    </div>
+                    <!-- 范围与覆盖警告说明走 v-tip：贴按钮弹出、自动避让，不再压住下方内容 -->
+                    <button type="button" class="btn-soft w-full"
+                            v-tip="t('setting.general.auto_backup_hint')"
+                            :disabled="restoringBackup !== ''" @click="toggleAutoBackupList">
+                      {{ autoBackupOpen ? t('common.cancel') : t('setting.general.auto_backup_restore_btn') }}
+                    </button>
                     <!-- 展开列表与待办「新增任务」同款折叠动画：collapse-wrap -->
                     <div class="collapse-wrap" :class="{ 'is-open': autoBackupOpen }">
                       <div>
@@ -2858,13 +2855,6 @@ onMounted(async () => {
                       :tip-on="t('setting.general.island_tip_on')" :tip-off="t('setting.general.island_tip_off')"
                       :label="t('setting.general.island_hint')"
                       @change="onIslandToggle"
-                  />
-                  <UiToggleSwitch
-                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.search_highlight'"
-                      v-model="searchHighlightEnabled"
-                      :tip-on="t('setting.shortcuts.click_disable')" :tip-off="t('setting.shortcuts.click_enable')"
-                      :label="t('setting.general.search_highlight')"
-                      @change="showHint(searchHighlightEnabled ? t('setting.general.highlight_on') : t('setting.general.highlight_off'))"
                   />
                   <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === 'setting.general.smart_reminder'"

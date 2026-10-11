@@ -33,7 +33,6 @@ import { bus } from "~/src/core/events";
 import { SwitchTabCommand } from "~/src/commands/local/SwitchTabCommand";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
 import { isTooltipWrapEnabled } from "~/composables/useTooltipWrap";
-import { useSearchHighlight } from "~/composables/useSearchHighlight";
 import { useI18n } from "~/composables/useI18n";
 import { notifyIsland, type IslandKind } from "~/composables/useCopyIsland";
 import { decryptClipText, isEncryptedContent } from "~/src/clipboard/encryption";
@@ -92,7 +91,6 @@ function onClipboardChanged() {
   }, 150);
 }
 
-const { searchHighlightEnabled } = useSearchHighlight();
 const highlightContent = ref('')
 
 watch(highlightContent, (newValue, oldValue) => {
@@ -504,6 +502,26 @@ function handleAdvancedSearch() {
   void setAdvancedSearch(!filter.value.advanced);
 }
 
+/** 高级搜索语法说明面板：搜索框右侧 ? 按钮切换，点击面板/按钮以外区域自动收起 */
+const showSearchHelp = ref(false);
+const searchHelpPanelRef = ref<HTMLElement | null>(null);
+const searchHelpBtnRef = ref<HTMLElement | null>(null);
+const searchHelpRows = computed(() => [
+  { sym: t('clip.search_help_sym_space'), desc: t('clip.search_help_space') },
+  { sym: t('clip.search_help_sym_quote'), desc: t('clip.search_help_quote') },
+  { sym: '*', desc: t('clip.search_help_star') },
+  { sym: '?', desc: t('clip.search_help_question') },
+  { sym: '|', desc: t('clip.search_help_pipe') },
+]);
+function onSearchHelpOutside(e: PointerEvent) {
+  const target = e.target as Node;
+  if (searchHelpPanelRef.value?.contains(target)) return;
+  if (searchHelpBtnRef.value?.contains(target)) return; // 点在 ? 按钮上交给其自身 toggle
+  showSearchHelp.value = false;
+}
+onMounted(() => document.addEventListener('pointerdown', onSearchHelpOutside, true));
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onSearchHelpOutside, true));
+
 /** 鼠标侧键导航：后退键(XButton1, button=3)=上一个标签，前进键(XButton2, button=4)=下一个标签。
  *  复用 SwitchTabCommand 的循环切换（与 Ctrl+←/→ 一致，统计页未解锁自动跳过）。
  *  mousedown 阶段即响应（跟手）并 preventDefault，阻止 WebView2 把侧键当浏览器历史导航；
@@ -811,8 +829,6 @@ function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
     }] : []),
     // 普通删除：弹内联确认框（与列表行删除按钮一致；anchor 为空走居中兜底）
     { label: t('clip.delete'), danger: true, action: () => handleDelete(item) },
-    // 永久抹除：条目 + 统计字符计数一起清（敏感内容防护闭环，danger 红字警示）
-    { label: t('clip.purge'), danger: true, action: () => requestPurge(item) },
   ];
   ctxMenuVisible.value = true;
   ctxMenuTarget = item;
@@ -940,48 +956,29 @@ function showPinnedHint(msg: string, kind: IslandKind = 'success') {
 const deleteConfirmVisible = ref(false);
 const deleteConfirmMessage = ref('');
 const deleteConfirmTarget = ref<ClipboardData | null>(null);
-/** 确认框模式：delete=普通删除（统计保留），purge=永久抹除（数据 + 统计字符计数一起清） */
-const deleteConfirmMode = ref<'delete' | 'purge'>('delete');
 
 /** 点击删除按钮：弹出内联删除确认框（视口居中，不创建子窗口） */
 function handleDelete(target: ClipboardData) {
   if (!target) return;
-  deleteConfirmMode.value = 'delete';
   deleteConfirmTarget.value = target;
   deleteConfirmMessage.value = t(target.type === 'image' ? 'clip.delete_confirm_image' : 'clip.delete_confirm_text');
   deleteConfirmVisible.value = true;
 }
 
-/** 右键「永久抹除」：敏感内容防护闭环——条目与统计字符计数一起清，弹同款确认框 */
-function requestPurge(target: ClipboardData) {
-  if (!target) return;
-  deleteConfirmMode.value = 'purge';
-  deleteConfirmTarget.value = target;
-  deleteConfirmMessage.value = t(target.type === 'image' ? 'clip.purge_confirm_image' : 'clip.purge_confirm_text');
-  deleteConfirmVisible.value = true;
-}
-
-/** 确认删除/抹除：执行并刷新列表 */
+/** 确认删除：执行并刷新列表 */
 async function confirmDelete() {
   const target = deleteConfirmTarget.value;
-  const mode = deleteConfirmMode.value;
   deleteConfirmVisible.value = false;
   deleteConfirmTarget.value = null;
   if (target) {
     try {
-      if (mode === 'purge') {
-        await clipboardService.purgeClipboardData(target.id);
-        await fetchData();
-        showPinnedHint(t('clip.purged'));
-      } else {
-        await clipboardService.deleteClipboardData(target.id);
-        await fetchData();
-        showPinnedHint(t('clip.deleted'));
-      }
+      await clipboardService.deleteClipboardData(target.id);
+      await fetchData();
+      showPinnedHint(t('clip.deleted'));
     } catch (e) {
       // 失败不再静默：此前确认框已关、无任何提示、列表也不刷新
       console.error('删除失败:', e);
-      showPinnedHint(t(mode === 'purge' ? 'clip.purge_failed' : 'clip.delete_failed'), 'error');
+      showPinnedHint(t('clip.delete_failed'), 'error');
     }
   }
   refocusList();
@@ -1242,12 +1239,23 @@ async function openImageViewer(item: ClipboardData) {
                       v-tip="t(filter.advanced ? 'clip.advanced_off' : 'clip.advanced_on')"
                       @click="handleAdvancedSearch"
                   >
-                    <!-- 高级搜索：空格拆词 AND + 引号整句；关闭后整串按字面匹配 -->
+                    <!-- 高级搜索：空格拆词 AND + 引号整句 + * ? 通配符 + | OR；关闭后整串按字面匹配 -->
                     <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
                       <path d="M19 15l.9 2.4L22 18l-2.1.6L19 21l-.9-2.4L16 18l2.1-.6L19 15z" />
                     </svg>
                   </button>
+                  <!-- 高级搜索语法说明入口：? 按钮展开面板，点击面板外自动收起。
+                       内容用 h-4 w-4 固定盒（与相邻按钮的 h-4 w-4 图标同尺寸）撑起按钮，
+                       裸文本节点会把按钮挤成竖长胶囊（btn-circle 并无定义，按钮尺寸全靠内容） -->
+                  <button
+                      type="button"
+                      ref="searchHelpBtnRef"
+                      class="btn-soft btn-circle p-0 ml-1 text-sm font-bold leading-none"
+                      :class="showSearchHelp ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+                      v-tip="t('clip.search_help_btn')"
+                      @click="showSearchHelp = !showSearchHelp"
+                  ><span class="flex h-4 w-4 items-center justify-center">?</span></button>
                   <button
                       type="button"
                       class="btn-soft btn-circle p-0 ml-1"
@@ -1258,6 +1266,29 @@ async function openImageViewer(item: ClipboardData) {
                       <path d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
+                </div>
+
+                <!-- 高级搜索语法说明面板（? 按钮展开） -->
+                <div
+                    v-if="showSearchHelp"
+                    ref="searchHelpPanelRef"
+                    class="glass-card absolute right-1 top-full z-40 mt-1 w-80 rounded-2xl p-4 text-xs shadow-float"
+                >
+                  <div class="mb-2 flex items-center justify-between">
+                    <span class="text-sm font-semibold text-gold">{{ t('clip.search_help_title') }}</span>
+                    <button type="button" class="text-ink-faint transition-colors hover:text-ink" @click="showSearchHelp = false">
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <path d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  <ul class="space-y-1.5">
+                    <li v-for="row in searchHelpRows" :key="row.sym" class="flex items-start gap-2">
+                      <code class="w-12 shrink-0 rounded-lg bg-gold/10 px-1.5 py-0.5 text-center font-mono text-[11px] leading-5 text-gold">{{ row.sym }}</code>
+                      <span class="leading-5 text-ink-soft">{{ row.desc }}</span>
+                    </li>
+                  </ul>
+                  <p class="mt-3 border-t border-gold/20 pt-2 text-[11px] leading-relaxed text-ink-faint">{{ t('clip.search_help_off') }}</p>
                 </div>
               </div>
 
@@ -1387,7 +1418,6 @@ async function openImageViewer(item: ClipboardData) {
                           v-else
                           :text="getFirstTwoLines(item.content)"
                           :highlightString="highlightContent" :advanced="filter.advanced"
-                          :active="searchHighlightEnabled"
                         />
                       </span>
                     </div>
@@ -1416,7 +1446,6 @@ async function openImageViewer(item: ClipboardData) {
                           <HighlightText
                             :text="item.qr_text"
                             :highlightString="highlightContent" :advanced="filter.advanced"
-                            :active="searchHighlightEnabled"
                           />
                         </span>
                       </span>

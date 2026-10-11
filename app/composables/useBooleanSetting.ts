@@ -3,7 +3,7 @@ import dbService from '~/src/db/dbService';
 
 /**
  * 布尔设置项单例工厂：模块级 ref + 首次调用时从 settings 表读回（'1'/'0'）+ 持久化写入。
- * 收敛此前 useTooltipEnabled / useSearchHighlight 等逐行同构的样板（新增布尔设置一行搞定）。
+ * 收敛此前 useTooltipEnabled / useTodoSmartRemind 等逐行同构的样板（新增布尔设置一行搞定）。
  *
  * @param key settings 表 KV key
  * @param defaultOn 无持久化值时的默认状态

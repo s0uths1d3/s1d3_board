@@ -261,6 +261,14 @@ body::after {
   }
 }
 
+/* ===== 便签拖动期间全局禁选（StickyNoteItem 按住时给 body 挂类）=====
+   拖出钉桌时浏览器默认文本选择会选中卡片文字；仅按住期间生效，平时仍可拖选复制 */
+body.note-drag-selecting,
+body.note-drag-selecting * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
 /* ===== 统一 hover 提示气泡（v-tip 指令，替代原生 title）===== */
 .s1d3-tip {
   position: fixed;
@@ -428,6 +436,25 @@ body::after {
 }
 .note-saved {
   animation: note-saved-pulse 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ===== 桌面便签窗口入场：随「拖出钉桌」在光标松手点弹出（缩放回弹 + 淡入） ===== */
+@keyframes note-pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.72) translateY(8px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.04) translateY(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.note-pop-in {
+  animation: note-pop-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 
