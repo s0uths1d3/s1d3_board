@@ -131,6 +131,29 @@ describe('clipboardRepository', () => {
         expect(selects.at(-1)?.params).toEqual(['%%小曲%']);
     });
 
+    it('fetchClipboardData：高级搜索下 ? 映射为单字符通配符 _', async () => {
+        const { db, selects } = stubDb();
+        const conn = await connWith(db);
+        const { repo } = makeRepo(conn);
+
+        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '第?章', type: 'text' } });
+
+        expect(selects.at(-1)?.params).toEqual(['%第_章%']);
+    });
+
+    it('fetchClipboardData：| OR 分组——组内 OR、组间 AND', async () => {
+        const { db, selects } = stubDb();
+        const conn = await connWith(db);
+        const { repo } = makeRepo(conn);
+
+        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '会议 a|b c', type: 'text' } });
+
+        expect(selects.at(-1)?.sql).toContain(
+            "content LIKE $1 ESCAPE '\\' AND (content LIKE $2 ESCAPE '\\' OR content LIKE $3 ESCAPE '\\') AND content LIKE $4 ESCAPE '\\'",
+        );
+        expect(selects.at(-1)?.params).toEqual(['%会议%', '%a%', '%b%', '%c%']);
+    });
+
     it('increaseUseCountByContent：命中按 id 递增，未命中不写库', async () => {
         const hitDb = stubDb(() => [{ id: 7 }]);
         const hitConn = await connWith(hitDb.db);

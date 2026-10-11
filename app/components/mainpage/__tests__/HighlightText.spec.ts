@@ -14,8 +14,8 @@ import HighlightText from '../HighlightText.vue';
  * （attachTo 挂载，文本节点原样拼接）。
  */
 
-const mountHl = (text: string, highlightString: string, active = true, advanced = true) =>
-    mount(HighlightText, { props: { text, highlightString, active, advanced }, attachTo: document.body });
+const mountHl = (text: string, highlightString: string, advanced = true) =>
+    mount(HighlightText, { props: { text, highlightString, advanced }, attachTo: document.body });
 
 /** 高亮片段文本列表（按出现顺序） */
 const highlights = (wrapper: ReturnType<typeof mount>) =>
@@ -29,20 +29,14 @@ beforeEach(() => {
 });
 
 describe('HighlightText 搜索高亮渲染', () => {
-    it('未开启高亮（active=false）：整段单片段，无高亮 span', () => {
-        const w = mountHl('hello world', 'hello', false);
-        expect(w.findAll('span')).toHaveLength(0);
-        expect(bodyText()).toBe('hello world');
-    });
-
     it('无搜索词：无高亮 span，全文渲染', () => {
-        const w = mountHl('hello world', '', true);
+        const w = mountHl('hello world', '');
         expect(w.findAll('span')).toHaveLength(0);
         expect(bodyText()).toBe('hello world');
     });
 
     it('空文本：渲染为空', () => {
-        mountHl('', 'x', true);
+        mountHl('', 'x');
         expect(bodyText()).toBe('');
     });
 
@@ -72,6 +66,22 @@ describe('HighlightText 搜索高亮渲染', () => {
     it('高级搜索 * 通配符：跨字符匹配整段', () => {
         const w = mountHl('foo123bar', 'foo*bar');
         expect(highlights(w)).toEqual(['foo123bar']);
+    });
+
+    it('高级搜索 ? 通配符：匹配任意单个字符（与 SQL LIKE _ 语义一致），不多吃字符', () => {
+        const w = mountHl('foo1bar foo12bar', 'foo?bar');
+        expect(highlights(w)).toEqual(['foo1bar']);
+        expect(bodyText()).toBe('foo1bar foo12bar');
+    });
+
+    it('高级搜索 | OR：任一词元命中即高亮', () => {
+        const w = mountHl('foo bar baz', 'foo | baz');
+        expect(highlights(w)).toEqual(['foo', 'baz']);
+    });
+
+    it('引号短语内的 | 按字面匹配（不拆分为 OR）', () => {
+        const w = mountHl('a | b plus', '"a | b"');
+        expect(highlights(w)).toEqual(['a | b']);
     });
 
     it('引号短语作为整句词元（短语内空格不拆分）', () => {

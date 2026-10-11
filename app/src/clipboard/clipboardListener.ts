@@ -30,7 +30,6 @@ const repo: ClipboardRepository = createClipboardRepository({
     conn: appConnection,
     getKeyValue: (key) => settings.getKeyValue(key),
     recordStats: (partial) => statsService.record(partial),
-    revokeStats: (date, partial) => statsService.revoke(date, partial),
 });
 
 /** 已注册的监听反挂函数（stop 时反挂；start 前为空） */

@@ -5,7 +5,6 @@ import { bus } from '../../events';
 import { resolveImageRows, deleteImageFileByRef, invalidateImageCache } from '../imageRef';
 import { encryptClipText, decryptClipText, isEncryptedContent } from '../../../clipboard/encryption';
 import { escapeLike, withPage, parseSearchTokens, likePatternFromToken, type PageQuery } from '../sql';
-import { toDateString } from '../../../../utils/datetime';
 import type { RecordStats } from './noteRepository';
 
 /** 剪贴板默认保留上限：设置项 max_save_count 未设置/无效时生效（防 DB 无限膨胀） */
@@ -137,8 +136,6 @@ export interface ClipboardRepository {
     increaseUseCount(id: number): Promise<void>;
     increaseUseCountByContent(content: string): Promise<void>;
     deleteClipboardData(id: number): Promise<void>;
-    /** 永久抹除：删除条目 + 联动原图文件 + 统计回冲（文本条目按 created_at 当日扣回 clip_chars） */
-    purgeClipboardData(id: number): Promise<void>;
     /** 区间内按来源应用聚合的复制条数 Top N（统计页"来源应用"榜；startMs 含、endMs 不含） */
     fetchSourceAppTop(startMs: number, endMs: number, limit: number): Promise<{ app: string; cnt: number }[]>;
     /** 已记录条目的来源应用清单（全量去重 + 出现条数，按条数降序）：设置页"忽略来源应用"默认列表 */
@@ -175,14 +172,12 @@ export interface ClipboardRepository {
     finalizeImageCleanup(): Promise<void>;
 }
 
-export function createClipboardRepository({ conn, getKeyValue, recordStats, revokeStats }: {
+export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
     conn: DatabaseConnection;
     /** 读取设置 KV（裁剪上限 max_save_count / 全量查询动态上限）——注入设置仓储，避免反向依赖 */
     getKeyValue: (key: string) => Promise<string>;
     /** 统计埋点（fire-and-forget）——注入统计服务，仓储不直接依赖统计实现 */
     recordStats: RecordStats;
-    /** 统计回冲（永久抹除用，可缺省：测试桩未注入时跳过回冲） */
-    revokeStats?: (date: string, partial: Record<string, number>) => Promise<void>;
 }): ClipboardRepository {
     /** 本应用粘贴写入抑制窗口：窗口内 saveClipboard 的 ON CONFLICT 不递增 count
      *  （粘贴流程已由命令层显式 increaseUseCount，剪贴板监听再 bump 会双计） */
@@ -447,12 +442,12 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats, revo
             const content: string = filter.value.searchContent;
             const type: string = filter.value.type ?? 'all';
 
-            // 搜索关键词：高级搜索开启时空白拆分多词 AND、双引号短语为整句词元、`*` 为任意串通配符；
-            // 关闭时整串按字面单词元（advanced 缺省视为开启，兼容旧调用）
+            // 搜索词分组：高级搜索开启时组内词元 OR（| 相连）、组间 AND；`*` `?` 为通配符、
+            // 双引号短语为整句词元。关闭时整串按字面单词元（advanced 缺省视为开启，兼容旧调用）
             const advanced = filter.value.advanced !== false;
-            const keywords = parseSearchTokens(content, advanced);
-            // 词元 → LIKE 模式：高级搜索下 `*` 映射通配符 %，其余字面；关闭高级搜索则全字面
-            const patterns = keywords.map(kw => `%${advanced ? likePatternFromToken(kw) : escapeLike(kw)}%`);
+            const groups = parseSearchTokens(content, advanced).map(group =>
+                group.map(kw => `%${advanced ? likePatternFromToken(kw) : escapeLike(kw)}%`),
+            );
 
             // 统一收集 WHERE 条件，按 $1/$2… 顺序编号参数
             const conds: string[] = [];
@@ -468,29 +463,41 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats, revo
             if (type === 'image') {
                 // 仅图片：图片本体无文本内容，按二维码识别结果检索（未识别/无码 qr_text 为 NULL/''）
                 conds.push("type = 'image'");
-                for (const pattern of patterns) {
-                    paramIdx += 1;
-                    conds.push(`qr_text LIKE $${paramIdx} ESCAPE '\\'`);
-                    params.push(pattern);
+                for (const group of groups) {
+                    const parts: string[] = [];
+                    for (const pattern of group) {
+                        paramIdx += 1;
+                        parts.push(`qr_text LIKE $${paramIdx} ESCAPE '\\'`);
+                        params.push(pattern);
+                    }
+                    conds.push(parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`);
                 }
             } else if (type === 'text') {
                 // 仅文本：按内容逐词匹配（富文本条目随纯文本兜底一并命中）
                 conds.push("type IN ('text', 'html')");
-                for (const pattern of patterns) {
-                    paramIdx += 1;
-                    conds.push(`content LIKE $${paramIdx} ESCAPE '\\'`);
-                    params.push(pattern);
+                for (const group of groups) {
+                    const parts: string[] = [];
+                    for (const pattern of group) {
+                        paramIdx += 1;
+                        parts.push(`content LIKE $${paramIdx} ESCAPE '\\'`);
+                        params.push(pattern);
+                    }
+                    conds.push(parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`);
                 }
             } else {
                 // 默认（全部）：文本/富文本条目按内容匹配、图片条目按二维码识别结果匹配，
-                // 每个词命中任一即可；搜索词转义 % _ \，保证按字面匹配
-                for (const pattern of patterns) {
-                    paramIdx += 1;
-                    const pContent = paramIdx;
-                    paramIdx += 1;
-                    const pQr = paramIdx;
-                    conds.push(`((type IN ('text', 'html') AND content LIKE $${pContent} ESCAPE '\\') OR qr_text LIKE $${pQr} ESCAPE '\\')`);
-                    params.push(pattern, pattern);
+                // 组内任一模式命中任一字段即可（OR），组间 AND；搜索词转义 % _ \，保证按字面匹配
+                for (const group of groups) {
+                    const parts: string[] = [];
+                    for (const pattern of group) {
+                        paramIdx += 1;
+                        const pContent = paramIdx;
+                        paramIdx += 1;
+                        const pQr = paramIdx;
+                        parts.push(`((type IN ('text', 'html') AND content LIKE $${pContent} ESCAPE '\\') OR qr_text LIKE $${pQr} ESCAPE '\\')`);
+                        params.push(pattern, pattern);
+                    }
+                    conds.push(parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`);
                 }
             }
 
@@ -566,29 +573,6 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats, revo
             ) as { type: string; content: string }[];
             await db.execute("DELETE FROM clipboard WHERE id = $1", [id]);
             if (rows[0]?.type === 'image') deleteImageFileByRef(rows[0].content);
-        },
-
-        /**
-         * 永久抹除（区别于普通删除）：敏感内容防护的闭环——条目本体删除之外，
-         * 还要清掉统计痕迹：文本条目把当初计入的 clip_chars 从 created_at 当日扣回
-         * （普通删除不影响统计，永久抹除=数据+统计一起消失）。
-         * 图片条目照常联动删除原图文件（clip_image 计数不回冲，仅字符计数参与抹除）。
-         */
-        async purgeClipboardData(id: number): Promise<void> {
-            const db = await conn.ready();
-            const rows = await db.select(
-                "SELECT type, content, created_at, encrypted FROM clipboard WHERE id = $1", [id]
-            ) as { type: string; content: string; created_at: number; encrypted?: number }[];
-            const row = rows[0];
-            if (!row) return;
-            await db.execute("DELETE FROM clipboard WHERE id = $1", [id]);
-            if (row.type === 'image') deleteImageFileByRef(row.content);
-            // 加密条目的 content 是密文载荷（长度≠明文长度），当初计入统计的是明文长度且
-            // 明文已不可恢复（解密列已清）——跳过回冲，宁可统计多计也不写入错误扣减
-            if (row.encrypted === 1) return;
-            if (row.type === 'text' && typeof row.content === 'string' && row.content.length > 0) {
-                await revokeStats?.(toDateString(new Date(row.created_at)), { clip_chars: row.content.length });
-            }
         },
 
         async fetchSourceAppTop(startMs: number, endMs: number, limit: number): Promise<{ app: string; cnt: number }[]> {

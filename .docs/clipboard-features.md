@@ -210,7 +210,6 @@
   - 列表渲染：`encrypted=1` 条目内容区显示锁形「已加密条目」占位 + 信息行「已加密」徽章。
   - 明文防泄露旁路：tooltip 独立窗口不出加密条目预览；拖拽置空载荷；右键复制先解密再写；批量复制逐条解密合并（解密失败的密文条目剔除，不进剪贴板）；添加到常用剪贴板被拦截。
 - **粘贴解密**（[PasteCommand.ts](../app/src/commands/local/PasteCommand.ts) / [ClipboardSlotPasteCommand.ts](../app/src/commands/local/ClipboardSlotPasteCommand.ts)）：粘贴前按 `S1ENC1:` 前缀判定，先 `decrypt_clip_text` 解密为明文再写剪贴板；解密失败（凭据库不可用/密钥不符）中止粘贴。
-- **统计一致性**：永久抹除（purge）加密条目时跳过「字符计数回冲」（密文长度 ≠ 明文长度，宁可多计不错扣）。
 
 ### 操作指南
 
