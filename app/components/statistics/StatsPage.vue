@@ -26,6 +26,8 @@ import {
   type SeriesRow, type GhostRow,
 } from '~/src/statistics/chartMath';
 import dbService from '~/src/db/dbService';
+import type { Todo } from '~/src/entities';
+import { isTodoOverdue } from '~/src/todo/overdue';
 
 const { t, tName, locale } = useI18n();
 
@@ -108,6 +110,20 @@ const growth = ref<{ pct: number | null; diff: number }>({ pct: null, diff: 0 })
 /** 来源应用 Top（区间内复制条数；失败/无数据为空数组）；icon = 真实程序图标（PNG data URL，null 回退纯文本名） */
 const srcApps = ref<{ app: string; cnt: number; icon: string | null }[]>([]);
 
+/** 待办概览（当前存量快照，自待办页迁入）：总数 / 完成率 / 按时率；null = 尚未加载 */
+const todoOverview = shallowRef<{ total: number; completion: number; onTime: number } | null>(null);
+
+/** 由未软删全量任务计算概览三项；口径与原待办页一致（无样本显示 0） */
+function computeTodoOverview(list: Todo[]): { total: number; completion: number; onTime: number } {
+  const total = list.length;
+  const completion = total === 0 ? 0 : Math.round((list.filter(x => x.completed).length / total) * 100);
+  const finishedWithDue = list.filter(x => x.completed && x.dueDate);
+  const onTime = finishedWithDue.length === 0
+    ? 0
+    : Math.round((finishedWithDue.filter(x => !isTodoOverdue(x, Date.now())).length / finishedWithDue.length) * 100);
+  return { total, completion, onTime };
+}
+
 /** 拉取榜单应用的真实图标：app_icons 缓存优先，未命中由 Rust 按名实时提取并回填。
  *  图标直接并入榜单条目（单数据源，避免 Map 与榜单跨 ref 同步）；榜单随区间切换
  *  重建，响应返回时校验榜单引用，过期响应直接丢弃（防竞态错配） */
@@ -172,7 +188,7 @@ async function load(opts?: { skeleton?: boolean }) {
   const rs = ++rangeSeq;
   const ts = ++trendSeq;
   try {
-    const [sum, s, tg, tl, scores, ad, week, srcTop, earliest] = await Promise.all([
+    const [sum, s, tg, tl, scores, ad, week, srcTop, earliest, todoList] = await Promise.all([
       statsService.getStatsRange(from, to),
       statsService.getDailySeries(from, to, trendFields.value),
       computeTags(from, to),
@@ -185,9 +201,12 @@ async function load(opts?: { skeleton?: boolean }) {
       dbService.fetchSourceAppTop(from, to, 5).catch(() => []),
       // 最早统计日期（全部范围的热力图起点，查询极轻）
       statsService.getEarliestDate().catch(() => null),
+      // 待办概览（当前存量，与日期区间无关；进页/切范围顺带刷新，失败不阻塞整页）
+      dbService.fetchTodos({ value: { searchContent: '' } }).catch(() => [] as Todo[]),
     ]);
     if (rs !== rangeSeq) return; // 已有更新的 load 会话，丢弃本响应
     stats.value = sum;
+    todoOverview.value = computeTodoOverview(todoList);
     series.value = s;
     tags.value = tg;
     title.value = tl;
@@ -806,6 +825,42 @@ function barTip(idx: number): string {
               <template v-else>{{ card.value }}</template>
             </div>
             <div class="mt-0.5 text-xs uppercase tracking-wide text-ink-faint">{{ card.name }}</div>
+          </div>
+        </div>
+
+        <!-- ===== 待办概览（当前存量快照，不随日期范围变化；自待办页迁入）===== -->
+        <div v-if="todoOverview">
+          <div class="mb-3 text-xs uppercase tracking-wide text-ink-faint">{{ t('statistics.todo_overview') }}</div>
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div class="glass-card flex items-center gap-3 rounded-2xl p-4 shadow-soft">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-gold">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+              </svg>
+            </div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.total') }}</div>
+            <div class="text-xl font-semibold text-ink tabular-nums"><AnimatedNumber :value="todoOverview.total" /></div>
+          </div>
+
+          <div class="glass-card flex items-center gap-3 rounded-2xl p-4 shadow-soft">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-gold">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+              </svg>
+            </div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.completion_rate') }}</div>
+            <div class="text-xl font-semibold text-ink tabular-nums"><AnimatedNumber :value="todoOverview.completion" />%</div>
+          </div>
+
+          <div class="glass-card flex items-center gap-3 rounded-2xl p-4 shadow-soft">
+            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-gold">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+            </div>
+            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.on_time_rate') }}</div>
+            <div class="text-xl font-semibold text-ink tabular-nums"><AnimatedNumber :value="todoOverview.onTime" />%</div>
+          </div>
           </div>
         </div>
 

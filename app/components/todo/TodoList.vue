@@ -1,42 +1,8 @@
 <template>
   <div>
-    <!-- 边距与宽度由外壳统一提供（main px-4 + max-w-6xl），各模块保持一致 -->
+    <!-- 边距与宽度由外壳统一提供（main px-4 + max-w-6xl），各模块保持一致；
+         概览统计（总数/完成率/按时率）已迁至统计页，待办页聚焦任务管理 -->
     <div>
-      <div class="mb-8">
-
-        <div class="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div class="glass-card flex items-center gap-3 rounded-2xl p-4 shadow-soft">
-            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-gold">
-              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
-              </svg>
-            </div>
-            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.total') }}</div>
-            <div class="text-xl font-semibold text-ink tabular-nums">{{ todos.length }}</div>
-          </div>
-
-          <div class="glass-card flex items-center gap-3 rounded-2xl p-4 shadow-soft">
-            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-gold">
-              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-              </svg>
-            </div>
-            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.completion_rate') }}</div>
-            <div class="text-xl font-semibold text-ink tabular-nums">{{ completionRate }}%</div>
-          </div>
-
-          <div class="glass-card flex items-center gap-3 rounded-2xl p-4 shadow-soft">
-            <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gold/15 text-gold">
-              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-            </div>
-            <div class="min-w-0 flex-1 text-xs uppercase tracking-wide text-ink-faint">{{ t('todo.on_time_rate') }}</div>
-            <div class="text-xl font-semibold text-ink tabular-nums">{{ onTimeRate }}%</div>
-          </div>
-        </div>
-      </div>
-
       <!-- 搜索/筛选栏：relative z-40 提升 stacking context 层级，
            避免下拉菜单被下方 TodoItem 列表（同样 backdrop-filter 的 glass-card）覆盖 -->
       <div class="glass-card relative z-40 mb-6 rounded-2xl p-4 shadow-soft">
@@ -82,6 +48,61 @@
               </ul>
             </UiDropdown>
 
+            <!-- 视图切换：列表 / 日历 / 回收站 -->
+            <div class="flex shrink-0 items-center rounded-xl border border-accent bg-surface-field p-0.5">
+              <button
+                  type="button"
+                  class="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm transition-colors duration-200"
+                  :class="view === 'list' ? 'bg-gold/20 font-medium text-gold' : 'text-ink-soft hover:text-ink'"
+                  v-tip="t('todo.view_list')"
+                  @click="view = 'list'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                <span class="hidden text-sm md:inline">{{ t('todo.view_list') }}</span>
+              </button>
+              <button
+                  type="button"
+                  class="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm transition-colors duration-200"
+                  :class="view === 'calendar' ? 'bg-gold/20 font-medium text-gold' : 'text-ink-soft hover:text-ink'"
+                  v-tip="t('todo.view_calendar')"
+                  @click="view = 'calendar'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" />
+                </svg>
+                <span class="hidden text-sm md:inline">{{ t('todo.view_calendar') }}</span>
+              </button>
+              <button
+                  type="button"
+                  class="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm transition-colors duration-200"
+                  :class="view === 'trash' ? 'bg-gold/20 font-medium text-gold' : 'text-ink-soft hover:text-ink'"
+                  v-tip="t('todo.trash')"
+                  @click="view = 'trash'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                <span class="hidden text-sm md:inline">{{ t('todo.trash') }}</span>
+              </button>
+            </div>
+
+            <!-- 批量模式：进入/退出多选（列表视图） -->
+            <button
+                v-if="view === 'list'"
+                type="button"
+                class="btn-soft flex h-10 shrink-0 items-center gap-1.5 px-3"
+                :class="batchMode ? '!text-gold' : ''"
+                v-tip="t(batchMode ? 'todo.batch_exit' : 'todo.batch')"
+                @click="toggleBatchMode"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 5l7 7-7 7" /><rect x="3" y="5" width="6" height="6" rx="1" /><path d="M9 15.5l2 2 4-4" />
+              </svg>
+              <span class="hidden text-sm sm:inline">{{ t(batchMode ? 'todo.batch_exit' : 'todo.batch') }}</span>
+            </button>
+
             <!-- 新增任务：位于搜索框最右侧，点击下拉展开表单（与原先效果一致） -->
             <button
                 @click="toggleAddForm"
@@ -102,44 +123,66 @@
             :class="showAddForm ? 'is-open' : ''"
         >
           <div class="min-h-0">
-            <div class="space-y-3 pt-3">
+            <div class="pt-3">
+              <!-- 自然语言录入（高级项）：collapse-wrap 渐变动画，同「新增任务」折叠观感；行距放内层，折叠时不留残隙 -->
+              <div class="collapse-wrap" :class="{ 'is-open': advancedOpen }">
+                <div class="min-h-0">
+                  <div class="flex items-center gap-2 pt-3">
+                    <input
+                        v-model="nlpText"
+                        type="text"
+                        class="min-w-0 flex-1 rounded-xl border border-dashed border-gold/50 bg-transparent px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
+                        :placeholder="t('todo.nlp_placeholder')"
+                        @keydown.enter.prevent="parseNlp"
+                    />
+                    <button
+                        type="button"
+                        class="btn-soft flex h-9 shrink-0 items-center gap-1.5 px-3 text-sm"
+                        :disabled="!nlpText.trim() || nlpParsing"
+                        v-tip="t('todo.nlp_parse')"
+                        @click="parseNlp"
+                    >
+                      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l4.5 11-2 .5-1.5 4.5L9.5 8 13 3z" />
+                      </svg>
+                      {{ nlpParsing ? t('todo.nlp_parsing') : t('todo.nlp_parse') }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <input
                   v-model="newTodo.title"
                   type="text"
-                  class="todo-title-input w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
+                  class="todo-title-input mt-3 w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
                   :placeholder="t('todo.title_placeholder') + ' *'"
-                  @keyup.enter="newTodo.title ? descriptionInput?.focus() : null"
+                  @keyup.enter="goDescription"
               />
 
-              <textarea
-                  ref="descriptionInput"
-                  v-model="newTodo.description"
-                  class="w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
-                  :placeholder="t('todo.desc_placeholder')"
-                  rows="2"
-              ></textarea>
+              <!-- 描述（高级项）：同款折叠动画 -->
+              <div class="collapse-wrap" :class="{ 'is-open': advancedOpen }">
+                <div class="min-h-0">
+                  <textarea
+                      ref="descriptionInput"
+                      v-model="newTodo.description"
+                      class="mt-3 w-full rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
+                      :placeholder="t('todo.desc_placeholder')"
+                      rows="2"
+                  ></textarea>
+                </div>
+              </div>
 
-              <!-- 控件 + 操作按钮：响应式布局，窄窗口自动换行不裁切 -->
-              <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              <!-- 基础控件行 + 操作按钮：截止时间（任务锚点）→ 优先级 → 分类；窄窗口自动换行不裁切 -->
+              <div class="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-2 min-w-0">
-                  <div class="flex items-center gap-2">
-                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.priority') }}</label>
-                    <PrioritySelect v-model="newTodo.priorityLevel" />
-                  </div>
-
                   <div class="flex items-center gap-2">
                     <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.due') }}</label>
                     <DueTimeSelect v-model="newTodo.dueDate" :placeholder="t('todo.due_time')" />
                   </div>
 
                   <div class="flex items-center gap-2">
-                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.reminder_label') }}</label>
-                    <ReminderPicker
-                        v-model:mode="newTodo.remindMode"
-                        v-model:rules="newTodo.remindRules"
-                        variant="field"
-                        :has-due="!!newTodo.dueDate"
-                    />
+                    <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.priority') }}</label>
+                    <PrioritySelect v-model="newTodo.priorityLevel" />
                   </div>
 
                   <div class="flex items-center gap-2">
@@ -149,6 +192,21 @@
                 </div>
 
                 <div class="flex shrink-0 items-center gap-2">
+                  <!-- 分层开关：默认只露基础项，更多（NLP/描述/提醒/标签/循环/模板）收进面板 -->
+                  <button
+                      type="button"
+                      class="btn-soft flex h-9 shrink-0 items-center gap-1 px-3 text-sm"
+                      v-tip="advancedOpen ? t('todo.more_options_hide') : t('todo.more_options')"
+                      @click="advancedOpen = !advancedOpen"
+                  >
+                    {{ advancedOpen ? t('todo.more_options_hide') : t('todo.more_options') }}
+                    <svg
+                        class="h-3.5 w-3.5 transition-transform" :class="advancedOpen ? 'rotate-180' : ''"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                    >
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
                   <button
                       type="button"
                       @click="addTodo"
@@ -173,20 +231,130 @@
                   </button>
                 </div>
               </div>
+
+              <!-- 高级控件行（collapse-wrap 渐变动画）：提醒 → 循环（均派生于截止时间）→ 标签 → 模板工具 -->
+              <div class="collapse-wrap" :class="{ 'is-open': advancedOpen }">
+                <div class="min-h-0">
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-2 pt-3">
+                    <div class="flex items-center gap-2">
+                      <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.reminder_label') }}</label>
+                      <ReminderPicker
+                          v-model:mode="newTodo.remindMode"
+                          v-model:rules="newTodo.remindRules"
+                          variant="field"
+                          :has-due="!!newTodo.dueDate"
+                      />
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                      <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.recurrence') }}</label>
+                      <RecurrencePicker v-model="newTodo.recurrence" :disabled="!newTodo.dueDate" />
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                      <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.tags') }}</label>
+                      <input
+                          v-model="newTodo.tagsText"
+                          type="text"
+                          class="w-40 rounded-xl border border-accent bg-surface-field px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-gold focus:outline-hidden"
+                          :placeholder="t('todo.tags_input_placeholder')"
+                      />
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                      <label class="whitespace-nowrap text-sm text-ink-faint">{{ t('todo.template') }}</label>
+                      <UiDropdown align="center" :close-on-select="false" :aria-label="t('todo.template')" panel-class="glass-card menu w-max min-w-44 rounded-2xl p-2">
+                        <template #trigger>
+                          <label class="flex h-9 cursor-pointer items-center gap-1 rounded-xl border border-accent bg-surface-field px-3 text-sm text-ink transition-colors hover:border-gold">
+                            {{ t('todo.template_apply') }}
+                            <svg class="h-3.5 w-3.5 text-gold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M6 9l6 6 6-6" />
+                            </svg>
+                          </label>
+                        </template>
+                        <template #default="{ close }">
+                          <ul class="menu max-h-60 overflow-y-auto p-2">
+                            <li v-for="tpl in templates" :key="tpl.id">
+                              <div class="flex w-full items-center rounded-lg hover:bg-secondary">
+                                <a @click="applyTemplate(tpl, close)" class="flex-1 truncate whitespace-nowrap px-2 py-1">{{ tpl.name }}</a>
+                                <button
+                                    type="button"
+                                    data-dd-keep-open
+                                    v-tip="t('todo.template_delete')"
+                                    class="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-danger transition-colors hover:bg-danger/10"
+                                    @click.stop="removeTemplate(tpl.id)"
+                                >
+                                  <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                                </button>
+                              </div>
+                            </li>
+                            <li v-if="templates.length === 0" class="px-2 py-1.5 text-xs text-ink-faint">{{ t('todo.template_none') }}</li>
+                          </ul>
+                        </template>
+                      </UiDropdown>
+                      <button
+                          type="button"
+                          class="btn-soft h-9 shrink-0 px-2 text-xs"
+                          :disabled="!newTodo.title.trim()"
+                          v-tip="t('todo.template_save')"
+                          @click="saveAsTemplate"
+                      >{{ t('todo.template_save') }}</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      <div id="todoListContainer" class="space-y-3">
+      <!-- 批量操作栏：多选后的统一操作（完成 / 分类 / 删除 / 全选） -->
+      <div v-if="batchMode && view === 'list'" class="glass-card mb-3 flex flex-wrap items-center gap-2 rounded-2xl p-3">
+        <span class="text-sm text-gold">{{ t('todo.batch_selected', { n: batchSelectedIds.size }) }}</span>
+        <button type="button" class="btn-soft px-3 py-1.5 text-xs" @click="toggleSelectAll">{{ t('todo.select_all') }}</button>
+        <div class="ml-auto flex flex-wrap items-center gap-2">
+          <button type="button" class="btn-gold px-3 py-1.5 text-xs" :disabled="batchSelectedIds.size === 0" @click="batchComplete">{{ t('todo.batch_complete') }}</button>
+          <CategorySelect v-model="batchCategory" :placeholder="t('todo.batch_category')" @update:model-value="batchSetCategory" />
+          <button type="button" class="btn-soft px-3 py-1.5 text-xs text-danger hover:!bg-danger/10" :disabled="batchSelectedIds.size === 0" @click="batchDelete">{{ t('todo.batch_delete') }}</button>
+        </div>
+      </div>
+
+      <!-- 日历视图：按月分桶展示，拖拽改期 / 勾选完成 -->
+      <TodoCalendar v-if="view === 'calendar'" :todos="calendarTodos" @change-due="changeDueFromCalendar" @toggle="toggleTodo" />
+
+      <!-- 回收站视图：软删任务（恢复 / 彻底删除） -->
+      <div v-else-if="view === 'trash'" id="todoListContainer" class="space-y-3">
         <TodoItem
-            v-for="(todo, index) in filteredAndSortedTodos"
+            v-for="todo in trashTopTodos"
             :key="todo.id"
             :todo="todo"
-            :highlight-string="searchHighlightEnabled ? searchQuery : ''"
-            :highlight="searchHighlightEnabled && searchQuery.trim() !== ''"
-            :selected="index === selectedTodoIndex"
+            trash
+            :children="trashChildrenMap.get(todo.id) ?? []"
+            @restore="restoreTodo"
+            @purge="askPurge"
+        />
+        <div v-if="trashTopTodos.length === 0" class="py-20 text-center">
+          <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+          </svg>
+          <p class="text-lg text-ink-faint">{{ t('todo.trash_empty') }}</p>
+        </div>
+      </div>
+
+      <!-- 列表视图：仅渲染顶级任务，子任务由父卡片内联展示 -->
+      <div v-else id="todoListContainer" class="space-y-3">
+        <TodoItem
+            v-for="(todo, index) in topTodos"
+            :key="todo.id"
+            :todo="todo"
+            :children="childrenMap.get(todo.id) ?? []"
+            :highlight-string="searchQuery"
+            :highlight="searchQuery.trim() !== ''"
+            :selected="!batchMode && index === selectedTodoIndex"
             :edit-signal="editSignal"
+            :batch-mode="batchMode"
+            :batch-selected="batchSelectedIds.has(todo.id)"
+            :drag-enabled="dragEnabled"
             @toggle="toggleTodo"
             @update="updateTodo"
             @delete="deleteTodo"
@@ -195,21 +363,27 @@
             @reminder-change="changeReminder"
             @category-delete="handleCategoryDelete"
             @select="selectTodoIndex(index)"
+            @toggle-select="toggleBatchSelect"
+            @promote="promoteTodo"
+            @add-child="addChild"
+            @drag-start="draggingId = $event"
+            @drag-end="draggingId = null"
+            @drop="handleDrop"
         />
       </div>
 
-      <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载" -->
+      <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载"（仅列表视图） -->
       <div
-          v-if="hasMore && todos.length"
+          v-if="view === 'list' && hasMore && todos.length"
           ref="sentinel"
           class="flex items-center justify-center gap-2 py-4 text-xs text-ink-faint"
       >
         <span v-if="loadingMore">{{ t('todo.loading_more') }}</span>
         <span v-else>{{ t('clip.scroll_more') }}</span>
       </div>
-      <div v-else-if="todos.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
+      <div v-else-if="view === 'list' && todos.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
 
-      <div v-if="filteredAndSortedTodos.length === 0" class="py-20 text-center">
+      <div v-if="view === 'list' && filteredAndSortedTodos.length === 0" class="py-20 text-center">
         <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
         </svg>
@@ -230,11 +404,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import TodoItem from './Todoitem.vue'
+import TodoCalendar from './TodoCalendar.vue'
+import RecurrencePicker from '~/components/todo/RecurrencePicker.vue'
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
-import type {Todo, ReminderRule} from '~/src/entities'
+import type {Todo, ReminderRule, TodoRecurrence} from '~/src/entities'
+import { nextDueDate } from '~/src/todo/recurrence'
+import { parseTagsText } from '~/src/todo/tags'
+import { parseTodoFromText, NLP_ERR_NOT_CONFIGURED, NLP_ERR_BAD_RESPONSE } from '~/src/todo/todoNlp'
+import { useTodoTemplates, type TodoTemplate } from '~/composables/useTodoTemplates'
 import { bus } from '~/src/core/events'
 import {isTauri} from "~/utils/env"
 import statsService from "~/src/statistics/statsService"
@@ -242,7 +422,6 @@ import DueTimeSelect from '~/components/todo/DueTimeSelect.vue'
 import CategorySelect from '~/components/todo/CategorySelect.vue'
 import ReminderPicker from '~/components/todo/ReminderPicker.vue'
 import PrioritySelect from '~/components/todo/PrioritySelect.vue'
-import { useSearchHighlight } from "~/composables/useSearchHighlight"
 import { useCategories } from "~/composables/useCategories"
 import { notifyIsland } from "~/composables/useCopyIsland"
 import { useTodoPriorities } from "~/composables/useTodoPriorities"
@@ -284,6 +463,8 @@ function applyToStats(todo: Todo) {
 }
 
 const showAddForm = ref(false)
+/** 表单分层：默认仅展示基础项（标题/优先级/截止/分类），高级项折叠进「更多选项」 */
+const advancedOpen = ref(false)
 const newTodo = ref({
   title: '',
   description: '',
@@ -291,8 +472,26 @@ const newTodo = ref({
   category: '其他',
   dueDate: '',
   remindMode: 'smart' as 'smart' | 'off' | 'custom',
-  remindRules: [] as ReminderRule[]
+  remindRules: [] as ReminderRule[],
+  /** 标签文本（空格/逗号分隔），入库前经 parseTagsText 清洗 */
+  tagsText: '',
+  /** 循环规则（undefined = 不循环），完成后自动生成下一期 */
+  recurrence: undefined as TodoRecurrence | undefined,
 })
+
+// ===== 视图切换：列表 / 日历 / 回收站 =====
+const view = ref<'list' | 'calendar' | 'trash'>('list')
+
+// ===== 批量多选模式：顶级任务复选，统一完成/分类/删除 =====
+const batchMode = ref(false)
+const batchSelectedIds = ref<Set<string>>(new Set())
+/** 批量分类选择器的临时值（选择即应用，应用后清空） */
+const batchCategory = ref('')
+
+// ===== 拖拽层级调整：draggingId 由 drag-start/drag-end 事件维护 =====
+const draggingId = ref<string | null>(null)
+/** 拖拽手柄在列表视图（非批量）下常驻可用：拖到目标卡片上即变为它的子任务 */
+const dragEnabled = computed(() => view.value === 'list' && !batchMode.value)
 
 // ===== 优先级等级系统（0-255）：选择/排序/筛选/删除等级后的自动重映射 =====
 const { levels: priorityLevels, nearestLevel } = useTodoPriorities()
@@ -300,10 +499,15 @@ const { levels: priorityLevels, nearestLevel } = useTodoPriorities()
 const searchQuery = ref('')
 /** 搜索框 ref：Ctrl+F 聚焦使用 */
 const todoSearchInput = ref<HTMLInputElement | null>(null)
-/** 全局搜索高亮开关（设置页通用控制） */
-const { searchHighlightEnabled } = useSearchHighlight()
 /** 任务描述输入框（回车从标题跳转到描述时聚焦） */
 const descriptionInput = ref<HTMLTextAreaElement | null>(null)
+
+/** 标题回车跳描述：描述属高级项，先展开面板再聚焦 */
+function goDescription() {
+  if (!newTodo.value.title) return
+  advancedOpen.value = true
+  nextTick(() => descriptionInput.value?.focus())
+}
 const currentFilter = ref('pending')
 const currentSort = ref('date-desc')
 
@@ -312,6 +516,7 @@ const now = useNow()
 
 const filters = computed(() => [
   { label: t('todo.all'), value: 'all' },
+  { label: t('todo.today'), value: 'today' },
   { label: t('todo.active'), value: 'pending' },
   { label: t('todo.completed'), value: 'completed' },
   { label: t('todo.high_priority'), value: 'high' },
@@ -323,6 +528,7 @@ const sortOptions = computed(() => [
   { label: t('todo.newest'), value: 'date-desc' },
   { label: t('todo.oldest'), value: 'date-asc' },
   { label: t('todo.priority'), value: 'priority' },
+  { label: t('todo.due_asc'), value: 'due-asc' },
   { label: t('todo.name'), value: 'name' },
 ])
 
@@ -340,22 +546,21 @@ const highLevel = computed(() => {
 // 本组件只负责在数据变化后把最新列表同步给服务。
 
 // 计算属性（统计基于全量集合 statsTodos，流式加载下仍保证数字准确）
-const completedCount = computed(() => statsTodos.value.filter(t => t.completed).length)
-const completionRate = computed(() => {
-  if (statsTodos.value.length === 0) return 0
-  return Math.round((completedCount.value / statsTodos.value.length) * 100)
-})
-
-/** 准时率：在「已完成且有截止时间」的任务中，按时（截止前）完成的比例；无样本时显示 0% */
-const onTimeRate = computed(() => {
-  const finishedWithDue = statsTodos.value.filter(t => t.completed && t.dueDate)
-  if (finishedWithDue.length === 0) return 0
-  const onTime = finishedWithDue.filter(t => !isOverdueTodo(t)).length
-  return Math.round((onTime / finishedWithDue.length) * 100)
-})
+// 概览统计（总数/完成率/按时率）已迁至统计页 StatsPage，此处不再重复计算
 
 /** 判断任务是否已逾期：有截止时间且早于当前时间（共享实现，见 app/src/todo/overdue.ts）。 */
 const isOverdueTodo = (todo: Todo) => isTodoOverdue(todo, now.value)
+
+/** 本地时区日期键 'YYYY-MM-DD'：「今天」聚合与日历视图统一口径 */
+const ymdKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const todayKey = computed(() => ymdKey(new Date(now.value)))
+
+/** 截止时间毫秒（无/非法 → 极大值，排序时排最后） */
+const dueTimeOf = (t: Todo) => {
+  if (!t.dueDate) return Number.MAX_SAFE_INTEGER
+  const v = new Date(t.dueDate).getTime()
+  return isNaN(v) ? Number.MAX_SAFE_INTEGER : v
+}
 
 const filteredAndSortedTodos = computed(() => {
   let filtered = todos.value
@@ -374,6 +579,15 @@ const filteredAndSortedTodos = computed(() => {
     filtered = filtered.filter(t => isOverdueTodo(t) && t.completed !== 1)
   } else if (currentFilter.value === 'overdue-completed') {
     filtered = filtered.filter(t => isOverdueTodo(t) && t.completed === 1)
+  } else if (currentFilter.value === 'today') {
+    // 「今天」聚合：今天到期的全部任务 + 逾期未完成的任务顺延进今天
+    filtered = filtered.filter(t => {
+      if (!t.dueDate) return false
+      const d = new Date(t.dueDate)
+      if (isNaN(d.getTime())) return false
+      const key = ymdKey(d)
+      return t.completed === 1 ? key === todayKey.value : key <= todayKey.value
+    })
   }
 
   if (currentFilter.value === 'pending') {
@@ -395,6 +609,9 @@ const filteredAndSortedTodos = computed(() => {
       case 'priority':
         // 数值优先级：越大越优先，降序
         return (b.priorityLevel ?? 127) - (a.priorityLevel ?? 127)
+      case 'due-asc':
+        // 截止时间升序：无截止时间的排最后
+        return dueTimeOf(a) - dueTimeOf(b)
       case 'name':
         return a.title.localeCompare(b.title)
       default:
@@ -402,6 +619,23 @@ const filteredAndSortedTodos = computed(() => {
     }
   })
 })
+
+// ===== 树组装：列表仅渲染顶级任务，子任务按 parentId 分组由父卡片内联渲染 =====
+const topTodos = computed(() => filteredAndSortedTodos.value.filter(t => !t.parentId))
+
+const childrenMap = computed(() => groupByParent(filteredAndSortedTodos.value))
+
+/** 按 parentId 分组子任务（保持筛选排序后的相对顺序） */
+function groupByParent(list: Todo[]): Map<string, Todo[]> {
+  const map = new Map<string, Todo[]>()
+  for (const t of list) {
+    if (!t.parentId) continue
+    const arr = map.get(t.parentId)
+    if (arr) arr.push(t)
+    else map.set(t.parentId, [t])
+  }
+  return map
+}
 
 // 方法
 const { lastDueDate } = useDueDateMemory()
@@ -465,6 +699,9 @@ const addTodo = async () => {
     dueDate: newTodo.value.dueDate,
     remindMode: newTodo.value.remindMode,
     remindRules: newTodo.value.remindRules,
+    tags: parseTagsText(newTodo.value.tagsText),
+    links: [],
+    recurrence: newTodo.value.recurrence ? { ...newTodo.value.recurrence } : undefined,
     created_at: String(nowMs),
     updated_at: String(nowMs)
   }
@@ -490,12 +727,48 @@ const resetForm = () => {
     category: '其他',
     dueDate: '',
     remindMode: 'smart',
-    remindRules: []
+    remindRules: [],
+    tagsText: '',
+    recurrence: undefined
   }
 }
 
+/** 查找任务：已加载列表优先，其次统计全量集合（日历视图的数据源可能含未加载任务） */
+const findTodo = (id: string) => todos.value.find(t => t.id === id) ?? statsTodos.value.find(t => t.id === id)
+
+/** 实体变更同步到已加载列表与统计全量集合（同一引用时 Object.assign 幂等） */
+function syncTodoRef(todo: Todo) {
+  const inList = todos.value.find(x => x.id === todo.id)
+  if (inList && inList !== todo) Object.assign(inList, todo)
+  applyToStats(todo)
+}
+
+/**
+ * 循环任务完成：生成下一期（继承全部业务字段，刷新 id/完成态/时间戳；
+ * sortOrder 继承原值使下一期出现在原位置附近，提醒规则继承相对规则自然顺延）。
+ */
+async function spawnRecurrenceNext(todo: Todo): Promise<void> {
+  if (!todo.recurrence) return
+  const nowMs = Date.now()
+  const next: Todo = {
+    ...todo,
+    id: uuidv4(),
+    completed: 0,
+    dueDate: nextDueDate(todo.dueDate || '', todo.recurrence, nowMs),
+    remindRules: [...(todo.remindRules ?? [])],
+    tags: [...(todo.tags ?? [])],
+    links: [...(todo.links ?? [])],
+    created_at: String(nowMs),
+    updated_at: String(nowMs),
+  }
+  const ok = await withDbWrite(() => clipboardService.insertTodo(next))
+  if (!ok) return
+  prepend(next)
+  statsTodos.value.unshift(next)
+}
+
 const toggleTodo = async (id: string) => {
-  const todo = todos.value.find(t => t.id === id)
+  const todo = findTodo(id)
   if (todo) {
     const prevCompleted = todo.completed
     const prevUpdatedAt = todo.updated_at
@@ -514,7 +787,11 @@ const toggleTodo = async (id: string) => {
     // 灵动岛反馈：完成（success）/ 取消完成（info）
     notifyIsland({ kind: completing ? 'success' : 'info', text: t(completing ? 'todo.island_completed' : 'todo.island_uncompleted', { title: todo.title.slice(0, 100) }) })
     // 完成状态变化影响提醒计划，同步给调度服务（完成 → 撤销其全部提醒）
-    applyToStats(todo)
+    syncTodoRef(todo)
+    // 循环任务完成：生成下一期（仅顶级任务参与循环；下一期继承规则与业务字段）
+    if (completing && todo.recurrence && !todo.parentId) {
+      await spawnRecurrenceNext(todo)
+    }
     void reminderService.sync(statsTodos.value)
     // 统计埋点（fire-and-forget）：仅"切换为完成"时 +1
     if (completing) void statsService.record({ todo_completed: 1 })
@@ -522,42 +799,40 @@ const toggleTodo = async (id: string) => {
 }
 
 const updateTodo = async (id: string, updates: Partial<Todo>) => {
-  const todo = todos.value.find(t => t.id === id)
+  const todo = findTodo(id)
   if (todo) {
     Object.assign(todo, updates, { updated_at: String(Date.now()) })
     const ok = await withDbWrite(() => clipboardService.updateTodo(todo))
     if (!ok) return
     // 截止时间/提醒设置/完成状态可能变化，同步给调度服务重排
-    applyToStats(todo)
+    syncTodoRef(todo)
     void reminderService.sync(statsTodos.value)
   }
 }
 
-/** 点击待办删除按钮：弹出内联删除确认框（视口居中） */
-const deleteTodo = (id: string) => {
-  deleteConfirmAction = 'todo'
-  deleteConfirmId = id
-  deleteConfirmMessage.value = t('todo.delete_task_confirm')
-  deleteConfirmVisible.value = true
-}
-
-/** 确认后真正执行待办删除 */
-async function executeTodoDelete(id: string) {
-  const ok = await withDbWrite(() => clipboardService.deleteTodo(id))
+/**
+ * 点击待办删除：直接软删进回收站（可在回收站恢复，无需确认框）；
+ * 子任务随父级联软删（仓储层 OR parent_id 处理）。
+ */
+const deleteTodo = async (id: string) => {
+  const ok = await withDbWrite(() => clipboardService.deleteTodo(id), (error) => {
+    notifyIsland({ kind: 'error', text: t('todo.island_delete_failed', { reason: islandErrText(error) }) })
+  })
   if (!ok) return
-  removeTodo(t => t.id === id)
-  statsTodos.value = statsTodos.value.filter(t => t.id !== id)
+  removeTodo(t => t.id === id || t.parentId === id)
+  statsTodos.value = statsTodos.value.filter(t => t.id !== id && t.parentId !== id)
   void reminderService.sync(statsTodos.value)
+  notifyIsland({ kind: 'info', text: t('todo.island_trashed') })
 }
 
 /** 优先级等级变更：持久化后由 sync/徽章响应式跟随 */
 const changePriorityLevel = async (id: string, level: number) => {
-  const todo = todos.value.find(t => t.id === id)
+  const todo = findTodo(id)
   if (todo) {
     todo.priorityLevel = level
     todo.updated_at = String(Date.now())
     await withDbWrite(() => clipboardService.updateTodo(todo))
-    applyToStats(todo)
+    syncTodoRef(todo)
   }
 }
 
@@ -579,12 +854,12 @@ watch(priorityLevels, async (levels) => {
 })
 
 const changeCategory = async (id: string, category: string) => {
-  const todo = todos.value.find(t => t.id === id)
+  const todo = findTodo(id)
   if (todo) {
     todo.category = category
     todo.updated_at = String(Date.now())
     await withDbWrite(() => clipboardService.updateTodo(todo))
-    applyToStats(todo)
+    syncTodoRef(todo)
   }
 }
 
@@ -601,10 +876,19 @@ const changeReminder = async (id: string, mode?: Todo['remindMode'], rules?: Rem
 const { categories, addCategory, removeCategory } = useCategories()
 
 // ===== 删除确认（DeleteConfirm 内联组件，样式/操作与便签一致）=====
+// 仅「彻底删除（purge）」与「删除分类」需要确认；普通删除为软删（可恢复）无需确认
 const deleteConfirmVisible = ref(false)
 const deleteConfirmMessage = ref('')
-let deleteConfirmAction: 'todo' | 'category' | null = null
+let deleteConfirmAction: 'purge' | 'category' | null = null
 let deleteConfirmId: string | null = null
+
+/** 回收站「彻底删除」：先弹确认框（不可恢复） */
+const askPurge = (id: string) => {
+  deleteConfirmAction = 'purge'
+  deleteConfirmId = id
+  deleteConfirmMessage.value = t('todo.purge_confirm')
+  deleteConfirmVisible.value = true
+}
 
 /** 点击分类 ×：弹出内联删除确认框 */
 const handleCategoryDelete = (name: string) => {
@@ -621,7 +905,7 @@ const onDeleteConfirm = () => {
   deleteConfirmVisible.value = false
   deleteConfirmAction = null
   deleteConfirmId = null
-  if (action === 'todo' && id) void executeTodoDelete(id)
+  if (action === 'purge' && id) void executeTodoPurge(id)
   else if (action === 'category' && id) void executeCategoryDelete(id)
 }
 
@@ -651,6 +935,272 @@ async function executeCategoryDelete(name: string) {
     }
   }
   if (newTodo.value.category === name) newTodo.value.category = fallback
+}
+
+// ===== 回收站（软删任务）：进入视图时加载；恢复/彻底删除均以顶级任务为单位（子任务级联） =====
+const trashTodos = ref<Todo[]>([])
+const trashTopTodos = computed(() => trashTodos.value.filter(t => !t.parentId))
+const trashChildrenMap = computed(() => groupByParent(trashTodos.value))
+
+/** 切到回收站视图时拉取软删列表（每次进入刷新，保持与库一致） */
+watch(view, (v) => {
+  if (v === 'trash') void loadTrash()
+})
+
+async function loadTrash() {
+  try {
+    trashTodos.value = await clipboardService.fetchDeletedTodos()
+  } catch (e) {
+    console.error('加载回收站失败:', e)
+    trashTodos.value = []
+  }
+}
+
+/** 恢复：清软删标记（子任务级联），刷新主列表与统计集合 */
+async function restoreTodo(id: string) {
+  const ok = await withDbWrite(() => clipboardService.restoreTodo(id), () =>
+    notifyIsland({ kind: 'error', text: t('todo.update_failed') }))
+  if (!ok) return
+  trashTodos.value = trashTodos.value.filter(t => t.id !== id && t.parentId !== id)
+  notifyIsland({ kind: 'success', text: t('todo.island_restored') })
+  // 恢复的任务可能不在已加载页内，强制整表刷新
+  await fetchTodos({ force: true })
+}
+
+/** 确认后彻底删除：真 DELETE（子任务级联），不可恢复 */
+async function executeTodoPurge(id: string) {
+  const ok = await withDbWrite(() => clipboardService.purgeTodo(id))
+  if (!ok) return
+  trashTodos.value = trashTodos.value.filter(t => t.id !== id && t.parentId !== id)
+  removeTodo(t => t.id === id || t.parentId === id)
+  statsTodos.value = statsTodos.value.filter(t => t.id !== id && t.parentId !== id)
+  void reminderService.sync(statsTodos.value)
+  notifyIsland({ kind: 'success', text: t('todo.island_purged') })
+}
+
+// ===== 拖拽层级调整：落在目标任务卡片上 = 变为它的子任务 =====
+async function handleDrop(targetId: string, pos: 'before' | 'after' | 'child') {
+  const srcId = draggingId.value
+  draggingId.value = null
+  if (!srcId || srcId === targetId) return
+  const src = findTodo(srcId)
+  const target = findTodo(targetId)
+  if (!src || !target || src.parentId) return // 仅顶级任务参与拖拽
+  if (pos !== 'child') return // 同级重排已随手动排序模式移除，仅保留层级调整
+
+  // 单层嵌套：目标必须是顶级任务；带子任务的任务不能变为子任务（避免出现孙层级）
+  if (target.parentId || (childrenMap.value.get(srcId)?.length ?? 0) > 0) return
+  const siblings = todos.value.filter(t => t.parentId === targetId && t.id !== srcId)
+  src.parentId = targetId
+  src.sortOrder = siblings.length ? Math.max(...siblings.map(s => s.sortOrder ?? 0)) + 1 : 0
+  src.updated_at = String(Date.now())
+  const ok = await withDbWrite(() => clipboardService.updateTodo(src), () =>
+    notifyIsland({ kind: 'error', text: t('todo.update_failed') }))
+  if (!ok) return
+  syncTodoRef(src)
+}
+
+/** 子任务提升为顶级：parentId 置空（写 NULL），追加到顶级末尾 */
+async function promoteTodo(id: string) {
+  const child = findTodo(id)
+  if (!child?.parentId) return
+  const maxOrder = topTodos.value.reduce((m, t) => Math.max(m, t.sortOrder ?? 0), -1)
+  child.parentId = undefined
+  child.sortOrder = maxOrder + 1
+  child.updated_at = String(Date.now())
+  const ok = await withDbWrite(() => clipboardService.updateTodo(child), () =>
+    notifyIsland({ kind: 'error', text: t('todo.update_failed') }))
+  if (!ok) return
+  syncTodoRef(child)
+}
+
+/** 添加子任务：继承父级分类/优先级，排序追加到兄弟末尾 */
+async function addChild(parentId: string, title: string) {
+  const parent = findTodo(parentId)
+  if (!parent || parent.parentId) return
+  const nowMs = Date.now()
+  const siblings = todos.value.filter(t => t.parentId === parentId)
+  const child: Todo = {
+    id: uuidv4(),
+    title,
+    description: '',
+    completed: 0,
+    priorityLevel: parent.priorityLevel,
+    category: parent.category ?? '',
+    dueDate: '',
+    remindMode: 'smart',
+    remindRules: [],
+    parentId,
+    sortOrder: siblings.length ? Math.max(...siblings.map(s => s.sortOrder ?? 0)) + 1 : 0,
+    tags: [],
+    links: [],
+    created_at: String(nowMs),
+    updated_at: String(nowMs),
+  }
+  const ok = await withDbWrite(() => clipboardService.insertTodo(child), (error) =>
+    notifyIsland({ kind: 'error', text: t('todo.island_add_failed', { reason: islandErrText(error) }) }))
+  if (!ok) return
+  todos.value.push(child)
+  statsTodos.value.push(child)
+  void reminderService.sync(statsTodos.value)
+  notifyIsland({ kind: 'success', text: t('todo.island_added', { title: title.slice(0, 100) }) })
+}
+
+// ===== 批量操作：多选后统一完成/分类/删除（子任务随父级联） =====
+function toggleBatchMode() {
+  batchMode.value = !batchMode.value
+  batchSelectedIds.value = new Set()
+}
+
+function toggleBatchSelect(id: string) {
+  const next = new Set(batchSelectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  batchSelectedIds.value = next
+}
+
+/** 全选/清空：以当前可见顶级任务为准 */
+function toggleSelectAll() {
+  const all = topTodos.value.map(t => t.id)
+  const allSelected = all.length > 0 && all.every(id => batchSelectedIds.value.has(id))
+  batchSelectedIds.value = allSelected ? new Set() : new Set(all)
+}
+
+function exitBatch() {
+  batchMode.value = false
+  batchSelectedIds.value = new Set()
+}
+
+/** 批量完成：未完成任务逐条置完成（循环任务同步生成下一期），汇总一条灵动岛反馈 */
+async function batchComplete() {
+  const targets = [...batchSelectedIds.value]
+      .map(id => findTodo(id))
+      .filter((t): t is Todo => !!t && t.completed === 0)
+  if (targets.length === 0) return
+  for (const todo of targets) {
+    todo.completed = 1
+    todo.updated_at = String(Date.now())
+  }
+  const ok = await withDbWrite(async () => {
+    for (const todo of targets) await clipboardService.updateTodo(todo)
+  }, () => notifyIsland({ kind: 'error', text: t('todo.update_failed') }))
+  if (!ok) return
+  targets.forEach(syncTodoRef)
+  // 循环任务生成下一期（写库成功后再生成，避免失败残留）
+  for (const todo of targets) {
+    if (todo.recurrence && !todo.parentId) await spawnRecurrenceNext(todo)
+  }
+  void statsService.record({ todo_completed: targets.length })
+  void reminderService.sync(statsTodos.value)
+  notifyIsland({ kind: 'success', text: t('todo.island_batch_done', { n: targets.length }) })
+  exitBatch()
+}
+
+/** 批量删除：软删进回收站（可恢复），子任务随父级联 */
+async function batchDelete() {
+  const ids = [...batchSelectedIds.value]
+  if (ids.length === 0) return
+  const idSet = new Set(ids)
+  const ok = await withDbWrite(async () => {
+    for (const id of ids) await clipboardService.deleteTodo(id)
+  }, (error) => notifyIsland({ kind: 'error', text: t('todo.island_delete_failed', { reason: islandErrText(error) }) }))
+  if (!ok) return
+  removeTodo(t => idSet.has(t.id) || (!!t.parentId && idSet.has(t.parentId)))
+  statsTodos.value = statsTodos.value.filter(t => !idSet.has(t.id) && !(t.parentId && idSet.has(t.parentId)))
+  void reminderService.sync(statsTodos.value)
+  notifyIsland({ kind: 'success', text: t('todo.island_batch_deleted', { n: ids.length }) })
+  exitBatch()
+}
+
+/** 批量设置分类：选中任务统一改分类（CategorySelect 选择即应用） */
+async function batchSetCategory(category: string) {
+  const ids = [...batchSelectedIds.value]
+  if (!category || ids.length === 0) return
+  const targets = ids.map(id => findTodo(id)).filter((t): t is Todo => !!t)
+  if (targets.length === 0) return
+  for (const todo of targets) {
+    todo.category = category
+    todo.updated_at = String(Date.now())
+  }
+  const ok = await withDbWrite(async () => {
+    for (const todo of targets) await clipboardService.updateTodo(todo)
+  }, () => notifyIsland({ kind: 'error', text: t('todo.update_failed') }))
+  if (!ok) return
+  targets.forEach(syncTodoRef)
+  notifyIsland({ kind: 'success', text: t('todo.island_batch_categorized', { n: targets.length }) })
+  batchCategory.value = ''
+  exitBatch()
+}
+
+// ===== 日历视图：数据源为全量集合（跨月可见未加载任务）；改期复用 updateTodo 通路 =====
+const calendarTodos = computed(() => statsTodos.value)
+
+/** 日历拖拽改期：保留原时刻仅改日期（TodoCalendar 已处理），持久化并重排提醒 */
+async function changeDueFromCalendar(id: string, dueDate: string) {
+  await updateTodo(id, { dueDate })
+}
+
+// ===== 任务模板：一键应用 / 将当前表单存为模板（存 KV，跨会话保留） =====
+const { templates, saveTemplate, removeTemplate } = useTodoTemplates()
+
+/** 当前表单存为模板：模板名取任务标题（重名允许，以 id 区分） */
+async function saveAsTemplate() {
+  const title = newTodo.value.title.trim()
+  if (!title) return
+  const ok = await saveTemplate({
+    name: title,
+    title,
+    description: newTodo.value.description,
+    priorityLevel: newTodo.value.priorityLevel,
+    category: newTodo.value.category,
+    tags: parseTagsText(newTodo.value.tagsText),
+    recurrence: newTodo.value.recurrence ? { ...newTodo.value.recurrence } : undefined,
+  })
+  if (ok) notifyIsland({ kind: 'success', text: t('todo.template_saved') })
+}
+
+/** 应用模板：回填表单（模板不携带截止时间/提醒——多与具体任务时间相关） */
+function applyTemplate(tpl: TodoTemplate, close: () => void) {
+  showAddForm.value = true
+  advancedOpen.value = true
+  newTodo.value.title = tpl.title
+  newTodo.value.description = tpl.description
+  newTodo.value.priorityLevel = tpl.priorityLevel
+  if (tpl.category) newTodo.value.category = tpl.category
+  newTodo.value.tagsText = tpl.tags.join(' ')
+  newTodo.value.recurrence = tpl.recurrence ? { ...tpl.recurrence } : undefined
+  close()
+}
+
+// ===== 自然语言录入：一句话 → AI 解析 → 回填表单（需在设置页接入 AI） =====
+const nlpText = ref('')
+const nlpParsing = ref(false)
+
+async function parseNlp() {
+  const text = nlpText.value.trim()
+  if (!text || nlpParsing.value) return
+  nlpParsing.value = true
+  try {
+    const result = await parseTodoFromText(text, { categories: categories.value })
+    showAddForm.value = true
+    advancedOpen.value = true
+    newTodo.value.title = result.title
+    newTodo.value.description = result.description
+    newTodo.value.priorityLevel = result.priorityLevel
+    if (result.category) newTodo.value.category = result.category
+    if (result.dueDate) newTodo.value.dueDate = result.dueDate
+    newTodo.value.tagsText = result.tags.join(' ')
+    nlpText.value = ''
+    notifyIsland({ kind: 'success', text: t('todo.nlp_done') })
+  } catch (e) {
+    const code = e instanceof Error ? e.message : String(e)
+    const key = code === NLP_ERR_NOT_CONFIGURED
+        ? 'todo.nlp_no_ai'
+        : code === NLP_ERR_BAD_RESPONSE ? 'todo.nlp_bad_response' : 'todo.nlp_failed'
+    notifyIsland({ kind: 'error', text: t(key, { reason: code.slice(0, 60) }) })
+  } finally {
+    nlpParsing.value = false
+  }
 }
 
 const setFilter = (filter: string) => {
@@ -767,8 +1317,8 @@ onBeforeUnmount(() => {
   bus.off('todo:delete-request', onDeleteRequest)
 })
 
-/** 列表同步：过滤排序结果 → todoStore（供方向键选择/编辑使用），并修正越界选中 */
-watch(filteredAndSortedTodos, (list) => {
+/** 列表同步：顶级任务列表 → todoStore（供方向键选择/编辑使用，子任务不参与导航），并修正越界选中 */
+watch(topTodos, (list) => {
   todoList.value = list
   if (selectedTodoIndex.value >= list.length) {
     selectedTodoIndex.value = Math.max(0, list.length - 1)
@@ -784,13 +1334,12 @@ const onEditRequest = () => {
   editSignal.value += 1
 }
 
-/** Del 键：对当前选中待办打开内联删除确认框（与点击卡片删除按钮同一流程，视口居中） */
+/** Del 键：对当前选中待办执行软删（进回收站，可恢复；与点击卡片删除按钮同一流程） */
 const onDeleteRequest = () => {
-  // 确认框已打开时不重复响应（轮询刷新可能已改变选中项，避免确认框跳到别的任务上）
-  if (deleteConfirmVisible.value) return
+  if (batchMode.value) return
   const todo = todoList.value[selectedTodoIndex.value]
   if (!todo) return
-  deleteTodo(todo.id)
+  void deleteTodo(todo.id)
 }
 
 /** 点击列表行：选中对应索引 */
