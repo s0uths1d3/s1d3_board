@@ -73,6 +73,8 @@ export function formatShortcutForDisplay(key: string): string {
       const lower = part.toLowerCase();
       // CommandOrControl：跨平台占位符，按当前系统解析为 CMD（macOS）或 CTRL（其他）
       if (lower === 'commandorcontrol') return isMac ? 'CMD' : 'CTRL';
+      // Super（Win/系统键）：macOS 录制产物为 Command 不经此路径；显示为 WIN 更友好
+      if (lower === 'super') return isMac ? 'CMD' : 'WIN';
       if (MOD_DISPLAY[lower]) return MOD_DISPLAY[lower]!;
       if (KEY_DISPLAY[lower]) return KEY_DISPLAY[lower]!;
       return part.toUpperCase();
