@@ -172,6 +172,20 @@ export default defineNuxtPlugin(async (nuxtApp) => {
         void refreshTrayTooltip();
     });
 
+    // 托盘点击 / 菜单动作监听：必须在复用检查**之前**注册——webview 重载（F5/HMR/崩溃恢复）
+    // 后托盘图标在 Rust 侧仍存活（getById 命中走复用分支），若监听放在创建路径里，
+    // 复用场景下没有任何监听者，托盘点击彻底无反应。webview 重载会销毁旧 JS 上下文
+    // 及其订阅，此处重复注册不会叠加监听。
+    // 托盘点击（Rust on_tray_icon_event 转发）：弹出自绘菜单窗口
+    //（原生 Menu 已弃用——无法自定义配色且不随应用主题）
+    await listen<TrayRectPayload>('tray-click', (e) => {
+        void showTrayMenuWindow(e.payload);
+    });
+    // 菜单项动作由 tray-menu 子窗口派发、本窗口执行
+    await listen<string>('tray-menu:action', (e) => {
+        void handleTrayAction(e.payload);
+    });
+
     try {
         // 复用检查：窗口 reload / dev HMR 会让插件重新执行，TrayIcon.new 每次都会
         // 新建一个托盘图标（旧的不随窗口销毁），导致托盘区图标累积。已有同 id
@@ -196,16 +210,6 @@ export default defineNuxtPlugin(async (nuxtApp) => {
             icon: trayIcon,
         };
         trayIconRef = await TrayIcon.new(options);
-
-        // 托盘点击（Rust on_tray_icon_event 转发）：弹出自绘菜单窗口
-        //（原生 Menu 已弃用——无法自定义配色且不随应用主题）
-        await listen<TrayRectPayload>('tray-click', (e) => {
-            void showTrayMenuWindow(e.payload);
-        });
-        // 菜单项动作由 tray-menu 子窗口派发、本窗口执行
-        await listen<string>('tray-menu:action', (e) => {
-            void handleTrayAction(e.payload);
-        });
 
         console.log('Tray icon created successfully');
         await getCurrentWindow().setIcon(trayIcon);
