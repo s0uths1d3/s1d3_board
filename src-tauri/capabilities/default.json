@@ -9,6 +9,7 @@
     "clipboard-bubble-*",
     "island-history",
     "note-colors",
+    "note-pin-*",
     "tray-menu"
   ],
   "permissions": [
@@ -17,6 +18,10 @@
     "core:window:default",
     "core:window:allow-create",
     "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-cursor-position",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
     "core:window:allow-minimize",
     "core:window:allow-set-theme",
     "core:window:allow-toggle-maximize",

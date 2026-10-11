@@ -64,6 +64,11 @@ export async function tryHideMainWindow() {
       && Date.now() < (window as any).__childOpeningUntil) {
       return;
     }
+    // 便签卡片「拖出钉桌」进行中（__noteDragging）：光标拖出主窗口必失焦，
+    // 豁免避免拖动途中主窗口隐藏导致拖动判定中断；松手后由卡片逻辑解除并立子窗口豁免
+    if (typeof window !== 'undefined' && (window as any).__noteDragging) {
+      return;
+    }
     // 环形气泡系统（Ctrl+B）活跃期间豁免自动隐藏：环形窗口 focus:false 不持焦点，
     // hub 创建成为前台即触发主窗口失焦；若在此连带隐藏主窗口并关闭环形窗口，
     // ring 内存状态会残留（下次 Ctrl+B 被误判为 toggle off 而无反应）。
@@ -130,6 +135,10 @@ export async function tryHideMainWindow() {
         // 灵动岛提示窗口独立于主窗口生命周期：岛显示期间主窗口失焦（点击其他应用）
         // 不连带关闭岛——close 是永久销毁，岛的显隐完全由自身 island:show/超时机制控制
         if (w.label === 'clipboard-bubble-island') continue;
+        // 桌面便签常驻置顶：主窗口失焦隐藏不影响已钉桌签（否则用户收起主窗口，
+        // 桌面上钉着的便签也一并消失，违背「钉住常驻」语义）；随自身关闭按钮 /
+        // 便签被删除的自动收尾机制退出
+        if (w.label.startsWith('note-pin-')) continue;
         if (await w.isVisible()) await w.close();
       } catch { /* 忽略单窗关闭失败 */ }
     }

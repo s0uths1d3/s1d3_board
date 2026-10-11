@@ -36,53 +36,128 @@
               <path d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+          <!-- 排序下拉：最近更新 / 创建时间 / 颜色（置顶区不受排序影响） -->
+          <UiDropdown align="end" :aria-label="t('note.sort')" panel-class="glass-card w-40 rounded-2xl p-1.5 shadow-float">
+            <template #trigger>
+              <div class="btn-soft btn-circle flex h-8 w-8 items-center justify-center p-0" v-tip="t('note.sort')">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13M3 12h9M3 18h5M18 10v9m0 0 3-3m-3 3-3-3" /></svg>
+              </div>
+            </template>
+            <button
+                v-for="opt in sortOptions"
+                :key="opt.value"
+                type="button"
+                class="flex w-full items-center justify-between rounded-lg px-2 py-1 text-left text-xs transition-colors"
+                :class="currentSort === opt.value ? 'bg-gold/15 text-gold' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
+                @click="currentSort = opt.value as SortKey"
+            >
+              {{ opt.label }}
+              <svg v-if="currentSort === opt.value" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
+            </button>
+          </UiDropdown>
+          <!-- 回收站视图切换（再次点击返回） -->
+          <button
+              type="button"
+              class="btn-soft btn-circle flex h-8 w-8 items-center justify-center p-0"
+              :class="view === 'trash' ? 'bg-gold/20 text-gold' : ''"
+              v-tip="t('note.trash')"
+              @click="toggleTrash"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>
+          </button>
+          <!-- 批量管理（回收站视图不提供） -->
+          <button
+              v-if="view === 'list'"
+              type="button"
+              class="btn-soft btn-circle flex h-8 w-8 items-center justify-center p-0"
+              :class="batchMode ? 'bg-gold/20 text-gold' : ''"
+              v-tip="t('note.batch')"
+              @click="toggleBatchMode"
+          >
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8" /><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" /></svg>
+          </button>
         </div>
+      </div>
+
+      <!-- 批量操作栏：已选数量 + 批量改色（选色即应用）+ 批量删除 + 全选/退出（回收站视图不提供） -->
+      <div v-if="batchMode && view === 'list'" class="mb-4 flex flex-wrap items-center gap-2 rounded-2xl bg-secondary/80 px-3 py-2 shadow-soft">
+        <span class="text-xs font-medium text-ink">{{ t('note.batch_selected', { n: batchSelectedIds.size }) }}</span>
+        <button type="button" class="btn-soft h-7 rounded-lg px-2 text-xs" @click="toggleSelectAll">{{ allSelected ? t('note.batch_unselect_all') : t('note.batch_select_all') }}</button>
+        <div class="flex items-center gap-1">
+          <button
+              v-for="c in noteColors"
+              :key="'batch-' + c.name"
+              type="button"
+              v-tip="t('note.batch_color_to', { name: c.name })"
+              class="h-5 w-5 rounded-full border border-white/60 shadow-xs transition-transform hover:scale-110"
+              :style="{ backgroundColor: c.color }"
+              @click="batchSetColor(c.color)"
+          />
+        </div>
+        <button type="button" class="btn-soft h-7 rounded-lg px-2 text-xs text-danger hover:bg-danger/10" @click="batchDelete">{{ t('note.batch_delete') }}</button>
+        <button type="button" class="btn-soft h-7 rounded-lg px-2 text-xs" @click="exitBatch">{{ t('note.batch_exit') }}</button>
       </div>
 
       <!-- Grid 行优先布局（从左到右、从上到下）：原 columns 多列为列优先填充，
            便签顺序视觉跳跃（右侧列空缺、后续跑到下一行）；items-start 保证同行卡片顶对齐、高度独立 -->
       <div ref="gridEl" class="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <!-- 置顶区分隔行：仅列表视图且存在置顶便签时显示（置顶卡片紧随其后，同网格列对齐） -->
+        <div v-if="view === 'list' && pinnedNotes.length" class="col-span-full flex items-center gap-2 pb-1 text-xs text-ink-faint">
+          <svg class="h-3.5 w-3.5 text-gold" fill="currentColor" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" /></svg>
+          {{ t('note.pinned_section', { n: pinnedNotes.length }) }}
+        </div>
         <StickyNoteItem
-            v-for="(note, idx) in displayNotes"
+            v-for="(note, idx) in gridNotes"
             :key="note.id"
             :note="note"
-            :selected="selectedIndex === idx"
+            :selected="!batchMode && selectedIndex === idx"
             :editing="editingId === note.id"
             :highlight-string="highlightActive ? noteSearch : ''"
             :highlight="highlightActive"
+            :batch-mode="batchMode"
+            :batch-selected="batchSelectedIds.has(note.id)"
+            :trash="view === 'trash'"
             @update="updateNote"
             @request-delete="onRequestDelete(note)"
             @color-change="changeNoteColor"
             @request-edit="editingId = note.id"
             @finish-edit="editingId = null"
             @select="selectedIndex = idx"
+            @toggle-pin="togglePin"
+            @toggle-checklist="toggleChecklist"
+            @update-tags="updateTags"
+            @request-restore="restoreNote"
+            @request-purge="onRequestPurge"
+            @pin-desktop="pinToDesktop"
+            @ai-organize="onAiOrganize"
+            @toggle-batch-select="toggleBatchSelect(note.id)"
         />
       </div>
 
-      <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载" -->
+      <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载"（回收站视图不分页） -->
       <div
-          v-if="hasMore && notes.length"
+          v-if="view === 'list' && hasMore && notes.length"
           ref="sentinel"
           class="flex items-center justify-center gap-2 py-6 text-xs text-ink-faint"
       >
         <span v-if="loading">{{ t('note.loading_more') }}</span>
         <span v-else>{{ t('clip.scroll_more') }}</span>
       </div>
-      <div v-else-if="notes.length" class="py-6 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
+      <div v-else-if="view === 'list' && notes.length" class="py-6 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
 
-      <div v-if="notes.length === 0" class="py-20 text-center">
+      <div v-if="gridNotes.length === 0" class="py-20 text-center">
         <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" :d="view === 'trash' ? 'M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6' : 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'"></path>
         </svg>
-        <p class="text-lg text-ink-faint">{{ t('note.empty') }}</p>
+        <p class="text-lg text-ink-faint">{{ view === 'trash' ? t('note.trash_empty') : t('note.empty') }}</p>
       </div>
     </div>
 
-    <!-- 删除确认框：与全局一致的 DeleteConfirm 组件（视口居中、键盘操作一致） -->
+    <!-- 删除确认框：仅回收站「彻底删除」需要确认（主列表删除直接软删可恢复） -->
     <DeleteConfirm
-        :visible="!!deleteConfirmTarget"
-        @confirm="confirmDelete"
-        @cancel="cancelDelete"
+        :visible="!!purgeConfirmTarget"
+        @confirm="confirmPurge"
+        @cancel="cancelPurge"
     />
 
   </div>
@@ -102,9 +177,10 @@ import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { matchesKeyId } from "~/utils/shortcutFormat";
 import { useI18n } from "~/composables/useI18n";
 import { findNearestInDirection } from "~/utils/focusNavigation";
-import { useSearchHighlight } from "~/composables/useSearchHighlight";
 import { useInfiniteList } from "~/composables/useInfiniteList";
 import { notifyIsland, type IslandKind } from "~/composables/useCopyIsland";
+import { toggleChecklistLine } from "~/src/note/markdown";
+import { loadAiConfig, aiComplete } from "~/src/smart-clip/aiClient";
 
 interface StickyNote extends Note {
   position?: { x: number; y: number }
@@ -136,10 +212,8 @@ const noteSearch = ref('')
 /** 搜索范围：current=在已加载便签中过滤；all=重新查库（涵盖未加载的全部） */
 const searchScope = ref<'current' | 'all'>('current')
 const noteSearchInput = ref<HTMLInputElement | null>(null)
-/** 全局搜索高亮开关（设置页通用控制） */
-const { searchHighlightEnabled } = useSearchHighlight()
-/** 仅当输入非空且全局高亮开启时高亮匹配 */
-const highlightActive = computed(() => !!searchHighlightEnabled.value && noteSearch.value.trim() !== '')
+/** 仅当输入非空时高亮匹配（搜索命中即高亮，常开） */
+const highlightActive = computed(() => noteSearch.value.trim() !== '')
 
 /** 展示列表：搜索态按关键词前端过滤（current=已加载范围；all=notes 已是全库搜索结果）；非搜索态=已加载全部 */
 const displayNotes = computed(() => {
@@ -148,6 +222,39 @@ const displayNotes = computed(() => {
     return notes.value.filter(n => (n.content || '').toLowerCase().includes(q))
   }
   return notes.value
+})
+
+// ===== 排序（便签 §6）：置顶区不受排序影响；规则应用于其余便签 =====
+type SortKey = 'updated' | 'created' | 'color'
+const currentSort = ref<SortKey>('updated')
+const sortOptions = computed(() => [
+  { label: t('note.sort_updated'), value: 'updated' },
+  { label: t('note.sort_created'), value: 'created' },
+  { label: t('note.sort_color'), value: 'color' },
+])
+/** 排序比较：updated/created 时间倒序；color 按当前配色顺序（noteColors 索引，自定义配色排后） */
+function compareNotes(a: StickyNote, b: StickyNote): number {
+  if (currentSort.value === 'color') {
+    const idx = (color?: string) => noteColors.value.findIndex(c => c.color === resolveNoteColor(color))
+    const ca = idx(a.color), cb = idx(b.color)
+    if (ca !== cb) return (ca < 0 ? 999 : ca) - (cb < 0 ? 999 : cb)
+    return (parseInt(b.updated_at || '0') || 0) - (parseInt(a.updated_at || '0') || 0)
+  }
+  const key = currentSort.value === 'created' ? 'created_at' : 'updated_at'
+  return (parseInt(b[key] || '0') || 0) - (parseInt(a[key] || '0') || 0)
+}
+
+/** 置顶便签（列表视图置顶区，updated_at 倒序稳定展示） */
+const pinnedNotes = computed(() =>
+  displayNotes.value.filter(n => n.pinned === 1).sort(compareNotes))
+/** 主网格渲染列表：列表视图 = 置顶区 + 其余（按排序）；回收站视图 = 回收站列表（搜索过滤同口径） */
+const gridNotes = computed(() => {
+  if (view.value === 'trash') {
+    const q = noteSearch.value.trim().toLowerCase()
+    return trashNotes.value.filter(n => !q || (n.content || '').toLowerCase().includes(q))
+  }
+  const rest = displayNotes.value.filter(n => n.pinned !== 1).sort(compareNotes)
+  return [...pinnedNotes.value, ...rest]
 })
 
 /** 搜索范围切换到"全部"时：重新查库，确保涵盖未加载的便签；清空搜索时恢复全量。
@@ -236,13 +343,9 @@ const showHint = (msg: string, kind: IslandKind = 'success') => {
   notifyIsland({ kind, text: msg })
 }
 
-// ===== 删除确认框（DeleteConfirm 组件，样式/操作与全局一致） =====
-const deleteConfirmTarget = ref<StickyNote | null>(null)
-
-/** 请求删除：弹出确认框（视口居中） */
-const onRequestDelete = (note: StickyNote) => {
-  deleteConfirmTarget.value = note
-}
+// ===== 删除（便签 §5 回收站）：主列表删除 = 直接软删（不弹确认，可恢复）；
+//  回收站「彻底删除」才弹 DeleteConfirm 确认 =====
+const purgeConfirmTarget = ref<StickyNote | null>(null)
 
 const updateNote = async (id: string, content: string) => {
   const note = notes.value.find(n => n.id === id)
@@ -260,33 +363,119 @@ const updateNote = async (id: string, content: string) => {
   }
 }
 
-/** 确认删除：失败时给出提示（目标已在确认框关闭前捕获，不恢复弹窗避免卡死交互） */
-const confirmDelete = async () => {
-  const target = deleteConfirmTarget.value
-  if (!target) return
-  deleteConfirmTarget.value = null
+/** 删除便签（主列表）：软删进回收站，本地即时移出；失败提示 */
+const deleteNote = async (id: string) => {
+  await clipboardService.deleteNote(id)
+  removeNote((n) => n.id === id)
+  // 若删除的是正在编辑的项，退出编辑态
+  if (editingId.value === id) editingId.value = null
+  // 删除后修正选中索引，避免越界（selectedIndex 与渲染列表 gridNotes 同口径）
+  if (selectedIndex.value > gridNotes.value.length - 1) {
+    selectedIndex.value = Math.max(0, gridNotes.value.length - 1)
+  }
+}
+
+/** 主列表删除请求：直接软删（对齐待办「删除不再二次打断」） */
+const onRequestDelete = async (note: StickyNote) => {
+  if (batchMode.value) return
   try {
-    await deleteNote(target.id)
-    showHint(t('note.deleted'))
+    await deleteNote(note.id)
+    showHint(t('note.island_trashed'))
   } catch (e) {
     console.error('删除便签失败:', e)
     showHint(t('note.delete_failed'), 'error')
   }
 }
 
-/** 取消删除 */
-const cancelDelete = () => {
-  deleteConfirmTarget.value = null
+/** 回收站「彻底删除」请求：弹 DeleteConfirm 确认 */
+const onRequestPurge = (id: string) => {
+  purgeConfirmTarget.value = trashNotes.value.find(n => n.id === id) ?? null
 }
 
-const deleteNote = async (id: string) => {
-  await clipboardService.deleteNote(id)
-  removeNote((n) => n.id === id)
-  // 若删除的是正在编辑的项，退出编辑态
-  if (editingId.value === id) editingId.value = null
-  // 删除后修正选中索引，避免越界
-  if (selectedIndex.value > notes.value.length - 1) {
-    selectedIndex.value = Math.max(0, notes.value.length - 1)
+/** 确认彻底删除：真 DELETE（失败提示，不恢复弹窗避免卡死交互） */
+const confirmPurge = async () => {
+  const target = purgeConfirmTarget.value
+  if (!target) return
+  purgeConfirmTarget.value = null
+  try {
+    await clipboardService.purgeNote(target.id)
+    trashNotes.value = trashNotes.value.filter(n => n.id !== target.id)
+    showHint(t('note.purged'))
+  } catch (e) {
+    console.error('彻底删除便签失败:', e)
+    showHint(t('note.delete_failed'), 'error')
+  }
+}
+
+const cancelPurge = () => {
+  purgeConfirmTarget.value = null
+}
+
+// ===== 回收站视图（便签 §5）：进入时拉取软删列表 =====
+const view = ref<'list' | 'trash'>('list')
+const trashNotes = ref<StickyNote[]>([])
+const toggleTrash = async () => {
+  view.value = view.value === 'list' ? 'trash' : 'list'
+  if (view.value === 'trash') {
+    try {
+      trashNotes.value = await clipboardService.fetchDeletedNotes() as StickyNote[]
+    } catch (e) {
+      console.error('加载便答回收站失败:', e)
+      trashNotes.value = []
+    }
+  }
+}
+
+/** 回收站恢复：清 deleted_at，从回收站列表移出并刷新主列表 */
+const restoreNote = async (id: string) => {
+  try {
+    await clipboardService.restoreNote(id)
+    trashNotes.value = trashNotes.value.filter(n => n.id !== id)
+    await reloadNotes()
+    showHint(t('note.restored'))
+  } catch (e) {
+    console.error('恢复便签失败:', e)
+    showHint(t('note.delete_failed'), 'error')
+  }
+}
+
+// ===== 置顶（便签 §1）/ 标签（§2）/ 清单勾选（§3）/ 提醒（§4）事件处理 =====
+/** 置顶切换：本地即时翻转 + 落库（排序置顶区自动重组） */
+const togglePin = async (id: string) => {
+  const note = notes.value.find(n => n.id === id)
+  if (!note) return
+  note.pinned = note.pinned === 1 ? 0 : 1
+  note.updated_at = String(Date.now())
+  try {
+    await clipboardService.updateNote(note)
+    showHint(note.pinned === 1 ? t('note.pinned_now') : t('note.unpinned_now'))
+  } catch (e) {
+    console.error('置顶便签失败:', e)
+    showHint(t('note.save_failed'), 'error')
+  }
+}
+
+/** 清单勾选：改写 content 对应行（[ ] ⇄ [x]）后走既有保存链路；非清单行/越界静默跳过 */
+const toggleChecklist = async (id: string, srcIndex: number) => {
+  const note = notes.value.find(n => n.id === id)
+  if (!note) return
+  const next = toggleChecklistLine(note.content, srcIndex)
+  if (next === note.content) return
+  await updateNote(id, next)
+}
+
+/** 标签提交（编辑态失焦/回车）：与内容保存同链路落库 */
+const updateTags = async (id: string, tags: string[]) => {
+  const note = notes.value.find(n => n.id === id)
+  if (!note) return
+  note.tags = tags
+  note.updated_at = String(Date.now())
+  try {
+    await clipboardService.updateNote(note)
+    showHint(t('note.saved'))
+  } catch (e) {
+    console.error('保存便签标签失败:', e)
+    showHint(t('note.save_failed'), 'error')
   }
 }
 
@@ -304,6 +493,115 @@ const changeNoteColor = async (id: string, color: string) => {
       showHint(t('note.color_save_failed'), 'error')
     }
   }
+}
+
+// ===== 批量操作（便签 §7）：多选 + 批量改色（选色即应用）/ 批量删除（进回收站） =====
+const batchMode = ref(false)
+const batchSelectedIds = ref(new Set<string>())
+const allSelected = computed(() => gridNotes.value.length > 0 && gridNotes.value.every(n => batchSelectedIds.value.has(n.id)))
+
+const toggleBatchMode = () => {
+  batchMode.value = !batchMode.value
+  if (!batchMode.value) batchSelectedIds.value = new Set()
+}
+const exitBatch = () => {
+  batchMode.value = false
+  batchSelectedIds.value = new Set()
+}
+const toggleBatchSelect = (id: string) => {
+  const next = new Set(batchSelectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  batchSelectedIds.value = next
+}
+const toggleSelectAll = () => {
+  batchSelectedIds.value = allSelected.value ? new Set() : new Set(gridNotes.value.map(n => n.id))
+}
+
+/** 批量改色：循环 updateNote（选色即应用），失败计数统一提示 */
+const batchSetColor = async (color: string) => {
+  const ids = [...batchSelectedIds.value]
+  if (!ids.length) return
+  let fail = 0
+  for (const id of ids) {
+    const note = notes.value.find(n => n.id === id)
+    if (!note) continue
+    note.color = color
+    note.updated_at = String(Date.now())
+    try {
+      await clipboardService.updateNote(note)
+    } catch {
+      fail += 1
+    }
+  }
+  showHint(fail ? t('note.batch_color_failed') : t('note.batch_colored', { n: ids.length - fail }), fail ? 'error' : 'success')
+}
+
+/** 批量删除：循环软删进回收站 */
+const batchDelete = async () => {
+  const ids = [...batchSelectedIds.value]
+  if (!ids.length) return
+  let fail = 0
+  for (const id of ids) {
+    try {
+      await deleteNote(id)
+    } catch {
+      fail += 1
+    }
+  }
+  exitBatch()
+  showHint(fail ? t('note.delete_failed') : t('note.batch_deleted', { n: ids.length - fail }), fail ? 'error' : 'success')
+}
+
+// ===== AI 整理（便签 §10）：摘要 / 提取待办，结果追加到便签末尾走既有保存链路。
+//  错误分流对齐待办 NLP：未配置 AI → 引导设置页；其余透传底层错误（reason 截断展示） =====
+const AI_NOT_CONFIGURED = 'AI_NOT_CONFIGURED'
+const aiBusy = ref(false)
+
+async function onAiOrganize(id: string, action: 'summary' | 'extract') {
+  if (aiBusy.value) return
+  const note = notes.value.find(n => n.id === id)
+  if (!note) return
+  const content = (note.content || '').trim()
+  if (!content) {
+    showHint(t('note.ai_empty'), 'error')
+    return
+  }
+  aiBusy.value = true
+  try {
+    const cfg = await loadAiConfig()
+    if (!cfg.apiKey || !cfg.baseUrl) throw new Error(AI_NOT_CONFIGURED)
+    // 提示词要求以便签原语言输出；提取待办用 [ ] 勾选语法（与清单模式渲染一致）
+    const system = action === 'summary'
+        ? 'You are a note organizer. Summarize the key points of the note below in the note\'s own language, at most 5 lines, each line starting with "- ". Reply with the summary only.'
+        : 'You are a note organizer. Extract actionable tasks from the note below in the note\'s own language, at most 10 lines, each line starting with "- [ ] ". Reply with the list only.'
+    const result = (await aiComplete(cfg, system, content)).trim()
+    if (!result) throw new Error('AI_EMPTY_RESPONSE')
+    await updateNote(id, `${note.content.replace(/\s+$/, '')}\n\n${result}`)
+    showHint(t('note.ai_done'))
+  } catch (e) {
+    const code = e instanceof Error ? e.message : String(e)
+    const key = code === AI_NOT_CONFIGURED ? 'note.ai_no_ai' : 'note.ai_failed'
+    showHint(t(key, { reason: code.slice(0, 60) }), 'error')
+  } finally {
+    aiBusy.value = false
+  }
+}
+
+// ===== 桌面便签窗口（便签 §11）：无边框透明置顶小窗常驻显示单条便签，
+//  编辑/渲染在 app/pages/note-pin/[id].vue 完成；每条便签独立窗口（label 含 id），
+//  重复点击唤起已有窗口。窗口创建/落点/跟随逻辑统一在 useDesktopPin（与
+//  「拖出钉桌」跟随动画共用）；位置 = 光标当前位置 + 级联偏移（多条钉住不重叠） =====
+async function pinToDesktop(id: string) {
+  if (!isTauri()) return
+  const exists = gridNotes.value.some(n => n.id === id) || trashNotes.value.some(n => n.id === id)
+  if (!exists) return
+  // 子窗口打开豁免期：避免创建瞬间抢焦点触发主窗口失焦自动隐藏（同配色窗口先例）
+  ;(window as any).__childOpeningUntil = Date.now() + 600
+  const { openDesktopPin } = await import('~/composables/useDesktopPin')
+  // 隐藏创建：页面渲染完成广播 ready 后由主窗口统一 show（加载期底色帧不可见）
+  await openDesktopPin(id).catch(() => null)
+  showHint(t('note.pin_desktop_done'))
 }
 
 /** 把选中卡片滚动到可见区域（smooth=true 时用中心对齐，配合搜索跳转的丝滑滚动） */
@@ -337,7 +635,7 @@ async function onKeydown(e: KeyboardEvent) {
 
   // 删除确认框打开时：键盘操作（Enter/Esc/方向键）由 DeleteConfirm 组件统一处理，
   // 这里直接交还控制权，避免与组件键盘监听冲突。
-  if (deleteConfirmTarget.value) {
+  if (purgeConfirmTarget.value) {
     return
   }
 
@@ -347,7 +645,7 @@ async function onKeydown(e: KeyboardEvent) {
     if (isEditingField || editingId.value !== null) return
     e.preventDefault()
     e.stopPropagation()
-    const note = notes.value[selectedIndex.value]
+    const note = gridNotes.value[selectedIndex.value]
     if (note) {
       editingId.value = note.id
     }
@@ -369,7 +667,7 @@ async function onKeydown(e: KeyboardEvent) {
   // 其它 Ctrl/Meta/Alt 组合（如 Ctrl+←/→ 切换标签）不在此处理
   if (e.ctrlKey || e.metaKey || e.altKey) return
 
-  const total = notes.value.length
+  const total = gridNotes.value.length
   if (total === 0) return
 
   let handled = true
@@ -396,7 +694,7 @@ async function onKeydown(e: KeyboardEvent) {
     }
     case 'Delete':
     case 'Backspace': {
-      const note = notes.value[selectedIndex.value]
+      const note = gridNotes.value[selectedIndex.value]
       if (note) onRequestDelete(note)
       break
     }
