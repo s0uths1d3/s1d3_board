@@ -24,33 +24,71 @@ export function escapeLike(input: string): string {
 }
 
 /**
- * 高级搜索词元 → LIKE 模式：`*` 映射为任意串通配符（SQL %），其余字符按字面转义。
- * 如 `*小曲` → `%%小曲`（命中"空城计の小曲"）；`50%` → `50\%`（字面百分号）。
+ * 高级搜索词元 → LIKE 模式：`*` 映射为任意串通配符（SQL %）、`?` 映射为单字符通配符（SQL _），
+ * 其余字符按字面转义。
+ * 如 `*小曲` → `%%小曲`（命中"空城计の小曲"）；`第?章` → `第_章`；`50%` → `50\%`（字面百分号）。
  * 仅高级搜索开启时使用；关闭时整串走 escapeLike 纯字面（见 parseSearchTokens）。
  */
 export function likePatternFromToken(token: string): string {
-    // \0 占位：先摘出 *，转义 % _ \ 后再还原为 %，避免被 escapeLike 误转义
+    // \0/\1 占位：先摘出 * ?，转义 % _ \ 后再还原为 % _，避免被 escapeLike 误转义
     const STAR = '\u0000';
-    return escapeLike(token.split('*').join(STAR)).split(STAR).join('%');
+    const QMARK = '\u0001';
+    return escapeLike(token.split('*').join(STAR).split('?').join(QMARK))
+        .split(STAR).join('%')
+        .split(QMARK).join('_');
 }
 
 /**
- * 搜索输入解析：双引号包裹的短语作为单个词元（短语内空格不拆分、按字面匹配），
- * 其余文本按空白拆分为多词 AND；未成对的引号视为普通字符参与字面匹配。
+ * 搜索输入解析（OR 分组）：
+ * - 返回分组列表：组内任一词元命中即可（OR），组与组之间需全部命中（AND）；
+ * - 双引号短语为单词元（短语内空格与 | 均按字面），可作为 | 的操作数；
+ * - 引号外的 | 为 OR 分隔符（可独立成词，也可紧贴词元，如 `小曲 | 空城`、`小曲|空城`）；
+ *   缺少操作数的孤立 |（开头/结尾/连续）忽略；
+ * - 未成对的引号视为普通字符参与字面匹配。
+ * 如 `会议 a|b c` → [[会议], [a, b], [c]]，即 会议 AND (a OR b) AND c。
  * advanced=false（关闭高级搜索）：整串 trim 后作为单个字面词元，无任何语法含义。
  * SQL 拆词与前端高亮必须共用本函数（传同一 advanced 值），保证"搜什么就高亮什么"。
  */
-export function parseSearchTokens(input: string, advanced = true): string[] {
+export function parseSearchTokens(input: string, advanced = true): string[][] {
     if (!advanced) {
         const raw = (input ?? '').trim();
-        return raw ? [raw] : [];
+        return raw ? [[raw]] : [];
     }
-    const tokens: string[] = [];
+    // 展平为词元流：word = 词元（引号短语或按 | 拆出的子词），pipe = 引号外的 OR 分隔符
+    type Unit = { word: string } | { pipe: true };
+    const stream: Unit[] = [];
     const re = /"([^"]+)"|(\S+)/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(input ?? '')) !== null) {
-        const tok = m[1] ?? m[2];
-        if (tok) tokens.push(tok);
+        if (m[1] !== undefined) {
+            stream.push({ word: m[1] });
+            continue;
+        }
+        // 引号外文本按 | 拆分：空段丢弃，每个分隔符记一个 pipe（连续 | 语义相同）
+        const parts = m[2]!.split('|');
+        for (let i = 0; i < parts.length; i++) {
+            if (parts[i]) stream.push({ word: parts[i]! });
+            if (i < parts.length - 1) stream.push({ pipe: true });
+        }
     }
-    return tokens;
+    // 组内 OR / 组间 AND：普通词元入当前组，pipe 标记下一词元与当前组 OR 相连；
+    // pendingOr 时当前组为空（如开头就是 |）则该 | 无左操作数，按普通词元开新组处理
+    const groups: string[][] = [];
+    let current: string[] = [];
+    let pendingOr = false;
+    for (const unit of stream) {
+        if ('pipe' in unit) {
+            pendingOr = true;
+            continue;
+        }
+        if (pendingOr && current.length > 0) {
+            current.push(unit.word);
+        } else {
+            if (current.length > 0) groups.push(current);
+            current = [unit.word];
+        }
+        pendingOr = false;
+    }
+    if (current.length > 0) groups.push(current);
+    return groups;
 }

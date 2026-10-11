@@ -165,6 +165,17 @@ async function ensureFeatureColumns(db: SqlDatabase) {
                 created_at INTEGER NOT NULL
             )
         `);
+        // 便签表兜底建表（对应 Rust v1 DDL）：防极端旧二进制下 note 查询报 no such table
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS note
+            (
+                id         text primary key,
+                content    text not null,
+                color      text,
+                created_at text DEFAULT CURRENT_TIMESTAMP,
+                updated_at text DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
     } catch (e) {
         console.warn('[db] 兜底建表 app_usage/app_icons/clip_templates/clip_habits/clip_ai_cache 失败:', e);
     }
@@ -194,6 +205,18 @@ async function ensureFeatureColumns(db: SqlDatabase) {
         { table: 'clipboard', column: 'encrypted', ddl: 'ALTER TABLE clipboard ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0' },
         // 常用剪贴板条目标签（tags 存 JSON 字符串数组，应用层解析）
         { table: 'pinned_clip', column: 'tags', ddl: 'ALTER TABLE pinned_clip ADD COLUMN tags TEXT' },
+        // 待办功能扩展六列（对应 Rust v19）：循环规则 / 子任务父 id / 标签 / 手动排序 / 软删 / 链接
+        { table: 'todo', column: 'recurrence', ddl: 'ALTER TABLE todo ADD COLUMN recurrence TEXT' },
+        { table: 'todo', column: 'parent_id', ddl: 'ALTER TABLE todo ADD COLUMN parent_id TEXT' },
+        { table: 'todo', column: 'tags', ddl: 'ALTER TABLE todo ADD COLUMN tags TEXT' },
+        { table: 'todo', column: 'sort_order', ddl: 'ALTER TABLE todo ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0' },
+        { table: 'todo', column: 'deleted_at', ddl: 'ALTER TABLE todo ADD COLUMN deleted_at TEXT' },
+        { table: 'todo', column: 'links', ddl: 'ALTER TABLE todo ADD COLUMN links TEXT' },
+        // 便签功能扩展四列（对应 Rust v20）：置顶 / 标签 / 软删 / 提醒时刻
+        { table: 'note', column: 'pinned', ddl: 'ALTER TABLE note ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0' },
+        { table: 'note', column: 'tags', ddl: 'ALTER TABLE note ADD COLUMN tags TEXT' },
+        { table: 'note', column: 'deleted_at', ddl: 'ALTER TABLE note ADD COLUMN deleted_at TEXT' },
+        { table: 'note', column: 'remind_at', ddl: 'ALTER TABLE note ADD COLUMN remind_at TEXT' },
     ];
     let addedPriorityLevel = false;
     for (const { table, column, ddl } of wanted) {

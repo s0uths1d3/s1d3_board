@@ -47,6 +47,23 @@ export type ReminderRule =
     | { id: string; kind: 'offset'; value: number }
     | { id: string; kind: 'at'; value: string };
 
+/** 循环规则：freq 频率 + interval 间隔 + 可选 weekdays/monthDay 细化 + from 下一期起算基准 */
+export interface TodoRecurrence {
+    /** 频率：每天 / 每周 / 每月 / 每年 */
+    freq: 'daily' | 'weekly' | 'monthly' | 'yearly';
+    /** 间隔 ≥1：每 N 天/周/月/年 */
+    interval: number;
+    /** freq=weekly 时生效：命中的星期（0=周日…6=周六），取晚于当前时刻的下一个 */
+    weekdays?: number[];
+    /** freq=monthly 时生效：每月几号（1-31，大月自动钳制到月末） */
+    monthDay?: number;
+    /** 下一期起算基准：due = 按截止时间顺延（固定日程）/ complete = 按完成时刻计算（滚动节奏） */
+    from: 'due' | 'complete';
+}
+
+/** 链接/附件条目（v1 仅链接；图片/文件附件不做） */
+export interface TodoLink { title: string; url: string }
+
 export interface Todo {
     id: string;
     title: string;
@@ -68,6 +85,18 @@ export interface Todo {
     remind_rules?: string;
     /** 旧版单一自定义提醒时刻（legacy 列；读取时自动折算为一条 at 规则） */
     remindAt?: string;
+    /** 循环/重复规则（DB 存 JSON 文本列 recurrence；NULL = 不循环；仅顶级任务参与） */
+    recurrence?: TodoRecurrence;
+    /** 子任务父任务 id（DB 列 parent_id；NULL = 顶级任务；单层嵌套：子任务下不再挂子任务） */
+    parentId?: string;
+    /** 标签列表（DB 存 JSON 字符串数组 tags，读取时解析；'' = 无标签） */
+    tags?: string[];
+    /** 兄弟作用域手动排序号（DB 列 sort_order，越大越靠后；未设置 0 时按创建时间兜底） */
+    sortOrder?: number;
+    /** 软删时间戳（毫秒文本，DB 列 deleted_at；NULL = 未删除，仅回收站视图展示） */
+    deletedAt?: string | null;
+    /** 链接/附件列表（DB 存 JSON 数组 links；'' = 无） */
+    links?: TodoLink[];
 }
 
 export interface Note {
@@ -76,6 +105,14 @@ export interface Note {
     color?: string;
     created_at?: string;
     updated_at: string;
+    /** 置顶标记：1 = 置顶（置顶区优先展示，不受排序影响） */
+    pinned?: number;
+    /** 标签（DB 行为 JSON 字符串数组文本，仓储层解析为 string[]；'' / NULL = 无标签） */
+    tags?: string[];
+    /** 软删时间戳（毫秒文本）；NULL/undefined = 未删除 */
+    deleted_at?: string;
+    /** 提醒时刻（ISO 文本）；NULL/undefined = 无提醒 */
+    remind_at?: string;
 }
 
 /** 智能剪贴板：clip 分词/复制规则（separator 分隔符拆分 / regex 正则提取） */

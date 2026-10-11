@@ -436,6 +436,47 @@ UPDATE sqlite_sequence SET seq = (SELECT MAX(id) FROM clipboard) WHERE name = 'c
 -- 常用剪贴板：条目标签（tags 存 JSON 字符串数组，应用层解析）
 ALTER TABLE pinned_clip ADD COLUMN tags TEXT;
                             "#
+                        },
+                        Migration {
+                            version: 19,
+                            description: "Extend todo with recurrence/subtask/tags/sort/trash/links columns",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 待办功能扩展六列（与前端 ensureFeatureColumns 兜底同 DDL）：
+-- 循环规则（JSON：{freq,interval,weekdays?,monthDay?,from}）；NULL = 不循环，子任务不参与
+ALTER TABLE todo ADD COLUMN recurrence TEXT;
+-- 子任务父任务 id（单层嵌套）；NULL = 顶级任务
+ALTER TABLE todo ADD COLUMN parent_id TEXT;
+-- 标签（JSON 字符串数组，应用层解析；'' = 无标签）
+ALTER TABLE todo ADD COLUMN tags TEXT;
+-- 兄弟作用域手动排序号（越大越靠后；未设置 0 时排序按创建时间兜底）
+ALTER TABLE todo ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+-- 软删时间戳（毫秒文本）；NULL = 未删除，删除任务先进回收站
+ALTER TABLE todo ADD COLUMN deleted_at TEXT;
+-- 链接/附件条目（JSON 数组 [{title,url}]；v1 仅链接）
+ALTER TABLE todo ADD COLUMN links TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_todo_parent ON todo (parent_id);
+CREATE INDEX IF NOT EXISTS idx_todo_deleted ON todo (deleted_at);
+                            "#
+                        },
+                        Migration {
+                            version: 20,
+                            description: "Extend note with pinned/tags/trash/remind columns",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 便签功能扩展四列（与前端 ensureNoteFeatureColumns 兜底同 DDL）：
+-- 置顶标记：1 = 置顶（置顶区优先展示，不受排序影响）
+ALTER TABLE note ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+-- 标签（JSON 字符串数组，应用层解析；'' = 无标签）
+ALTER TABLE note ADD COLUMN tags TEXT;
+-- 软删时间戳（毫秒文本）；NULL = 未删除，删除便签先进回收站
+ALTER TABLE note ADD COLUMN deleted_at TEXT;
+-- 提醒时刻（ISO 文本）；NULL = 无提醒
+ALTER TABLE note ADD COLUMN remind_at TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_note_deleted ON note (deleted_at);
+                            "#
                         }
     ]
 }

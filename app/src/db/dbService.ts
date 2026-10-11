@@ -45,7 +45,6 @@ class DatabaseService {
             conn: appConnection,
             getKeyValue: (key) => this.settings.getKeyValue(key),
             recordStats: (partial) => statsService.record(partial),
-            revokeStats: (date, partial) => statsService.revoke(date, partial),
         });
         this.pinnedClip = createPinnedClipRepository({ conn: appConnection });
         this.todo = createTodoRepository({ conn: appConnection, recordStats: (partial) => statsService.record(partial) });
@@ -158,12 +157,6 @@ class DatabaseService {
     public async deleteClipboardData(id: number): Promise<void> {
         await this.ensureDbInitialized();
         return this.clipboard.deleteClipboardData(id);
-    }
-
-    /** 永久抹除：删除条目 + 联动原图文件 + 统计回冲（敏感内容防护闭环，见仓储同名方法） */
-    public async purgeClipboardData(id: number): Promise<void> {
-        await this.ensureDbInitialized();
-        return this.clipboard.purgeClipboardData(id);
     }
 
     // ===== 常用剪贴（pinned_clip）=====
@@ -346,6 +339,21 @@ class DatabaseService {
         return this.note.deleteNote(noteId);
     }
 
+    public async purgeNote(noteId: string): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.note.purgeNote(noteId);
+    }
+
+    public async restoreNote(noteId: string): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.note.restoreNote(noteId);
+    }
+
+    public async fetchDeletedNotes(page?: PageQuery): Promise<Note[]> {
+        await this.ensureDbInitialized();
+        return this.note.fetchDeletedNotes(page);
+    }
+
     public async fetchNotes(filter: any, page?: PageQuery): Promise<Note[]> {
         await this.ensureDbInitialized();
         return this.note.fetchNotes(filter, page);
@@ -371,9 +379,27 @@ class DatabaseService {
         return this.todo.deleteTodo(todoId);
     }
 
+    /** 彻底删除（回收站中清除）：真 DELETE，父任务连带子任务 */
+    public async purgeTodo(todoId: string): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.todo.purgeTodo(todoId);
+    }
+
+    /** 从回收站恢复（软删任务）：清 deleted_at，子任务随父级联 */
+    public async restoreTodo(todoId: string): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.todo.restoreTodo(todoId);
+    }
+
     public async fetchTodos(filter: any, page?: PageQuery): Promise<Todo[]> {
         await this.ensureDbInitialized();
         return this.todo.fetchTodos(filter, page);
+    }
+
+    /** 回收站列表：已软删任务，按删除时间倒序 */
+    public async fetchDeletedTodos(page?: PageQuery): Promise<Todo[]> {
+        await this.ensureDbInitialized();
+        return this.todo.fetchDeletedTodos(page);
     }
 
     public async fetchSingleTodo(todoId: string): Promise<Todo | undefined> {

@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('~/src/statistics/statsService', () => ({
     default: {
         record: vi.fn(async () => {}),
-        revoke: vi.fn(async () => {}),
         clearAll: vi.fn(async () => {}),
         flush: vi.fn(async () => {}),
     },
@@ -22,7 +21,7 @@ const PUBLIC_METHODS = [
     'ensureDbInitialized', 'startClipboardListener', 'suppressUseCountBump',
     // 剪贴板
     'decodeQrText', 'fetchClipboardData', 'fetchClipboardSingleData', 'updateFavorite',
-    'increaseUseCount', 'increaseUseCountByContent', 'deleteClipboardData', 'purgeClipboardData',
+    'increaseUseCount', 'increaseUseCountByContent', 'deleteClipboardData',
     'cleanupImageStorage', 'undoImageCleanup', 'finalizeImageCleanup',
     // 常用剪贴
     'fetchPinnedClips', 'fetchPinnedClip', 'insertPinnedClip', 'isPinnedContentExist',
@@ -36,15 +35,15 @@ const PUBLIC_METHODS = [
     'insertClipHabit', 'fetchHabitDigest', 'getAiCache', 'setAiCache',
     // 灵动岛历史
     'insertIslandHistory', 'getIslandHistory', 'clearIslandHistory',
-    // 便签
-    'insertNote', 'updateNote', 'deleteNote', 'fetchNotes', 'fetchSingleNote',
+    // 便签（软删扩展：purgeNote/restoreNote/fetchDeletedNotes 对齐待办回收站）
+    'insertNote', 'updateNote', 'deleteNote', 'purgeNote', 'restoreNote', 'fetchNotes', 'fetchDeletedNotes', 'fetchSingleNote',
     // 待办
-    'insertTodo', 'updateTodo', 'deleteTodo', 'fetchTodos', 'fetchSingleTodo',
+    'insertTodo', 'updateTodo', 'deleteTodo', 'purgeTodo', 'restoreTodo', 'fetchTodos', 'fetchDeletedTodos', 'fetchSingleTodo',
 ] as const;
 
 describe('dbService 门面兼容性', () => {
-    it('保留全部原公有方法（48 个）', () => {
-        expect(PUBLIC_METHODS).toHaveLength(48);
+    it('保留全部原公有方法（53 个）', () => {
+        expect(PUBLIC_METHODS).toHaveLength(53);
         for (const name of PUBLIC_METHODS) {
             expect(dbService, name).toHaveProperty(name);
             expect(typeof (dbService as unknown as Record<string, unknown>)[name], name).toBe('function');
