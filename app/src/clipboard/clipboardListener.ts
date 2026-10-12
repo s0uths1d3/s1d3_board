@@ -5,7 +5,7 @@ import { appConnection } from "../core/db/appConnection";
 import { runDatabaseMigrations } from "../core/db/migrator";
 import { createSettingsRepository } from "../core/db/repositories/settingsRepository";
 import { createClipboardRepository, type ClipboardRepository } from "../core/db/repositories/clipboardRepository";
-import { prewarmImageCache } from "../core/db/imageRef";
+import { prewarmImageCacheByRef } from "../core/db/imageRef";
 import statsService from "../statistics/statsService";
 import {
     ensurePrivacyLoaded, isPrivacyPaused,
@@ -41,6 +41,16 @@ export function suppressUseCountBump(ms?: number): void {
 }
 
 /**
+ * 复制瞬间的来源应用：查询当前前台进程名（复制不切换焦点，监听回调触发时前台仍是复制方）。
+ * 查询失败不阻断入库（来源留空，UI 不显示）。模块级：快速通道捕获（tryCaptureClipboardImage）共用。
+ */
+const queryForegroundApp = async (): Promise<string | null> => {
+    try {
+        return (await invoke<string | null>('foreground_app_name')) ?? null;
+    } catch { return null; }
+};
+
+/**
  * 启动剪贴板监听（先确保数据库迁移完成）：
  * 文本/图片更新 → 来源应用查询 → 落库 → 事件派发 → 裁剪。行为逐字保留原实现。
  */
@@ -50,14 +60,6 @@ export async function startClipboardListener(): Promise<void> {
     // 隐私开关状态落定后再挂监听：回调内同步读取开关值才有意义
     // （隐私模式 / 敏感防护 / 来源应用忽略名单；读取失败保持默认值，不阻断监听启动）
     await Promise.all([ensurePrivacyLoaded(), ensureSensitiveFilterLoaded(), ensureIgnoredAppsLoaded()]).catch(() => {});
-
-    // 复制瞬间的来源应用：查询当前前台进程名（复制不切换焦点，监听回调触发时前台仍是复制方）。
-    // 查询失败不阻断入库（来源留空，UI 不显示）。
-    const queryForegroundApp = async (): Promise<string | null> => {
-        try {
-            return (await invoke<string | null>('foreground_app_name')) ?? null;
-        } catch { return null; }
-    };
 
     // 文本更新
     unlisteners.push(await onTextUpdate(async (newText) => {
@@ -120,73 +122,7 @@ export async function startClipboardListener(): Promise<void> {
             return;
         }
         if (!updated.image) return;
-        // 隐私模式：暂停一切记录（快速通道捕获也不做，应用对剪贴板「失明」）
-        if (isPrivacyPaused()) return;
-        // 来源应用忽略名单：命中应用复制的图片不落盘、不落库、不弹岛
-        const sourceApp = await queryForegroundApp();
-        if (isIgnoredApp(sourceApp)) return;
-        try {
-            // ===== 快速通道（Windows）：单命令捕获 =====
-            // 旧链路 readImageBase64（数 MB IPC）→ save_clipboard_image（数 MB 回传落盘）→
-            // clipboard_image_thumb（重复读剪贴板）把原图跨进程搬运 3 次，串行排队是
-            // 截图后延迟入列的主因；快速通道剪贴板位图在 Rust 侧读一次，落盘/缩略图/
-            // 二维码一并完成，原图只随命令返回一次（预热解析缓存后列表刷新零读盘）。
-            // 捕获不可用（非 Windows/剪贴板锁冲突/格式不支持/超限）回退旧链路，行为不劣化。
-            const captured = await invoke<{ fileRef: string; thumb: string | null; qrText: string | null; original: string } | null>(
-                'clipboard_capture_image', { maxH: 384 },
-            ).catch(() => null);
-            if (captured?.fileRef && captured.original) {
-                prewarmImageCache(captured.fileRef, captured.original);
-                // 先派发岛事件（缩略图直显，不等写库）；content 保持原图语义（历史/出站不变），
-                // saveClipboard 写库后的二次派发按同内容去重跳过
-                bus.emit('island:copy', { content: captured.original, type: 'image', thumb: captured.thumb, qrText: captured.qrText });
-                // 落盘已由捕获命令完成，直接存 imgfile: 引用；QR 已扫：无码写 '' 哨兵不再补扫
-                await repo.saveClipboard(captured.fileRef, 'image', sourceApp, captured.qrText ?? '', captured.original);
-                // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
-                bus.emit('clipboard:changed');
-                return;
-            }
-            // ===== 旧链路（回退） =====
-            const base64 = await readImageBase64();
-            if (!base64) return;
-            // 拼上 data URL 前缀（无前缀时浏览器会把它当相对路径向 dev server 发请求导致 431）
-            const dataUrl = base64.startsWith('data:')
-                ? base64
-                : `data:image/png;base64,${base64}`;
-            // 原图落文件（Rust 侧 sha256 内容寻址去重 + 20MB 单条上限）：DB 只存 imgfile: 引用，
-            // 原图字节不再进 SQLite。落盘失败/超限返回 null，回退存 dataUrl 兜底（不丢数据）
-            let storeContent = dataUrl;
-            try {
-                const fileRef = await invoke<string | null>('save_clipboard_image', { dataUrl });
-                if (fileRef) storeContent = fileRef;
-            } catch { /* 落盘不可用：存 dataUrl 兜底 */ }
-            // 岛显示级缩略图 + 二维码识别：Rust 侧从剪贴板位图（解码好的像素）直接
-            // resize+编码（毫秒级，几十 KB）并顺手扫描 QR——原图（数 MB）整包广播给岛窗口
-            // + 全图解码是复杂图片岛显示慢的根因。非 Windows/读取失败返回 null：岛回退原图渲染
-            let thumb: string | null = null;
-            let qrText: string | null = null;
-            let qrScanned = false; // 二维码扫描是否已执行（决定无码时写 '' 哨兵还是留 NULL）
-            try {
-                const info = await invoke<{ thumb: string | null; qrText: string | null } | null>('clipboard_image_thumb', { maxH: 384 });
-                thumb = info?.thumb ?? null;
-                qrText = info?.qrText ?? null;
-                qrScanned = info !== null;
-            } catch { /* 命令不可用：回退 */ }
-            if (!qrScanned) {
-                // 缩略命令不可用（非 Windows）或剪贴板读取冲突：data URL 纯 Rust 解码兜底二维码
-                // 复制路径时序敏感（弹岛延迟敏感）：走单档 512px 快扫；彻底多尺度留给右键判定/懒解码
-                try { qrText = (await invoke<string | null>('clipboard_qr_from_data_url', { dataUrl, thorough: false })) ?? null; qrScanned = true; } catch { /* ignore */ }
-            }
-            // 先派发岛事件（带缩略图/二维码链接，弹岛不等写库），saveClipboard 写库后的二次派发由内容去重跳过
-            bus.emit('island:copy', { content: dataUrl, type: 'image', thumb, qrText });
-            // 已扫无码写 '' 哨兵（qr_text 非 NULL 不再补扫）；扫描完全不可用留 NULL（列表可见时补解码重试）。
-            // 尾参 dataUrl：岛事件语义需要原图（DB 存的是文件引用，见 saveClipboard 注释）
-            await repo.saveClipboard(storeContent, 'image', sourceApp, qrScanned ? (qrText ?? '') : null, dataUrl);
-            // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
-            bus.emit('clipboard:changed');
-        } catch (err) {
-            console.error('读取剪贴板图片失败:', err);
-        }
+        await tryCaptureClipboardImage();
     }));
 
     // 注意：startListening 的 listenTypes 参数会整体覆盖默认值
@@ -194,6 +130,89 @@ export async function startClipboardListener(): Promise<void> {
     // 只传 { image: true } 会关闭文本监听，导致 TEXT_CHANGED 永不触发。
     await startListening({ text: true, image: true, files: true });
     console.log("Clipboard listener started");
+}
+
+// ===== 图片复制捕获（快速通道，双触发源共用）=====
+// 触发源 1：插件原生 watcher onSomethingUpdate（~100-200ms 轮询延迟）；
+// 触发源 2：灵动岛 80ms 快速轮询的 clipboard_image_probe（序列号变化 + 有位图，≤80ms）。
+// capturing 互斥：两源并发只捕获一次，捕获失败自动释放由下一轮轮询/事件重试。
+let capturingImage = false;
+
+/** 捕获当前剪贴板图片：快速通道单命令落盘（原图不过前端 IPC），派发岛事件 + 入库。
+ *  隐私暂停 / 来源应用被忽略时静默跳过。返回是否进入了捕获流程。 */
+export async function tryCaptureClipboardImage(): Promise<boolean> {
+    if (capturingImage) return false;
+    // 隐私模式：暂停一切记录（快速通道捕获也不做，应用对剪贴板「失明」）
+    if (isPrivacyPaused()) return false;
+    capturingImage = true;
+    try {
+        // 来源应用忽略名单：命中应用复制的图片不落盘、不落库、不弹岛
+        const sourceApp = await queryForegroundApp();
+        if (isIgnoredApp(sourceApp)) return false;
+        // ===== 快速通道（Windows）：单命令捕获 =====
+        // 旧链路 readImageBase64（数 MB IPC）→ save_clipboard_image（数 MB 回传落盘）→
+        // clipboard_image_thumb（重复读剪贴板）把原图跨进程搬运 3 次，串行排队是
+        // 截图后延迟入列的主因；快速通道剪贴板位图在 Rust 侧读一次，落盘/缩略图/
+        // 二维码一并完成，原图字节不过 IPC（岛只收几十 KB 缩略图；列表按需读盘预热）。
+        // 捕获不可用（非 Windows/剪贴板锁冲突/格式不支持/超限）回退旧链路，行为不劣化。
+        const captured = await invoke<{ fileRef: string; thumb: string | null; qrText: string | null } | null>(
+            'clipboard_capture_image', { maxH: 384 },
+        ).catch(() => null);
+        if (captured?.fileRef) {
+            // 后台按引用读盘预热解析缓存（刚写的文件在 OS 页缓存，近乎零成本）：
+            // 随后的列表刷新 resolveImageRows 命中缓存，新图不再触发额外读盘
+            prewarmImageCacheByRef(captured.fileRef);
+            // 先派发岛事件（缩略图直显，不等写库）；content 用 imgfile: 引用（原图语义
+            // 由出站桥按需展开），saveClipboard 写库后的二次派发按同内容去重跳过
+            bus.emit('island:copy', { content: captured.fileRef, type: 'image', thumb: captured.thumb, qrText: captured.qrText });
+            // 落盘已由捕获命令完成，直接存 imgfile: 引用；QR 已扫：无码写 '' 哨兵不再补扫
+            await repo.saveClipboard(captured.fileRef, 'image', sourceApp, captured.qrText ?? '', captured.fileRef);
+            // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
+            bus.emit('clipboard:changed');
+            return true;
+        }
+        // ===== 旧链路（回退） =====
+        const base64 = await readImageBase64();
+        if (!base64) return false;
+        // 拼上 data URL 前缀（无前缀时浏览器会把它当相对路径向 dev server 发请求导致 431）
+        const dataUrl = base64.startsWith('data:')
+            ? base64
+            : `data:image/png;base64,${base64}`;
+        // 原图落文件（Rust 侧 sha256 内容寻址去重 + 20MB 单条上限）：DB 只存 imgfile: 引用，
+        // 原图字节不再进 SQLite。落盘失败/超限返回 null，回退存 dataUrl 兜底（不丢数据）
+        let storeContent = dataUrl;
+        try {
+            const fileRef = await invoke<string | null>('save_clipboard_image', { dataUrl });
+            if (fileRef) storeContent = fileRef;
+        } catch { /* 落盘不可用：存 dataUrl 兜底 */ }
+        // 岛显示级缩略图 + 二维码识别：Rust 侧从剪贴板位图（解码好的像素）直接
+        // resize+编码（毫秒级，几十 KB）并顺手扫描 QR——原图（数 MB）整包广播给岛窗口
+        // + 全图解码是复杂图片岛显示慢的根因。非 Windows/读取失败返回 null：岛回退原图渲染
+        let thumb: string | null = null;
+        let qrText: string | null = null;
+        let qrScanned = false; // 二维码扫描是否已执行（决定无码时写 '' 哨兵还是留 NULL）
+        try {
+            const info = await invoke<{ thumb: string | null; qrText: string | null } | null>('clipboard_image_thumb', { maxH: 384 });
+            thumb = info?.thumb ?? null;
+            qrText = info?.qrText ?? null;
+            qrScanned = info !== null;
+        } catch { /* 命令不可用：回退 */ }
+        if (!qrScanned) {
+            // 缩略命令不可用（非 Windows）或剪贴板读取冲突：data URL 纯 Rust 解码兜底二维码
+            // 复制路径时序敏感（弹岛延迟敏感）：走单档 512px 快扫；彻底多尺度留给右键判定/懒解码
+            try { qrText = (await invoke<string | null>('clipboard_qr_from_data_url', { dataUrl, thorough: false })) ?? null; qrScanned = true; } catch { /* ignore */ }
+        }
+        // 先派发岛事件（带缩略图/二维码链接，弹岛不等写库），saveClipboard 写库后的二次派发由内容去重跳过
+        bus.emit('island:copy', { content: dataUrl, type: 'image', thumb, qrText });
+        // 已扫无码写 '' 哨兵（qr_text 非 NULL 不再补扫）；扫描完全不可用留 NULL（列表可见时补解码重试）。
+        // 尾参 dataUrl：岛事件语义需要原图（DB 存的是文件引用，见 saveClipboard 注释）
+        await repo.saveClipboard(storeContent, 'image', sourceApp, qrScanned ? (qrText ?? '') : null, dataUrl);
+        // 写库成功后通知前端列表立即刷新（事件驱动，替代每秒轮询）
+        bus.emit('clipboard:changed');
+        return true;
+    } finally {
+        capturingImage = false;
+    }
 }
 
 /** 停止监听（模块 stop）：反挂文本/图片监听。startListening 无对应停止 API，保持插件级监听 */

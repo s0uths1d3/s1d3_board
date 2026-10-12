@@ -112,6 +112,7 @@ pub fn run() {
             app_usage::list_process_names,
             clipboard::thumb::clipboard_image_thumb,
             clipboard::thumb::clipboard_capture_image,
+            clipboard::thumb::clipboard_image_probe,
             clipboard::thumb::clipboard_qr_from_data_url,
             clipboard::image_store::save_clipboard_image,
             clipboard::image_store::read_clipboard_image_file,

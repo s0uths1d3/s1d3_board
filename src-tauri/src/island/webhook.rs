@@ -89,6 +89,12 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
+/// 是否存在启用的出站目标（出站桥按需扩图用）：无订阅者/目标时跳过大图展开，零成本。
+pub(crate) fn has_enabled_targets() -> bool {
+    let st = state().lock().expect("webhook state poisoned");
+    st.enabled && st.targets.iter().any(|t| t.enabled)
+}
+
 /// HTTP 客户端（全局复用连接池；超时统一 5s）
 fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();

@@ -49,6 +49,35 @@ with_clipboard_dib(|w, h, rgba| {
 })
 }
 
+/// 剪贴板图片探测（灵动岛 80ms 快速轮询用）：返回系统剪贴板序列号 + 是否含 CF_DIB。
+/// GetClipboardSequenceNumber / IsClipboardFormatAvailable 不打开剪贴板、纳秒级返回，
+/// 轮询零负担；前端据序列号变化立即触发 clipboard_capture_image（图片检测从插件
+/// watcher 的 ~100-200ms 轮询延迟压到 ≤80ms）。
+#[tauri::command]
+pub fn clipboard_image_probe() -> ClipboardImageProbe {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::DataExchange::{
+            GetClipboardSequenceNumber, IsClipboardFormatAvailable,
+        };
+        unsafe {
+            ClipboardImageProbe { seq: GetClipboardSequenceNumber(), has_dib: IsClipboardFormatAvailable(8u32) != 0 }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        ClipboardImageProbe { seq: 0, has_dib: false }
+    }
+}
+
+/// 探测结果：seq = 剪贴板全局序列号（内容一变就自增）；has_dib = 是否有位图可捕获
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardImageProbe {
+    pub seq: u32,
+    pub has_dib: bool,
+}
+
 /// 打开剪贴板读 CF_DIB 解析为 RGBA 交给回调消费（thumb / capture 共用）。
 /// 剪贴板是全局互斥资源：clipboard 插件的 200ms 轮询可能正持有打开状态，
 /// OpenClipboard 失败短暂重试（10ms × 3），仍失败放弃（宁缺勿错）。
@@ -59,12 +88,14 @@ use windows_sys::Win32::Foundation::HGLOBAL;
 use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 unsafe {
     let mut opened = false;
-    for _ in 0..3 {
+    // 25ms × 8（约 200ms 窗口）：clipboard 插件 200ms 停等轮询常正持有打开状态，
+    // 重试太短（旧 10ms×3）会频繁让快速通道失败掉进旧链路（数 MB 往返，慢数倍）
+    for _ in 0..8 {
         if OpenClipboard(std::ptr::null_mut()) != 0 {
             opened = true;
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(25));
     }
     if !opened {
         return None;
@@ -98,14 +129,14 @@ unsafe {
 // ===================== 复制快速通道：单命令捕获 =====================
 
 /// 单命令捕获结果：file_ref = 原图落盘引用（DB 直接存）；thumb = 岛显示缩略图；
-/// qr_text = 二维码文本；original = 原图 data URL（岛事件/出站的原图语义不变）。
+/// qr_text = 二维码文本。原图 data URL 不随命令返回（多 MB 跨 IPC 是延迟大头），
+/// 前端按需读盘（见 platform_capture 注释）。
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapturedClipboardImage {
     pub file_ref: String,
     pub thumb: Option<String>,
     pub qr_text: Option<String>,
-    pub original: String,
 }
 
 /// 复制图片快速通道（取代旧三段串行链路）：剪贴板位图读一次，PNG 落盘 +
@@ -124,14 +155,17 @@ pub async fn clipboard_capture_image(
 
 #[cfg(target_os = "windows")]
 fn platform_capture(app: &tauri::AppHandle, max_h: u32) -> Option<CapturedClipboardImage> {
-with_clipboard_dib(|w, h, rgba| {
-    // 原图直接落盘（内容寻址）：失败（超限等）返回 None 整体回退旧链路
-    let file_ref = crate::clipboard::image_store::save_rgba_image(app, w, h, rgba)?;
-    let original = png_data_url(w, h, rgba, None)?;
-    let thumb = thumb_png(w, h, rgba, max_h);
-    let qr_text = scan_qr_rgba(w, h, rgba);
-    Some(CapturedClipboardImage { file_ref, thumb, qr_text, original })
-})
+    with_clipboard_dib(|w, h, rgba| {
+        // 原图 PNG 只编码一次（Fast 压缩档，见 encode_rgba_png）：字节直接落盘。
+        // 原图 data URL 不再随命令返回——多 MB 字符串跨 IPC 是截图入列/弹岛慢的
+        // 大头，前端按需经 read_clipboard_image_file(s) 拉取（OS 页缓存，读刚刚写
+        // 的文件近乎零成本）；编码失败/超限返回 None 整体回退旧链路
+        let png_bytes = crate::clipboard::image_store::encode_rgba_png(w, h, rgba)?;
+        let file_ref = crate::clipboard::image_store::save_png_bytes_image(app, &png_bytes)?;
+        let thumb = thumb_png(w, h, rgba, max_h);
+        let qr_text = scan_qr_rgba(w, h, rgba);
+        Some(CapturedClipboardImage { file_ref, thumb, qr_text })
+    })
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -275,16 +309,16 @@ pub fn parse_dib(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     Some((w, h, rgba))
 }
 
-/// RGBA 像素 → 缩放（max_h 有值且高 > max_h 时只缩不放，Triangle 滤镜）→ PNG → data URL。
-/// max_h=None 编码原图（capture 快速通道返回原图 data URL 用）。
+/// RGBA 像素 → 缩略图 data URL（高 > max_h 时只缩不放，Triangle 滤镜）。
+/// 仅岛显示缩略图链路使用（384px 小图，Default 压缩毫秒级）；原图落盘/data URL
+/// 已由 image_store::encode_rgba_png（Fast 档）单次编码承担，此处不再参与。
 #[cfg(target_os = "windows")]
-fn png_data_url(w: u32, h: u32, rgba: &[u8], max_h: Option<u32>) -> Option<String> {
+fn thumb_png(w: u32, h: u32, rgba: &[u8], max_h: u32) -> Option<String> {
     use base64::Engine;
     use std::io::Cursor;
     let img = image::RgbaImage::from_raw(w, h, rgba.to_vec())?;
-    let max = max_h.unwrap_or(0);
-    let scale = if max > 0 && h > max {
-        max as f64 / h as f64
+    let scale = if h > max_h {
+        max_h as f64 / h as f64
     } else {
         1.0
     };
@@ -301,12 +335,6 @@ fn png_data_url(w: u32, h: u32, rgba: &[u8], max_h: Option<u32>) -> Option<Strin
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(png.into_inner())
     ))
-}
-
-/// RGBA 像素 → 缩略图 data URL（高 ≤ max_h，只缩不放）
-#[cfg(target_os = "windows")]
-fn thumb_png(w: u32, h: u32, rgba: &[u8], max_h: u32) -> Option<String> {
-    png_data_url(w, h, rgba, Some(max_h))
 }
 
 #[cfg(not(target_os = "windows"))]

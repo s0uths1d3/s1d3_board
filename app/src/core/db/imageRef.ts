@@ -51,13 +51,12 @@ function resolveCachePut(key: string, dataUrl: string): void {
     }
 }
 
-/** 预热解析缓存（复制图片快速通道：clipboard_capture_image 已把原图落盘并随命令
- *  返回原图 data URL，此处直接入缓存——随后的列表刷新 resolveImageRows 命中缓存，
- *  新图不再触发读盘 + 多 MB IPC 回传） */
-export function prewarmImageCache(fileRef: string, dataUrl: string): void {
-    if (fileRef.startsWith(IMAGE_FILE_PREFIX) && dataUrl.startsWith('data:')) {
-        resolveCachePut(fileRef, dataUrl);
-    }
+/** 按引用预热解析缓存（复制图片快速通道：原图不再随命令跨 IPC 返回——多 MB 字符串
+ *  是弹岛/入列延迟大头）：后台读盘入缓存，列表刷新即可命中。刚落盘的文件在 OS 页
+ *  缓存里，读回近乎零成本；命中缓存则什么也不做。fire-and-forget，不阻塞弹岛。 */
+export function prewarmImageCacheByRef(fileRef: string): void {
+    if (!fileRef.startsWith(IMAGE_FILE_PREFIX)) return;
+    void resolveImageContent(fileRef).catch(() => {});
 }
 
 /**

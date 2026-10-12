@@ -11,6 +11,7 @@ import { createBooleanSetting } from './useBooleanSetting';
 import { useI18n } from './useI18n';
 import { isPrivacyPaused } from './usePrivacySettings';
 import { isTauri } from '~/utils/env';
+import { tryCaptureClipboardImage } from '~/src/clipboard/clipboardListener';
 
 /**
  * 灵动岛提示：复制 / 粘贴时在屏幕顶部弹出的胶囊反馈（设置 → 通用 → 灵动岛提示）。
@@ -111,6 +112,9 @@ export interface IslandShowPayload {
   kind: IslandKind;
   text?: string;
   image?: string;
+  /** 图片 imgfile: 引用（复制快速通道不再跨 IPC 传原图）：不随 show-ui 下发，
+   *  仅随出站 island:show 事件带上，由 Rust 桥在有 SSE/Webhook 订阅者时读盘展开为原图 */
+  imageRef?: string;
   qrText?: string;
   /** 岛显示级缩略图（Rust 侧剪贴板位图直接 resize，几十 KB）：岛 UI 优先渲染它提速，
    *  出站事件（SSE/Webhook）仍发 image 原图；缺省回退 image 原图渐进渲染 */
@@ -157,6 +161,8 @@ let inited = false;
 const ISLAND_POLL_MS = 80;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let lastPollText: string | null = null;
+/** 最近一次探测到的剪贴板序列号基线（0 = 未初始化：首轮只记录不触发捕获） */
+let lastProbeSeq = 0;
 /** 最近一次由快速通道显示的复制内容（短期内同内容的原生事件不再重复弹岛；文本与图片均生效——
  *  图片路径监听回调先行派发带缩略图的岛事件，saveClipboard 写库后的二次派发据此去重） */
 let lastShownCopy: { type: 'text' | 'image' | 'html' | 'files'; content: string; until: number } | null = null;
@@ -166,6 +172,16 @@ function startIslandPoller(): void {
   // 记录起点文本，避免启动瞬间把既有剪贴板内容当新复制
   void readText().then((t) => { lastPollText = t ?? ''; }).catch(() => { lastPollText = ''; });
   pollTimer = setInterval(() => {
+    // 图片探测：GetClipboardSequenceNumber/IsClipboardFormatAvailable 不开剪贴板、纳秒级，
+    // 序列号变化且含位图 → 立即触发快速通道捕获（插件 watcher 要再等 ~100-200ms 才发现）
+    void invoke<{ seq: number; hasDib: boolean }>('clipboard_image_probe').then((p) => {
+      if (!p || !p.hasDib) return;
+      if (p.seq !== 0 && p.seq === lastProbeSeq) return;
+      const prevSeq = lastProbeSeq;
+      lastProbeSeq = p.seq;
+      if (prevSeq === 0 || Date.now() < suppressUntil) return; // 首轮只记基线，不触发
+      void tryCaptureClipboardImage();
+    }).catch(() => { /* 命令不可用（如非 Tauri 环境）：交给原生路径 */ });
     void readText().then((t) => {
       const text = t ?? '';
       const changed = text !== lastPollText;
@@ -428,9 +444,12 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
   // 图片事件的 data URL 不直接落历史库——后台降采样为小缩略图（webp 高 56px）再写入，
   // 生成失败写空串兜底，历史窗口按类型显示「[图片]」占位（不阻塞岛显示）
   if (payload.kind !== 'loading') {
-    if (imgData) {
+    const histImg = payload.thumb ?? imgData;
+    if (histImg) {
       const kind = payload.kind;
-      void makeImageThumb(imgData)
+      // 复制/剪切/粘贴路径已附带 Rust 侧 384px 显示缩略图时直接用它降档出 56px 历史图——
+      // 原图 data URL（全屏截图数 MB）在前端整图解码一次要数百 ms，纯浪费且挤占主线程
+      void makeImageThumb(histImg)
         .then((t) => dbService.insertIslandHistory({ kind, text: t }))
         .catch(() => dbService.insertIslandHistory({ kind, text: '' }))
         .catch(() => {});
@@ -465,6 +484,9 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
     kind: payload.kind,
     text: payload.kind === 'copy-image' ? undefined : payload.text,
     image: imgData,
+    // 复制快速通道图片不跨 IPC 传原图：出站载荷带 imgfile: 引用，Rust 桥在存在
+    // SSE/Webhook 订阅者时读盘展开为原图（无订阅者零开销，见 api.rs attach_event_bridge）
+    imageRef: payload.imageRef,
     qr_text: payload.qrText,
     title: payload.title,
     durationMs: payload.durationMs ?? islandDurationMs.value,
@@ -511,16 +533,20 @@ export function initCopyIsland(): void {
     const filesText = isFiles ? clipFilesPreview(d.content) : '';
     // 二维码图片：链接写入 text（胶囊文本与缩略图并存）并随 qrText 出站；无识别结果维持纯图片语义
     const qr = d.qrText || undefined;
+    // 图片内容双形态：快速通道 content 为 imgfile: 引用（原图不过 IPC，岛只显示几十 KB 缩略图），
+    // 旧链路 content 为原图 data URL——仅后者随 show-ui 下发原图渐进渲染
+    const isImgRef = d.type === 'image' && typeof d.content === 'string' && d.content.startsWith('imgfile:');
     void showIsland(cut
       ? {
           kind: 'cut',
           text: d.type === 'text' || isFiles ? (isFiles ? filesText : d.content).slice(0, PREVIEW_MAX) : (qr ?? ''),
-          image: d.type === 'image' ? d.content : undefined,
+          image: d.type === 'image' && !isImgRef ? d.content : undefined,
+          imageRef: isImgRef ? d.content : undefined,
           thumb: d.type === 'image' && d.thumb ? d.thumb : undefined,
           qrText: d.type === 'image' ? qr : undefined,
         }
       : d.type === 'image'
-        ? { kind: 'copy-image', text: qr, image: d.content, thumb: d.thumb ?? undefined, qrText: qr }
+        ? { kind: 'copy-image', text: qr, image: isImgRef ? undefined : d.content, imageRef: isImgRef ? d.content : undefined, thumb: d.thumb ?? undefined, qrText: qr }
         : { kind: 'copy', text: (isFiles ? filesText : d.content).slice(0, PREVIEW_MAX) });
   });
   // 系统提示（如敏感内容拦截）：纯文字 info 胶囊——载荷是 i18n key，此处翻译；
