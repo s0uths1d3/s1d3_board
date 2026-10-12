@@ -113,6 +113,8 @@ export interface Note {
     deleted_at?: string;
     /** 提醒时刻（ISO 文本）；NULL/undefined = 无提醒 */
     remind_at?: string;
+    /** 手动排序序号（拖动重排持久化；应用层 updated/created/color 排序忽略此列） */
+    sort_order?: number;
 }
 
 /** 智能剪贴板：clip 分词/复制规则（separator 分隔符拆分 / regex 正则提取） */

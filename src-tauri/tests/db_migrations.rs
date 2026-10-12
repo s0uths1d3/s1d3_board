@@ -8,7 +8,7 @@ use app_lib::migrations::{migrations, MigrationKind};
 #[test]
 fn versions_strictly_increasing_from_one() {
     let ms = migrations();
-    assert_eq!(ms.len(), 17, "迁移数变化时本断言应同步更新");
+    assert_eq!(ms.len(), 21, "迁移数变化时本断言应同步更新");
     for (i, m) in ms.iter().enumerate() {
         assert_eq!(m.version, (i + 1) as i64, "版本号必须从 1 连续递增");
         assert!(matches!(m.kind, MigrationKind::Up));

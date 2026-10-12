@@ -349,6 +349,11 @@ class DatabaseService {
         return this.note.restoreNote(noteId);
     }
 
+    public async updateNoteSortOrder(items: Array<{ id: string; sortOrder: number }>): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.note.updateNoteSortOrder(items);
+    }
+
     public async fetchDeletedNotes(page?: PageQuery): Promise<Note[]> {
         await this.ensureDbInitialized();
         return this.note.fetchDeletedNotes(page);

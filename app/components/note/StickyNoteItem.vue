@@ -9,8 +9,11 @@
         // 拖出钉桌：拖动中原卡片半透明缩小让位给幽灵卡，光标抓手
         dragActive && !ghostReturning ? 'cursor-grabbing scale-[0.97] opacity-55 shadow-none hover:translate-y-0' : '',
         dragActive ? 'cursor-grabbing' : 'cursor-pointer',
+        // 拖动重排源卡：禁用 FLIP move 动画（.note-move.note-drag-source，见 main.css）
+        dragSource ? 'note-drag-source' : '',
       ]"
       :style="noteStyle"
+      :data-note-id="note.id"
       @click="onCardClick"
       @pointerdown="onCardPointerDown"
   >
@@ -226,14 +229,14 @@
     </div>
   </div>
 
-  <!-- 拖出钉桌幽灵卡：跟随光标的迷你便签（Teleport 到 body 避免父级 overflow 裁剪）。
+  <!-- 拖出钉桌/窗内重排 幽灵卡：跟随光标的迷你便签（Teleport 到 body 避免父级 overflow 裁剪）。
        光标贴近主窗口边缘 → 金色图钉「可钉住」预览；完全出界松手即钉；
-       窗内松手 → 幽灵飞回原卡片（ghostReturning 过渡） -->
+       窗内松手 → 快速淡出（ghostFading，卡片已在重排位置合入）；打断 → 飞回原卡片（ghostReturning） -->
   <Teleport to="body">
     <div
         v-if="dragActive && !ghostHidden"
         class="pointer-events-none fixed z-[9999]"
-        :class="ghostReturning ? 'opacity-40 transition-all duration-200 ease-out' : ''"
+        :class="ghostReturning ? 'opacity-40 transition-all duration-200 ease-out' : ghostFading ? 'scale-105 opacity-0 transition-all duration-150 ease-out' : ''"
         :style="ghostStyle"
     >
       <div
@@ -285,6 +288,8 @@ const props = defineProps<{
   batchSelected?: boolean
   /** 回收站视图：只读 + 恢复/彻底删除，底部显示删除时间 */
   trash?: boolean
+  /** 拖动重排源卡：禁用其 FLIP move 动画（拖动态 scale 与 FLIP inline transform 冲突会缩放跳动；占位卡直接瞬移落位） */
+  dragSource?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -302,6 +307,12 @@ const emit = defineEmits<{
   (e: 'pin-desktop', id: string): void
   (e: 'ai-organize', id: string, action: 'summary' | 'extract'): void
   (e: 'toggle-batch-select'): void
+  /** 拖动重排（窗内阶段）：光标位置实时上报，父级做 grid 命中检测与让位预览 */
+  (e: 'drag-move', payload: { id: string; x: number; y: number }): void
+  /** 安全区松手：父级按预览顺序落位（持久化手动排序）；幽灵由本地快速淡出 */
+  (e: 'drag-drop', payload: { id: string; x: number; y: number }): void
+  /** 拖动被打断（ESC/失焦/系统打断/卸载）：父级还原预览 */
+  (e: 'drag-cancel', id: string): void
 }>()
 
 const editContent = ref('')
@@ -527,6 +538,8 @@ const dragActive = ref(false)
 const dragNearEdge = ref(false)
 const dragOutside = ref(false)
 const ghostReturning = ref(false)
+/** 窗内重排落位：幽灵快速淡出（卡片已在目标位置，无需飞回） */
+const ghostFading = ref(false)
 const ghostX = ref(0)
 const ghostY = ref(0)
 let dragClickSuppressed = false
@@ -664,6 +677,7 @@ function cancelDrag() {
   if (!dragActive.value) return
   endDragSelect()
   unlistenDragUp()
+  emit('drag-cancel', props.note.id)
   const follow = followWin
   followWin = null
   if (follow) {
@@ -751,6 +765,8 @@ function onCardPointerDown(e: PointerEvent) {
     }
     ghostX.value = ev.clientX
     ghostY.value = ev.clientY
+    // 窗内重排预览：光标位置实时上报（父级 rAF 节流做 grid 命中检测）
+    emit('drag-move', { id: props.note.id, x: ev.clientX, y: ev.clientY })
   }
 
   dragUpHandler = () => {
@@ -797,17 +813,15 @@ function onCardPointerDown(e: PointerEvent) {
       saveAnimTimer = setTimeout(() => { saved.value = false }, 500)
       emit('pin-desktop', props.note.id)
     } else {
-      // 安全区松手：幽灵飞回原卡片后恢复
+      // 安全区松手：窗内重排落位（父级按预览顺序持久化手动排序；拖动中卡片已通过
+      // TransitionGroup 让位到目标位置），幽灵快速淡出即"合入"卡片，无飞回
+      emit('drag-drop', { id: props.note.id, x: ghostX.value, y: ghostY.value })
       ghostHidden.value = false
-      ghostReturning.value = true
-      if (dragOriginRect) {
-        ghostX.value = dragOriginRect.left + dragOriginRect.width / 2
-        ghostY.value = dragOriginRect.top + 44
-      }
+      ghostFading.value = true
       setTimeout(() => {
-        ghostReturning.value = false
+        ghostFading.value = false
         dragActive.value = false
-      }, 220)
+      }, 140)
     }
   }
 

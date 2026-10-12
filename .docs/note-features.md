@@ -18,6 +18,7 @@
 | 9 | 字数统计 | ✅ 已完成 | 卡片角落字数 |
 | 10 | AI 便签整理 | ✅ 已完成 | 摘要/提取待办（依赖设置页 AI Key，结果追加） |
 | 11 | 桌面便签窗口 | ✅ 已完成 | 便签钉到桌面置顶小窗常驻（`note-pin/:id`） |
+| 12 | 拖动重排 | ✅ 已完成 | `sort_order` 列（v21）、按住卡片拖动让位、手动排序持久化 |
 
 ---
 
@@ -31,7 +32,7 @@
 - 配色：`note_colors` 存 settings KV（默认六色 + 自定义增删改 + 独立配色管理窗口）
 - 快捷键：Ctrl+N 新建、Ctrl+E 保存
 
-### note 表新增列（双侧同 DDL：migrations.rs v20 + migrator.ts 兜底）
+### note 表新增列（双侧同 DDL：migrations.rs v20/v21 + migrator.ts 兜底）
 
 | 列 | 类型 | 说明 |
 |---|---|---|
@@ -39,6 +40,7 @@
 | `tags` | TEXT | 标签 JSON 字符串数组（功能 2），NULL/'' = 无 |
 | `deleted_at` | TEXT | 软删时间戳（毫秒文本，功能 5），NULL = 未删除 |
 | `remind_at` | TEXT | 提醒时刻 ISO 文本（原功能 4 已移除，列保留 schema 兼容历史数据，恒空串） |
+| `sort_order` | INTEGER NOT NULL DEFAULT 0 | 手动排序序号（功能 12），拖动重排落位持久化 |
 
 清单模式（功能 3）与轻量格式（功能 8）**不加列**：`content` 保持纯文本，用 Markdown 惯用语法表达，渲染层解析。
 
@@ -113,11 +115,11 @@
 
 ### 功能介绍
 
-搜索栏旁排序下拉：**最近更新 / 创建时间 / 颜色**（默认最近更新倒序）；置顶便签永远在置顶区，不参与排序。
+搜索栏旁排序下拉：**最近更新 / 创建时间 / 颜色 / 手动排序（拖动）**（默认最近更新倒序）；置顶便签永远在置顶区，不参与排序。手动排序选项由拖动重排（功能 12）落位时自动切换，无需手动选择。
 
 ### 技术方案
 
-- 展示层排序 `compareNotes`：`updated_at` 倒序（默认）/ `created_at` 倒序 / 按 `color`（当前配色顺序 noteColors 索引，自定义配色排后）
+- 展示层排序 `compareNotes`：`updated_at` 倒序（默认）/ `created_at` 倒序 / 按 `color`（当前配色顺序 noteColors 索引，自定义配色排后）/ `sort_order` 升序（拖动落位顺序，`updated_at` 倒序兜底）
 - 置顶便签永远在置顶区（与排序解耦）
 
 ---
@@ -196,6 +198,23 @@
 
 ---
 
+## 十二、拖动重排（手动排序）
+
+### 功能介绍
+
+主窗口内**按住便签卡片拖动**即可自由排序：其余卡片实时让位（FLIP 动画），松手落位并持久化，排序下拉自动切换为**手动排序（拖动）**。与「拖出钉桌」（功能 11）共用同一手势——**窗内松手 = 重排落位，拖出窗口/贴边松手 = 钉桌**，ESC / 失焦 / pointercancel = 取消飞回。
+
+### 技术方案
+
+- `sort_order` 列（v21 迁移 + migrator.ts 兜底）；`insertNote` 子查询 `MAX(sort_order)+1`，新便签排在手动顺序末尾
+- 持久化走专用批量方法 `updateNoteSortOrder`（**单条 CASE WHEN 批量 UPDATE，天然原子**——不用 BEGIN/COMMIT：tauri-plugin-sql execute 走连接池，事务语句可能落不同连接报 "cannot commit - no transaction is active"；**不经过 updateNote**，不刷 `updated_at`）——时间排序与轮询签名（`${id}:${updated_at}`）完全不受影响；落位整列回填 0..n-1，置顶/普通分区的相对顺序随全列表保留
+- 命中检测（基准列表算法，根治让位振荡）：判定基准 = **去掉拖动卡后的列表**（其余卡让位后的稳定布局，插入点语义恒定，不会"插入→判定无变化→强制回退→再插入"来回切换）；卡片矩形取 `offsetLeft/offsetTop` 布局位（不受 FLIP transform 动画中间态干扰）；光标命中同区卡 → 过垂直中线插其后、未过插其前（自带滞后）；未命中 → 区末；落异区卡上 → 预览不动。预览顺序未变时**保持现状不清空**
+- 拖动中 `dragPreview` 实时更新（`drag-move` 事件经 rAF 节流上报光标），`<TransitionGroup name="note">` + `.note-move`（transform 0.26s）让其余卡片让位；**源卡禁用 FLIP move**（`.note-drag-source` transition: none——拖动态 scale(0.97) 与 FLIP inline transform 冲突会缩放跳动）；松手预览保留到 `sort_order` 落库 + manual 排序就绪后才释放（gridNotes 已与预览一致，落位不跳变）
+- 复用 StickyNoteItem 既有拖动手势（>6px 激活）：原「窗内安全区松手取消飞回」改为 `drag-drop` 落位合入（幽灵卡 140ms 快速淡出）；取消路径（ESC/失焦/pointercancel）仍飞回
+- 已选排序模式不受影响——切换到其它排序（更新时间/创建时间/颜色）即按该模式展示，`sort_order` 保留待切回
+
+---
+
 ## 未实现项（如实标注）
 
 ### 导出 txt — ❌ 不做
@@ -220,5 +239,5 @@
 | 验证项 | 命令 | 结果 |
 |--------|------|------|
 | 前端类型检查 | `npx vue-tsc --noEmit` | ✅ 0 错误 |
-| 单元测试 | `npm run test`（vitest） | ✅ 31 文件 / 270 用例全绿 |
-| Rust 编译检查 | `cargo check`（src-tauri/） | ✅ Finished（含 v20 迁移） |
+| 单元测试 | `npm run test`（vitest） | ✅ 31 文件 / 271 用例全绿（含 `updateNoteSortOrder` CASE WHEN 批量断言） |
+| Rust 编译检查 | `cargo check`（src-tauri/） | ✅ Finished（含 v20/v21 迁移） |

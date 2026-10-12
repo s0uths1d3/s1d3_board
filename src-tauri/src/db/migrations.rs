@@ -477,6 +477,16 @@ ALTER TABLE note ADD COLUMN remind_at TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_note_deleted ON note (deleted_at);
                             "#
+                        },
+                        Migration {
+                            version: 21,
+                            description: "Add note sort_order for manual drag ordering",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 手动排序序号（拖动重排持久化；应用层按 updated/created/color 排序时忽略此列）。
+-- 存量便签统一 0，首次进入手动排序时按当前可视顺序整列回填。
+ALTER TABLE note ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+                            "#
                         }
     ]
 }

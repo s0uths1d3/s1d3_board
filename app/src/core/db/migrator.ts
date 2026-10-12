@@ -217,6 +217,8 @@ async function ensureFeatureColumns(db: SqlDatabase) {
         { table: 'note', column: 'tags', ddl: 'ALTER TABLE note ADD COLUMN tags TEXT' },
         { table: 'note', column: 'deleted_at', ddl: 'ALTER TABLE note ADD COLUMN deleted_at TEXT' },
         { table: 'note', column: 'remind_at', ddl: 'ALTER TABLE note ADD COLUMN remind_at TEXT' },
+        // 手动排序序号（拖动重排持久化，v21；存量 0，进入手动排序时回填）
+        { table: 'note', column: 'sort_order', ddl: 'ALTER TABLE note ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0' },
     ];
     let addedPriorityLevel = false;
     for (const { table, column, ddl } of wanted) {

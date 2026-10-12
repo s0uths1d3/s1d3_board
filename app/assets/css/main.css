@@ -457,6 +457,16 @@ body.note-drag-selecting * {
   animation: note-pop-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* ===== 便签拖动重排（TransitionGroup name=note）：FLIP 让位/落位动画 ===== */
+.note-move {
+  transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* 拖动源卡禁用 FLIP move 过渡：拖动态自带 scale(0.97)，FLIP 的 inline transform
+   会覆盖它（动画期间变 100%、结束又跳回 97% = 缩放跳动）；占位卡直接瞬移落位 */
+.note-move.note-drag-source {
+  transition: none;
+}
+
 
 /* ===== 下拉面板：从触发侧柔和淡入 + 轻微位移放大，避免突兀感 ===== */
 .check-pop-enter-active {

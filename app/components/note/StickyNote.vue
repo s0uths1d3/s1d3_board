@@ -99,15 +99,21 @@
       </div>
 
       <!-- Grid 行优先布局（从左到右、从上到下）：原 columns 多列为列优先填充，
-           便签顺序视觉跳跃（右侧列空缺、后续跑到下一行）；items-start 保证同行卡片顶对齐、高度独立 -->
-      <div ref="gridEl" class="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+           便签顺序视觉跳跃（右侧列空缺、后续跑到下一行）；items-start 保证同行卡片顶对齐、高度独立。
+           TransitionGroup（name=note → move 类 .note-move）：拖动重排时其余卡片 FLIP 让位/落位动画 -->
+      <TransitionGroup
+          ref="gridEl"
+          tag="div"
+          name="note"
+          class="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
+      >
         <!-- 置顶区分隔行：仅列表视图且存在置顶便签时显示（置顶卡片紧随其后，同网格列对齐） -->
-        <div v-if="view === 'list' && pinnedNotes.length" class="col-span-full flex items-center gap-2 pb-1 text-xs text-ink-faint">
+        <div v-if="view === 'list' && pinnedNotes.length" key="pinned-header" class="col-span-full flex items-center gap-2 pb-1 text-xs text-ink-faint">
           <svg class="h-3.5 w-3.5 text-gold" fill="currentColor" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" /></svg>
           {{ t('note.pinned_section', { n: pinnedNotes.length }) }}
         </div>
         <StickyNoteItem
-            v-for="(note, idx) in gridNotes"
+            v-for="(note, idx) in renderNotes"
             :key="note.id"
             :note="note"
             :selected="!batchMode && selectedIndex === idx"
@@ -117,6 +123,7 @@
             :batch-mode="batchMode"
             :batch-selected="batchSelectedIds.has(note.id)"
             :trash="view === 'trash'"
+            :drag-source="draggingId === note.id"
             @update="updateNote"
             @request-delete="onRequestDelete(note)"
             @color-change="changeNoteColor"
@@ -131,8 +138,11 @@
             @pin-desktop="pinToDesktop"
             @ai-organize="onAiOrganize"
             @toggle-batch-select="toggleBatchSelect(note.id)"
+            @drag-move="onNoteDragMove"
+            @drag-drop="onNoteDragDrop"
+            @drag-cancel="onNoteDragCancel"
         />
-      </div>
+      </TransitionGroup>
 
       <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载"（回收站视图不分页） -->
       <div
@@ -205,7 +215,8 @@ const { t } = useI18n();
 // 键盘选择态（响应式网格，列数动态获取）
 const selectedIndex = ref(0)
 const editingId = ref<string | null>(null)
-const gridEl = ref<HTMLElement>()
+/** TransitionGroup 组件实例（$el 为 grid 容器）：键盘导航命中 + 拖动重排命中检测共用 */
+const gridEl = ref<{ $el: HTMLElement } | null>(null)
 
 // ===== 搜索（便签内容）=====
 const noteSearch = ref('')
@@ -225,15 +236,22 @@ const displayNotes = computed(() => {
 })
 
 // ===== 排序（便签 §6）：置顶区不受排序影响；规则应用于其余便签 =====
-type SortKey = 'updated' | 'created' | 'color'
+type SortKey = 'updated' | 'created' | 'color' | 'manual'
 const currentSort = ref<SortKey>('updated')
 const sortOptions = computed(() => [
   { label: t('note.sort_updated'), value: 'updated' },
   { label: t('note.sort_created'), value: 'created' },
   { label: t('note.sort_color'), value: 'color' },
+  { label: t('note.sort_manual'), value: 'manual' },
 ])
-/** 排序比较：updated/created 时间倒序；color 按当前配色顺序（noteColors 索引，自定义配色排后） */
+/** 排序比较：updated/created 时间倒序；color 按当前配色顺序（noteColors 索引，自定义配色排后）；
+ *  manual 按 sort_order 升序（拖动重排持久化），未回填过的存量（同值 0）以 updated_at 稳定兜底 */
 function compareNotes(a: StickyNote, b: StickyNote): number {
+  if (currentSort.value === 'manual') {
+    const diff = (a.sort_order ?? 0) - (b.sort_order ?? 0)
+    if (diff !== 0) return diff
+    return (parseInt(b.updated_at || '0') || 0) - (parseInt(a.updated_at || '0') || 0)
+  }
   if (currentSort.value === 'color') {
     const idx = (color?: string) => noteColors.value.findIndex(c => c.color === resolveNoteColor(color))
     const ca = idx(a.color), cb = idx(b.color)
@@ -256,6 +274,125 @@ const gridNotes = computed(() => {
   const rest = displayNotes.value.filter(n => n.pinned !== 1).sort(compareNotes)
   return [...pinnedNotes.value, ...rest]
 })
+
+// ===== 拖动重排（便签 §12）：与"拖出钉桌"同一手势——窗内松手 = 落位重排，拖出窗口 = 钉桌 =====
+/** 拖动中的让位预览：把拖动卡插入基准槽位后的临时渲染列表（TransitionGroup FLIP 动画呈现让位） */
+const dragPreview = ref<StickyNote[] | null>(null)
+/** 当前拖动源卡 id：模板标记 .note-drag-source（禁用其 FLIP move 动画，见 main.css） */
+const draggingId = ref<string | null>(null)
+/** 渲染列表：拖动中用预览，否则用 gridNotes */
+const renderNotes = computed(() => dragPreview.value ?? gridNotes.value)
+let dragRafId = 0
+let dragPending: { id: string; x: number; y: number } | null = null
+
+/** grid 命中检测（基准列表算法，根治让位振荡）：
+ *  判定基准 = 去掉拖动卡后的列表——其余卡让位后的稳定布局，插入点语义恒定，
+ *  不会出现"插入后拖动卡紧邻目标卡 → 判定无变化 → 强制回退 → 又插入"的来回切换；
+ *  卡片矩形取 offsetLeft/offsetTop 布局位（FLIP 只用 transform 做视觉偏移，布局位
+ *  已是让位后终态），不受 getBoundingClientRect 的动画中间态干扰。
+ *  光标命中同区卡 X → 过垂直中线插其后、未过插其前（中线判定自带滞后，临界不抖）；
+ *  未命中任何卡 → 区末；光标落在异区卡上 → 跨区不支持返回 null。
+ *  返回最终完整列表（含拖动卡）或 null。 */
+function computeFinalList(dragId: string, x: number, y: number): StickyNote[] | null {
+  const list = renderNotes.value
+  const dragNote = list.find(n => n.id === dragId)
+  if (!dragNote) return null
+  const sameZone = (n: StickyNote) => (n.pinned === 1) === (dragNote.pinned === 1)
+  const grid = gridEl.value?.$el as HTMLElement | undefined
+  if (!grid) return null
+  // 全部卡片（除拖动卡）的布局矩形：offsetParent rect + offsetLeft/Top = 视口坐标（无 transform 干扰）
+  const rectById = new Map<string, { left: number; top: number; right: number; bottom: number }>()
+  for (const el of grid.querySelectorAll<HTMLElement>('[data-note-id]')) {
+    const id = el.dataset.noteId
+    if (!id || id === dragId) continue
+    const parent = el.offsetParent as HTMLElement | null
+    const pr = parent ? parent.getBoundingClientRect() : null
+    const left = (pr?.left ?? 0) + el.offsetLeft
+    const top = (pr?.top ?? 0) + el.offsetTop
+    rectById.set(id, { left, top, right: left + el.offsetWidth, bottom: top + el.offsetHeight })
+  }
+  const hit = (r: { left: number; top: number; right: number; bottom: number }) =>
+    y >= r.top && y < r.bottom && x < r.right
+  // 光标落在异区卡上 → 跨区不支持，预览不动
+  for (const n of list) {
+    if (n.id === dragId || sameZone(n)) continue
+    const r = rectById.get(n.id)
+    if (r && hit(r)) return null
+  }
+  // 基准 = 去掉拖动卡；同区子序列行优先判定插入点
+  const base = list.filter(n => n.id !== dragId)
+  const zoneIdx: number[] = []
+  base.forEach((n, i) => { if (sameZone(n)) zoneIdx.push(i) })
+  if (zoneIdx.length === 0) return null
+  let insertAt = -1
+  for (const bi of zoneIdx) {
+    const n = base[bi]
+    const r = n ? rectById.get(n.id) : undefined
+    if (!n || !r || !hit(r)) continue
+    insertAt = x < (r.left + r.right) / 2 ? bi : bi + 1
+    break
+  }
+  if (insertAt < 0) {
+    const last = zoneIdx[zoneIdx.length - 1]
+    if (last === undefined) return null
+    insertAt = last + 1 // 未命中任何卡 → 区末
+  }
+  const finalList = [...base]
+  finalList.splice(insertAt, 0, dragNote)
+  return finalList
+}
+
+/** 拖动中实时预览（rAF 节流 + 顺序变化才更新，避免高频重排与振荡） */
+function onNoteDragMove(payload: { id: string; x: number; y: number }) {
+  dragPending = payload
+  draggingId.value = payload.id
+  if (dragRafId) return
+  dragRafId = requestAnimationFrame(() => {
+    dragRafId = 0
+    const p = dragPending
+    if (!p) return
+    const finalList = computeFinalList(p.id, p.x, p.y)
+    if (!finalList) { dragPreview.value = null; return }
+    const cur = dragPreview.value ?? gridNotes.value
+    // 顺序未变保持现状（清掉预览会与已让位布局不一致，来回跳）
+    const unchanged = cur.length === finalList.length && cur.every((n, i) => n.id === finalList[i]?.id)
+    if (unchanged) return
+    dragPreview.value = finalList
+  })
+}
+
+/** 安全区松手落位：按预览顺序整列回填 sort_order（0..n-1，一次事务；分区相对顺序随全列表保留），
+ *  并切到手动排序。不触碰 updated_at（时间排序不受影响，轮询签名也不变）。
+ *  预览保留到落位数据就绪后释放——期间 gridNotes(manual) 已与预览一致，松手不跳变 */
+async function onNoteDragDrop() {
+  const finalList = dragPreview.value
+  const release = () => {
+    dragPreview.value = null
+    draggingId.value = null
+  }
+  if (!finalList) { release(); return }
+  try {
+    await clipboardService.updateNoteSortOrder(
+      finalList.map((n, i) => ({ id: n.id, sortOrder: i })),
+    )
+    // 本地同步（免 reload）：源列表 sort_order 更新后，manual 排序 computed 自然呈现新顺序
+    const orderById = new Map(finalList.map((n, i) => [n.id, i]))
+    notes.value = notes.value.map(n => (orderById.has(n.id) ? { ...n, sort_order: orderById.get(n.id)! } : n))
+    currentSort.value = 'manual'
+    release()
+  } catch (e) {
+    release()
+    console.error('[note] 拖动排序保存失败:', e)
+    showHint(t('note.save_failed'), 'error')
+  }
+}
+
+/** 拖动被打断（ESC/失焦/系统打断）：还原预览，顺序不动 */
+function onNoteDragCancel() {
+  dragPreview.value = null
+  draggingId.value = null
+}
+
 
 /** 搜索范围切换到"全部"时：重新查库，确保涵盖未加载的便签；清空搜索时恢复全量。
  *  加 300ms trailing 防抖：此前每个按键立即查库，连续输入 = 连续 SQL */
@@ -607,7 +744,7 @@ async function pinToDesktop(id: string) {
 /** 把选中卡片滚动到可见区域（smooth=true 时用中心对齐，配合搜索跳转的丝滑滚动） */
 async function scrollSelectedIntoView(center = false) {
   await nextTick()
-  const grid = gridEl.value
+  const grid = gridEl.value?.$el
   const cards = grid?.querySelectorAll('.sticky-note-card')
   const el = cards?.[selectedIndex.value] as HTMLElement | undefined
   if (!el) return
@@ -677,7 +814,7 @@ async function onKeydown(e: KeyboardEvent) {
     case 'ArrowDown':
     case 'ArrowLeft':
     case 'ArrowRight': {
-      const cards = gridEl.value?.querySelectorAll('.sticky-note-card')
+      const cards = gridEl.value?.$el?.querySelectorAll('.sticky-note-card')
       if (cards && cards.length > 0) {
         const dirMap = {
           ArrowUp: 'up', ArrowDown: 'down',
@@ -762,6 +899,7 @@ onBeforeUnmount(() => {
     clearInterval(intervalId);
     intervalId = null;
   }
+  if (dragRafId) { cancelAnimationFrame(dragRafId); dragRafId = 0 }
   if (searchFetchTimer) clearTimeout(searchFetchTimer)
   window.removeEventListener('keydown', onKeydown, true);
   bus.off('create-note', onCreateNote);

@@ -17,6 +17,8 @@ export interface NoteRepository {
     purgeNote(noteId: string): Promise<void>;
     /** 从回收站恢复：清 deleted_at */
     restoreNote(noteId: string): Promise<void>;
+    /** 批量写手动排序（拖动重排持久化）：整区回填 0..n-1，不触碰 updated_at（时间排序不受影响） */
+    updateNoteSortOrder(items: Array<{ id: string; sortOrder: number }>): Promise<void>;
     /** 未删除便签查询（主列表/提醒调度等场景） */
     fetchNotes(filter: any, page?: PageQuery): Promise<Note[]>;
     /** 回收站列表：deleted_at IS NOT NULL，按删除时间倒序 */
@@ -43,9 +45,9 @@ function stringifyNoteTags(tags?: string[]): string {
     return tags && tags.length ? JSON.stringify(tags) : '';
 }
 
-/** DB 行 → 应用层 Note（tags 解析；pinned 兜底 0） */
+/** DB 行 → 应用层 Note（tags 解析；pinned/sort_order 兜底 0） */
 function mapNoteRow(row: any): Note {
-    return { ...row, pinned: row.pinned ?? 0, tags: parseNoteTags(row.tags) };
+    return { ...row, pinned: row.pinned ?? 0, sort_order: row.sort_order ?? 0, tags: parseNoteTags(row.tags) };
 }
 
 export function createNoteRepository({ conn, recordStats }: { conn: DatabaseConnection; recordStats: RecordStats }): NoteRepository {
@@ -53,8 +55,9 @@ export function createNoteRepository({ conn, recordStats }: { conn: DatabaseConn
         async insertNote(note: Note): Promise<void> {
             const db = await conn.ready();
             const now = Math.floor(Date.now());
+            // sort_order 取未删除区最大值 +1：新便签在手动排序下排区末尾（其它排序模式忽略该列）
             await db.execute(
-                "INSERT INTO note (id, content, color, created_at, updated_at, pinned, tags, remind_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "INSERT INTO note (id, content, color, created_at, updated_at, pinned, tags, remind_at, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM note WHERE deleted_at IS NULL))",
                 [note.id, note.content, note.color || '', now, now, note.pinned ?? 0, stringifyNoteTags(note.tags), note.remind_at || '']
             );
             // 统计埋点（fire-and-forget）：新建便签 +1
@@ -87,6 +90,20 @@ export function createNoteRepository({ conn, recordStats }: { conn: DatabaseConn
         async restoreNote(noteId: string): Promise<void> {
             const db = await conn.ready();
             await db.execute("UPDATE note SET deleted_at = NULL WHERE id = $1", [noteId]);
+        },
+
+        async updateNoteSortOrder(items: Array<{ id: string; sortOrder: number }>): Promise<void> {
+            if (items.length === 0) return
+            const db = await conn.ready();
+            // 单条 CASE WHEN 批量 UPDATE（原子落位，只动 sort_order 不触碰 updated_at）。
+            // 不用 BEGIN/COMMIT：tauri-plugin-sql 的 execute 走连接池，事务语句可能落在
+            // 不同连接上（COMMIT 时当前连接无事务 → "cannot commit - no transaction is active"）；
+            // 单条语句天然原子，无需显式事务
+            const n = items.length;
+            const cases = items.map((_, i) => `WHEN $${i + 1} THEN $${n + i + 1}`).join(' ');
+            const inList = items.map((_, i) => `$${i + 1}`).join(',');
+            const params = [...items.map(it => it.id), ...items.map(it => it.sortOrder)];
+            await db.execute(`UPDATE note SET sort_order = CASE id ${cases} END WHERE id IN (${inList})`, params);
         },
 
         async fetchNotes(filter: any, page?: PageQuery): Promise<Note[]> {

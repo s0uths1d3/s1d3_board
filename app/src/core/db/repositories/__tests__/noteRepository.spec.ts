@@ -3,13 +3,14 @@ import { createNoteRepository } from '../noteRepository';
 import { connWith, stubDb } from './helpers';
 
 describe('noteRepository', () => {
-    it('insertNote：INSERT 全列（pinned/tags/remind_at 兜底）+ 统计埋点 note_added', async () => {
+    it('insertNote：INSERT 全列（pinned/tags/remind_at 兜底，sort_order 子查询取区末）+ 统计埋点 note_added', async () => {
         const { db, executes } = stubDb();
         const recordStats = vi.fn(async () => {});
         const repo = createNoteRepository({ conn: await connWith(db), recordStats });
 
         await repo.insertNote({ id: 'n1', content: '内容', color: 'amber', updated_at: '' });
-        expect(executes[0]?.sql).toContain('INSERT INTO note (id, content, color, created_at, updated_at, pinned, tags, remind_at)');
+        expect(executes[0]?.sql).toContain('INSERT INTO note (id, content, color, created_at, updated_at, pinned, tags, remind_at, sort_order)');
+        expect(executes[0]?.sql).toContain('(SELECT COALESCE(MAX(sort_order), 0) + 1 FROM note WHERE deleted_at IS NULL)');
         expect(executes[0]?.params).toEqual(['n1', '内容', 'amber', expect.any(Number), expect.any(Number), 0, '', '']);
         expect(recordStats).toHaveBeenCalledWith({ note_added: 1 });
 
@@ -47,6 +48,39 @@ describe('noteRepository', () => {
         expect(recordStats).toHaveBeenCalledTimes(1);
     });
 
+    it('updateNoteSortOrder：单条 CASE WHEN 批量 UPDATE（原子落位，只动 sort_order）', async () => {
+        const { db, executes } = stubDb();
+        const repo = createNoteRepository({ conn: await connWith(db), recordStats: vi.fn(async () => {}) });
+
+        await repo.updateNoteSortOrder([
+            { id: 'n1', sortOrder: 0 },
+            { id: 'n2', sortOrder: 1 },
+        ]);
+        // 单条语句天然原子：不走 BEGIN/COMMIT——tauri-plugin-sql execute 走连接池，
+        // 事务语句可能落不同连接（"cannot commit - no transaction is active"）
+        expect(executes).toHaveLength(1);
+        const first = executes[0];
+        expect(first?.sql).toContain('UPDATE note SET sort_order = CASE id');
+        expect(first?.sql).toContain('WHEN $1 THEN $3');
+        expect(first?.sql).toContain('WHEN $2 THEN $4');
+        expect(first?.sql).toContain('WHERE id IN ($1,$2)');
+        expect(first?.params).toEqual(['n1', 'n2', 0, 1]);
+
+        // 空列表：不执行任何 SQL
+        await repo.updateNoteSortOrder([]);
+        expect(executes).toHaveLength(1);
+
+        // 失败直接上抛（单条语句无需 ROLLBACK）
+        const failing = stubDb();
+        failing.db.execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+            failing.executes.push({ sql, params });
+            throw new Error('boom');
+        });
+        const repo2 = createNoteRepository({ conn: await connWith(failing.db), recordStats: vi.fn(async () => {}) });
+        await expect(repo2.updateNoteSortOrder([{ id: 'n1', sortOrder: 0 }])).rejects.toThrow('boom');
+        expect(failing.executes).toHaveLength(1);
+    });
+
     it('fetchNotes：过滤软删 + LIKE 搜索转义 + 分页与 500 条上限', async () => {
         const { db, selects } = stubDb(() => [{ id: 'n1', content: 'x', tags: '["a"]', pinned: null }]);
         const repo = createNoteRepository({ conn: await connWith(db), recordStats: vi.fn(async () => {}) });
@@ -55,8 +89,8 @@ describe('noteRepository', () => {
         expect(selects.at(-1)?.sql).toContain('WHERE deleted_at IS NULL AND content LIKE $1');
         expect(selects.at(-1)?.sql).toContain('LIMIT $2 OFFSET $3');
         expect(selects.at(-1)?.params).toEqual(['%a\\%b%', 5, 10]);
-        // 行映射：tags JSON 解析、pinned 兜底 0
-        expect(paged[0]).toEqual({ id: 'n1', content: 'x', tags: ['a'], pinned: 0 });
+        // 行映射：tags JSON 解析、pinned/sort_order 兜底 0
+        expect(paged[0]).toEqual({ id: 'n1', content: 'x', tags: ['a'], pinned: 0, sort_order: 0 });
 
         const full = createNoteRepository({ conn: await connWith(db), recordStats: vi.fn(async () => {}) });
         await full.fetchNotes({ value: { searchContent: 'x' } });
