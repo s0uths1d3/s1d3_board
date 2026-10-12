@@ -2,6 +2,7 @@ import { register, unregister } from '@tauri-apps/plugin-global-shortcut';
 import type { ShortcutConfig } from './ShortcutConfig';
 import statsService from "~/src/statistics/statsService";
 import { isEditingField } from "~/utils/focusNavigation";
+import { isElementDragging } from "~/src/core/dragState";
 
 export class ShortcutManager {
     private localHandlers: (() => void)[] = [];
@@ -102,6 +103,10 @@ export class ShortcutManager {
                 const isMatch = mainKeyMatch && modifierMatch;
 
                 if (isMatch) {
+                    // 拖拽进行中 Esc 让位：元素拖动（待办重排/变子任务、日历改期、便签重排/拖出钉桌）
+                    // 期间按 Esc 的语义是「取消本次拖拽」（组件自带 Esc 取消 / 浏览器取消 DnD），
+                    // 不执行 hide_window；不 preventDefault 以保留浏览器取消拖拽的默认行为。
+                    if (config.id === 'hide_window' && isElementDragging()) return;
                     // 命中本地快捷键：阻止默认行为（如 Enter 在输入框的换行/提交），避免与命令重复触发。
                     // stopImmediatePropagation 阻断同 window 上其余局部快捷键监听器，
                     // 保证最先注册的 Ctrl+←/→ 切换标签拥有最高优先级，且不产生双重触发。

@@ -467,6 +467,11 @@ body.note-drag-selecting * {
   transition: none;
 }
 
+/* 常用剪贴拖动重排：同列卡片 FLIP 让位/落位（双列瀑布流跨列移动为节点重建，瞬移落位） */
+.pinned-move {
+  transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 
 /* ===== 下拉面板：从触发侧柔和淡入 + 轻微位移放大，避免突兀感 ===== */
 .check-pop-enter-active {
