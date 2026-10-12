@@ -266,6 +266,7 @@ import { useI18n } from '~/composables/useI18n';
 import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
 import type { Note } from '~/src/entities';
 import { bus } from '~/src/core/events';
+import { beginElementDrag, endElementDrag } from '~/src/core/dragState';
 import NoteInline from "~/components/note/NoteInline.vue";
 import { renderNote, countNoteChars } from '~/src/note/markdown';
 import { parseTagsText } from '~/src/todo/tags';
@@ -535,6 +536,8 @@ const onCtrlEnterSave = (e: KeyboardEvent) => {
 //  6px 移动阈值避免干扰单击选中 / 双击进编辑；拖动结束后的合成 click 抑制选中 =====
 const cardEl = ref<HTMLElement | null>(null)
 const dragActive = ref(false)
+// 拖拽激活态同步到全局计数（core/dragState）：拖动中按 Esc 让位取消拖拽，不触发 hide_window
+watch(dragActive, (v) => { v ? beginElementDrag() : endElementDrag() })
 const dragNearEdge = ref(false)
 const dragOutside = ref(false)
 const ghostReturning = ref(false)
@@ -869,6 +872,10 @@ onBeforeUnmount(() => {
     void followWin.close().catch(() => {})
     followWin = null
   }
-  if (dragActive.value) stopDragWatch()
+  if (dragActive.value) {
+    // 拖拽中卸载：手动归还全局拖拽计数（与 begin 配对，防止计数泄漏导致 Esc 永久让位）
+    endElementDrag()
+    stopDragWatch()
+  }
 })
 </script>
