@@ -291,16 +291,33 @@ impl IslandSink for OutboundIslandSink {
 /// 与 API 开关无关常驻（无订阅者时 broadcast 零开销）；API 停止时订阅表已清，同样无副作用。
 pub fn attach_event_bridge(app: &tauri::AppHandle) {
     let sink: Arc<dyn IslandSink + Send + Sync> = Arc::new(OutboundIslandSink);
+    let app_handle = app.clone();
     app.listen(events::ISLAND_SHOW, move |ev| {
         let Ok(p) = serde_json::from_str::<serde_json::Value>(ev.payload()) else {
             return;
         };
         // 前端字段 durationMs → SSE 字段 duration；image 为图片内容（data URL，图片事件携带）；
+        // imageRef 为图片的 imgfile: 引用（复制快速通道不再跨 IPC 传原图，出站时按需展开：
+        // 仅存在 SSE 订阅者或启用的 Webhook 目标时读盘换 data URL，无人订阅则零开销）；
         // qr_text 为图片事件解码出的二维码文本（v1.4.0）；ts 为桥接时刻的服务端时间戳
+        let mut image = p.get("image").cloned().unwrap_or(serde_json::Value::Null);
+        if image.is_null() {
+            if let Some(file_ref) = p.get("imageRef").and_then(|v| v.as_str()) {
+                let has_subs = match SUBSCRIBERS.lock() {
+                    Ok(list) => !list.is_empty(),
+                    Err(_) => false,
+                };
+                if has_subs || crate::island::webhook::has_enabled_targets() {
+                    if let Some(url) = crate::clipboard::image_store::read_image_ref(&app_handle, file_ref) {
+                        image = serde_json::json!(url);
+                    }
+                }
+            }
+        }
         let event = serde_json::json!({
             "text": p.get("text").cloned().unwrap_or(serde_json::Value::Null),
             "kind": p.get("kind").cloned().unwrap_or(serde_json::json!("info")),
-            "image": p.get("image").cloned().unwrap_or(serde_json::Value::Null),
+            "image": image,
             "qr_text": p.get("qr_text").cloned().unwrap_or(serde_json::Value::Null),
             "title": p.get("title").cloned().unwrap_or(serde_json::Value::Null),
             "duration": p.get("durationMs").and_then(|v| v.as_u64()).unwrap_or(0),

@@ -104,34 +104,68 @@ pub fn read_from_dir(dir: &Path, file: &str) -> Option<String> {
     ))
 }
 
-/// RGBA 像素直接落盘核心：PNG 编码 → sha256 内容寻址 → 写盘，返回 `imgfile:` 引用。
-/// clipboard_capture_image 快速通道用：剪贴板位图在 Rust 侧一步落盘，
-/// 原图字节不经前端 IPC 往返（旧链路多 MB base64 来回搬运是截图延迟入列主因）。
-pub fn save_rgba_to_dir(dir: &Path, w: u32, h: u32, rgba: &[u8]) -> Option<String> {
-    let img = image::RgbaImage::from_raw(w, h, rgba.to_vec())?;
+/// RGBA 像素 → PNG 字节（Fast 压缩档 + Adaptive 滤镜）。
+/// capture 快速通道原先对同一份像素编码两次（落盘一次、原图 data URL 一次）且都是
+/// Default 压缩——4K 全屏截图（~33MB RGBA）单次 Default 编码就要数百 ms 到秒级，
+/// 串行两次是「截图入列/弹岛慢」的主因。Fast 档单次编码降到约百 ms 级，体积略增
+/// （通常 +20~40%，20MB 单条上限内不受影响）可接受；落盘与 data URL 复用同一份字节，
+/// 全链路只编码一次。超上限返回 None（调用方回退旧链路，行为不劣化）。
+pub fn encode_rgba_png(w: u32, h: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+    use image::{codecs::png, ImageEncoder};
     let mut png = Cursor::new(Vec::new());
-    image::DynamicImage::from(img)
-        .write_to(&mut png, image::ImageFormat::Png)
-        .ok()?;
+    png::PngEncoder::new_with_quality(
+        &mut png,
+        png::CompressionType::Fast,
+        png::FilterType::Adaptive,
+    )
+    .write_image(rgba, w, h, image::ExtendedColorType::Rgba8)
+    .ok()?;
     let bytes = png.into_inner();
     if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
         return None;
     }
+    Some(bytes)
+}
+
+/// PNG 字节内容寻址落盘：sha256 命名（与 save_rgba_to_dir 同规则，同字节同文件名），
+/// 已存在直接复用（天然去重）。返回 `imgfile:<文件名>` 引用；超限/写盘失败返回 None。
+pub fn save_png_bytes_to_dir(dir: &Path, bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() || bytes.len() > MAX_IMAGE_BYTES {
+        return None;
+    }
     let mut hasher = Sha256::new();
-    hasher.update(&bytes);
+    hasher.update(bytes);
     let hex = format!("{:x}", hasher.finalize());
-    // 取 hash 前 16 hex 字符：与 save_to_dir 同规则，同内容天然去重
     let name = format!("{}.png", &hex[..16]);
     let path = dir.join(&name);
     if !path.exists() {
-        fs::write(&path, &bytes).ok()?;
+        fs::write(&path, bytes).ok()?;
     }
     Some(format!("imgfile:{}", name))
 }
 
-/// RGBA 像素直接落盘（以 AppHandle 解析 images 目录后委托 save_rgba_to_dir）
-pub(crate) fn save_rgba_image(app: &AppHandle, w: u32, h: u32, rgba: &[u8]) -> Option<String> {
-    images_dir(app).and_then(|dir| save_rgba_to_dir(&dir, w, h, rgba))
+/// RGBA 像素直接落盘核心：编码（Fast 档）→ 内容寻址 → 写盘，返回 `imgfile:` 引用。
+/// clipboard_capture_image 快速通道用：剪贴板位图在 Rust 侧一步落盘，
+/// 原图字节不经前端 IPC 往返（旧链路多 MB base64 来回搬运是截图延迟入列主因）。
+pub fn save_rgba_to_dir(dir: &Path, w: u32, h: u32, rgba: &[u8]) -> Option<String> {
+    let bytes = encode_rgba_png(w, h, rgba)?;
+    save_png_bytes_to_dir(dir, &bytes)
+}
+
+/// PNG 字节直接落盘（以 AppHandle 解析 images 目录后委托 save_png_bytes_to_dir）：
+/// capture 快速通道编码一次后，同一份字节既落盘又作 data URL 返回。
+pub(crate) fn save_png_bytes_image(app: &AppHandle, bytes: &[u8]) -> Option<String> {
+    images_dir(app).and_then(|dir| save_png_bytes_to_dir(&dir, bytes))
+}
+
+/// imgfile: 引用 → 原图 data URL（读盘）。仅出站桥（SSE/Webhook 有订阅者时）按需调用，
+/// 不在复制关键路径上；引用非法/文件缺失返回 None。
+pub(crate) fn read_image_ref(app: &AppHandle, file_ref: &str) -> Option<String> {
+    let name = file_ref.strip_prefix("imgfile:")?;
+    if !valid_image_path(Path::new(name)) {
+        return None;
+    }
+    images_dir(app).and_then(|dir| read_from_dir(&dir, name))
 }
 
 /// 删除核心：文件不存在视为已删除（幂等 true）；删除失败返回 false（不致命，调用方仅记日志）。
