@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import clipboardService from '~/src/db/dbService';
 import type { PinnedClip } from '~/src/entities';
 import { useFormatDate } from '~/composables/useFormatDate';
@@ -7,6 +7,7 @@ import { findNearestInDirection } from '~/utils/focusNavigation';
 import { useInfiniteList } from '~/composables/useInfiniteList';
 import { useI18n } from '~/composables/useI18n';
 import { notifyIsland, type IslandKind } from '~/composables/useCopyIsland';
+import { useLongPressReorder } from '~/composables/useLongPressReorder';
 import DeleteConfirm from '~/components/common/DeleteConfirm.vue';
 
 const { t } = useI18n();
@@ -65,6 +66,53 @@ const pinnedColumns = computed(() => {
 /** 类型判定：链接（文本且 http(s) 开头） */
 function isLink(item: PinnedClip) {
   return item.type === 'text' && /^https?:\/\//i.test(item.content.trim());
+}
+
+// ===== 长按拖拽排序（与导航/设置分组同一套交互；'xy' 自由 2D 适配双列瀑布流）=====
+const draggingId = ref<number | null>(null);
+const pinnedReorder = useLongPressReorder({
+  container: '#pinned-clip-root .pinned-grid',
+  items: '.pinned-card',
+  axis: 'xy',
+  // 列优先 DOM 序 ≠ 行优先数组序：回放还原与 onReorder 都以数组序为基准
+  orderOf: () => clips.value.map(c => String(c.id)),
+  onReorder: (fromKey, toKey) => {
+    const from = clips.value.findIndex(c => String(c.id) === fromKey);
+    const to = clips.value.findIndex(c => String(c.id) === toKey);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...clips.value];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved!);
+    clips.value = next;
+  },
+  onDrop: () => { void persistOrder(); },
+  onStateChange: (k) => { draggingId.value = k == null ? null : Number(k); },
+});
+
+/** 拖拽落位：整列回填手动顺序（sort_order 从 1 起，0 保留为「未排序」标记，
+ *  未加载的存量续接在已加载序列之后） */
+async function persistOrder() {
+  try {
+    await clipboardService.updatePinnedClipSortOrder(
+        clips.value.map((c, i) => ({ id: c.id, sortOrder: i + 1 })),
+    );
+  } catch (e) {
+    console.error('保存常用剪贴排序失败:', e);
+    showHint(t('clip.pinned_save_failed'), 'error');
+  }
+}
+
+/** 卡片按下：编辑态与输入/按钮区不启动长按拖拽（输入框文字选择不受干扰） */
+function onCardPointerDown(item: PinnedClip, e: PointerEvent) {
+  if (editingId.value != null) return;
+  if ((e.target as HTMLElement).closest('input, textarea, button, a, select')) return;
+  pinnedReorder.pressStart(String(item.id), e);
+}
+
+/** 卡片点击：长按拖拽结束后的 click 抑制选中切换（拖动 ≠ 点击） */
+function onCardClick(idx: number) {
+  if (pinnedReorder.consumeDragged()) return;
+  selectedIndex.value = idx;
 }
 function typeLabelKey(item: PinnedClip) {
   if (item.type === 'image') return 'common.image';
@@ -127,10 +175,16 @@ function cancelEdit() {
   editingId.value = null;
 }
 
-/** 置顶/取消置顶（item.pinned_at 为操作前的状态）：成功灵动岛反馈，失败 error 提示 */
+/** 置顶/取消置顶（item.pinned_at 为操作前的状态）：成功灵动岛反馈，失败 error 提示。
+ *  手动顺序为唯一排序（pinned_at 仅作图钉标识）：置顶 = 移到列表最前并回填手动顺序 */
 async function togglePin(item: PinnedClip) {
   try {
-    await clipboardService.pinPinnedClip(item.id, !item.pinned_at);
+    const pinning = !item.pinned_at;
+    await clipboardService.pinPinnedClip(item.id, pinning);
+    if (pinning) {
+      clips.value = [item, ...clips.value.filter(c => c.id !== item.id)];
+      await persistOrder();
+    }
     await load();
     showHint(item.pinned_at ? t('clip.unpinned_now') : t('clip.pinned_now'));
   } catch (e) {
@@ -272,22 +326,28 @@ onUnmounted(() => {
            Ctrl+3 紧贴 Ctrl+1 正下方。用列容器 flex 纵向堆叠而非 grid 行轨道：
            grid 每行高度由该行最高卡决定，同行矮卡下方会被撑出大块空白（视觉间隔失真），
            列内独立堆叠则上下间距恒等于 gap-3，与左右一致 -->
-      <div v-if="clips.length" class="grid grid-cols-2 items-start gap-3">
-        <div v-for="(col, ci) in pinnedColumns" :key="ci" class="flex flex-col gap-3">
+      <div v-if="clips.length" class="pinned-grid grid grid-cols-2 items-start gap-3">
+        <!-- 列容器用 TransitionGroup：拖动重排时同列卡片 FLIP 让位/落位（跨列移动重建无动画） -->
+        <TransitionGroup v-for="(col, ci) in pinnedColumns" :key="ci" name="pinned" tag="div" class="flex flex-col gap-3">
           <div
               v-for="entry in col"
               :key="entry.item.id"
               class="pinned-card"
               :data-idx="entry.idx"
+              :data-reorder-key="String(entry.item.id)"
               :class="selectedIndex === entry.idx ? 'is-selected' : ''"
-              @click="selectedIndex = entry.idx"
+              @pointerdown="onCardPointerDown(entry.item, $event)"
+              @click="onCardClick(entry.idx)"
           >
           <div
               class="relative overflow-hidden rounded-2xl border bg-surface-field/70 shadow-soft transition-all"
-              :class="selectedIndex === entry.idx ? 'border-gold ring-2 ring-gold/60' : 'border-accent'"
+              :class="[
+                selectedIndex === entry.idx ? 'border-gold ring-2 ring-gold/60' : 'border-accent',
+                draggingId === entry.item.id ? 'cursor-grabbing opacity-50 scale-[0.98]' : '',
+              ]"
           >
-            <!-- 卡片主体 -->
-            <div class="relative select-none">
+            <!-- 卡片主体（长按 0.5s 可拖动排序；输入/按钮区按下不触发） -->
+            <div class="relative select-none" v-tip="t('clip.pinned_drag_hint')">
               <!-- 序号角标 + 置顶标识（仅前 10 条支持 Ctrl+1~0 快捷粘贴，故只显示前 10 条角标） -->
               <div class="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-1">
                 <span v-if="entry.idx < 10" class="rounded-full bg-gold/15 px-2 py-0.5 text-[10px] font-bold text-gold">Ctrl+{{ slotKey(entry.idx) }}</span>
@@ -389,7 +449,7 @@ onUnmounted(() => {
             </div>
           </div>
           </div>
-        </div>
+          </TransitionGroup>
       </div>
 
       <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载" -->

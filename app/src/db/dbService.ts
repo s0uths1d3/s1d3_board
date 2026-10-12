@@ -176,6 +176,12 @@ class DatabaseService {
         return this.pinnedClip.insertPinnedClip(content, type, name, source);
     }
 
+    /** 批量回填常用剪贴手动顺序（拖拽重排落位） */
+    public async updatePinnedClipSortOrder(items: Array<{ id: number; sortOrder: number }>): Promise<void> {
+        await this.ensureDbInitialized();
+        return this.pinnedClip.updatePinnedClipSortOrder(items);
+    }
+
     public async isPinnedContentExist(content: string, type: 'text' | 'image'): Promise<boolean> {
         await this.ensureDbInitialized();
         return this.pinnedClip.isPinnedContentExist(content, type);

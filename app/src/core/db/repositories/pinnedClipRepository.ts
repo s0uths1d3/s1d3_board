@@ -8,7 +8,7 @@ import { withPage, type PageQuery } from '../sql';
  */
 export interface PinnedClipRepository {
     /** 获取常用剪贴列表（不限量，可无限存储；传 page 时按流式分页返回）。
-     *  排序：置顶项优先（按置顶时间倒序），其余按时间倒序（最新在前）。 */
+     *  排序：手动顺序优先（拖拽重排回填 sort_order ≥ 1），未排序存量（0）按时间倒序续接在后。 */
     fetchPinnedClips(page?: PageQuery): Promise<PinnedClip[]>;
     /** 获取单个常用剪贴项 */
     fetchPinnedClip(id: number): Promise<PinnedClip | undefined>;
@@ -25,6 +25,8 @@ export interface PinnedClipRepository {
         tags?: string[] | null): Promise<void>;
     /** 置顶/取消置顶常用剪贴项（置顶后排序优先；pinned=false 取消置顶） */
     pinPinnedClip(id: number, pinned: boolean): Promise<void>;
+    /** 批量回填手动顺序（拖拽重排落位）：单条 CASE WHEN 原子更新，只动 sort_order */
+    updatePinnedClipSortOrder(items: Array<{ id: number; sortOrder: number }>): Promise<void>;
     /** 删除单条常用剪贴项（仅从常用剪贴移除，不影响剪贴板主列表原条目） */
     deletePinnedClip(id: number): Promise<void>;
 }
@@ -33,10 +35,13 @@ export function createPinnedClipRepository({ conn }: { conn: DatabaseConnection 
     return {
         async fetchPinnedClips(page?: PageQuery): Promise<PinnedClip[]> {
             const db = await conn.ready();
+            // 手动顺序：sort_order ≥ 1 的已排序项在前（0 保留为「未排序」标记），
+            // 未排序存量按时间倒序续接在后——与流式分页天然契合（重排只回填已加载范围）
             const baseSql =
                 "SELECT * FROM pinned_clip ORDER BY " +
-                "CASE WHEN pinned_at IS NOT NULL AND pinned_at != '' THEN 1 ELSE 0 END DESC, " +
-                "pinned_at DESC, created_at DESC, id DESC";
+                "CASE WHEN sort_order > 0 THEN 0 ELSE 1 END, " +
+                "CASE WHEN sort_order > 0 THEN sort_order ELSE 0 END, " +
+                "created_at DESC, id DESC";
             if (page) {
                 const { sql, params } = withPage(page, []);
                 return await db.select(baseSql + sql, params) as PinnedClip[];
@@ -95,6 +100,17 @@ export function createPinnedClipRepository({ conn }: { conn: DatabaseConnection 
                 "UPDATE pinned_clip SET pinned_at = $2, updated_at = $3 WHERE id = $1",
                 [id, pinned ? now : '', now]
             );
+        },
+
+        /** 批量回填手动顺序（拖拽重排落位）：单条 CASE WHEN 批量 UPDATE（原子落位，
+         *  只动 sort_order 不触碰 created_at/updated_at——时间兜底序与轮询签名不受影响） */
+        async updatePinnedClipSortOrder(items: Array<{ id: number; sortOrder: number }>): Promise<void> {
+            if (items.length === 0) return;
+            const db = await conn.ready();
+            const cases = items.map((it, i) => `WHEN $${i + 1} THEN $${items.length + i + 1}`).join(' ');
+            const inList = items.map((_, i) => `$${i + 1}`).join(', ');
+            const params = [...items.map(it => it.id), ...items.map(it => it.sortOrder)];
+            await db.execute(`UPDATE pinned_clip SET sort_order = CASE id ${cases} END WHERE id IN (${inList})`, params);
         },
 
         async deletePinnedClip(id: number): Promise<void> {

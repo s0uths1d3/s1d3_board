@@ -3,7 +3,7 @@ import { createPinnedClipRepository } from '../pinnedClipRepository';
 import { connWith, stubDb } from './helpers';
 
 describe('pinnedClipRepository', () => {
-    it('fetchPinnedClips：置顶优先排序 + 分页参数化', async () => {
+    it('fetchPinnedClips：手动顺序优先 + 未排序存量时间兜底 + 分页参数化', async () => {
         const { db, selects } = stubDb(() => [{ id: 1, content: 'x', type: 'text' }]);
         const repo = createPinnedClipRepository({ conn: await connWith(db) });
 
@@ -11,9 +11,22 @@ describe('pinnedClipRepository', () => {
 
         expect(rows).toHaveLength(1);
         const sql = selects.at(-1)?.sql ?? '';
-        expect(sql).toContain("CASE WHEN pinned_at IS NOT NULL AND pinned_at != '' THEN 1 ELSE 0 END DESC");
+        expect(sql).toContain("CASE WHEN sort_order > 0 THEN 0 ELSE 1 END");
         expect(sql).toContain('LIMIT $1 OFFSET $2');
         expect(selects.at(-1)?.params).toEqual([20, 40]);
+    });
+
+    it('updatePinnedClipSortOrder：单条 CASE WHEN 批量回填（空列表不执行）', async () => {
+        const { db, executes } = stubDb();
+        const repo = createPinnedClipRepository({ conn: await connWith(db) });
+
+        await repo.updatePinnedClipSortOrder([]);
+        expect(executes).toHaveLength(0);
+
+        await repo.updatePinnedClipSortOrder([{ id: 7, sortOrder: 1 }, { id: 3, sortOrder: 2 }]);
+        expect(executes[0]?.sql).toContain('UPDATE pinned_clip SET sort_order = CASE id WHEN $1 THEN $3 WHEN $2 THEN $4 END');
+        expect(executes[0]?.sql).toContain('WHERE id IN ($1, $2)');
+        expect(executes[0]?.params).toEqual([7, 3, 1, 2]);
     });
 
     it('insertPinnedClip：name/source 缺省写空串', async () => {

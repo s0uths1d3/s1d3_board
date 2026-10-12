@@ -23,9 +23,9 @@ const PUBLIC_METHODS = [
     'decodeQrText', 'fetchClipboardData', 'fetchClipboardSingleData', 'updateFavorite',
     'increaseUseCount', 'increaseUseCountByContent', 'deleteClipboardData',
     'cleanupImageStorage', 'undoImageCleanup', 'finalizeImageCleanup',
-    // 常用剪贴
+    // 常用剪贴（sort_order 拖动重排）
     'fetchPinnedClips', 'fetchPinnedClip', 'insertPinnedClip', 'isPinnedContentExist',
-    'updatePinnedClip', 'pinPinnedClip', 'deletePinnedClip',
+    'updatePinnedClip', 'pinPinnedClip', 'deletePinnedClip', 'updatePinnedClipSortOrder',
     // 清空撤回
     'clearDatabase', 'undoClearDatabase', 'finalizeClear',
     // 设置 + 快捷键
@@ -42,8 +42,8 @@ const PUBLIC_METHODS = [
 ] as const;
 
 describe('dbService 门面兼容性', () => {
-    it('保留全部原公有方法（54 个）', () => {
-        expect(PUBLIC_METHODS).toHaveLength(54);
+    it('保留全部原公有方法（55 个）', () => {
+        expect(PUBLIC_METHODS).toHaveLength(55);
         for (const name of PUBLIC_METHODS) {
             expect(dbService, name).toHaveProperty(name);
             expect(typeof (dbService as unknown as Record<string, unknown>)[name], name).toBe('function');
