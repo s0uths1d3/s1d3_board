@@ -30,6 +30,7 @@ import PinnedClipList from "~/components/pinned/PinnedClipList.vue";
 import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
 import { activeTab } from "~/composables/useTabs";
 import { bus } from "~/src/core/events";
+import { beginElementDrag, endElementDrag } from "~/src/core/dragState";
 import { SwitchTabCommand } from "~/src/commands/local/SwitchTabCommand";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
 import { isTooltipWrapEnabled } from "~/composables/useTooltipWrap";
@@ -1071,6 +1072,8 @@ function clipFileCount(content: string): number {
 }
 
 function handleDragStart(item: ClipboardData, event: DragEvent) {
+  // 全局拖拽计数 +1：拖动中按 Esc 取消本次拖拽，不触发 hide_window（dragend 必触发配对归还）
+  beginElementDrag();
   // 加密条目不参与拖拽：dragstart 是同步事件，无法等待异步解密，置空载荷防密文外泄
   if (item.encrypted === 1) return;
   // 文件条目拖出仅携带纯文本路径列表（WebView 无法还原 CF_HDROP 拖放语义）
@@ -1083,6 +1086,7 @@ function handleDragStart(item: ClipboardData, event: DragEvent) {
 }
 
 function handleDragEnd(item: ClipboardData, event: DragEvent) {
+  endElementDrag();
   if (event.dataTransfer?.dropEffect === 'copy') {
     clipboardService.increaseUseCount(item.id).catch(() => { /* 计数失败不影响交互 */ });
   }

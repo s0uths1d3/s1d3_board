@@ -11,6 +11,7 @@ import type { Todo } from '~/src/entities'
 import { useI18n } from '~/composables/useI18n'
 import { useTodoPriorities } from '~/composables/useTodoPriorities'
 import { describeRecurrence } from '~/src/todo/recurrence'
+import { beginElementDrag, endElementDrag } from '~/src/core/dragState'
 
 const props = defineProps<{ todos: Todo[] }>()
 
@@ -96,9 +97,15 @@ const dragOverKey = ref('')
 let dragTodoId = ''
 
 function onChipDragStart(e: DragEvent, todo: Todo) {
+  beginElementDrag()
   dragTodoId = todo.id
   e.dataTransfer?.setData('text/plain', todo.id)
   if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+/** 拖拽结束（落点/取消均触发）：归还全局拖拽计数并清理拖拽源 id */
+function onChipDragEnd() {
+  endElementDrag()
+  dragTodoId = ''
 }
 function onCellDrop(e: DragEvent, cell: CalCell) {
   e.preventDefault()
@@ -198,6 +205,7 @@ const levelColor = (todo: Todo) => getLevelInfo(todo.priorityLevel).color
               ]"
               :title="`${timeOf(task)} ${task.title}${recurrenceText(task) ? ' · ' + recurrenceText(task) : ''}`"
               @dragstart="onChipDragStart($event, task)"
+              @dragend="onChipDragEnd"
               @click.stop="focusTask(cell.key, task.id)"
           >
             <!-- 完成圆点：点击直接切换完成/未完成（completed 划线态） -->

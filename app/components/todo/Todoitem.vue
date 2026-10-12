@@ -22,7 +22,7 @@
               class="cursor-grab text-ink-faint/50 transition-colors hover:text-gold active:cursor-grabbing"
               v-tip="t('todo.drag_hint')"
               @dragstart="onHandleDragStart"
-              @dragend="$emit('drag-end')"
+              @dragend="onHandleDragEnd"
           >
             <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
               <circle cx="9" cy="5" r="1.6" /><circle cx="15" cy="5" r="1.6" />
@@ -578,6 +578,7 @@ import { useTodoPriorities } from "~/composables/useTodoPriorities";
 import { useDisplayNames } from "~/composables/useDisplayNames";
 import { describeRecurrence } from "~/src/todo/recurrence";
 import { parseTagsText } from "~/src/todo/tags";
+import { beginElementDrag, endElementDrag } from "~/src/core/dragState";
 import { isTauri } from "~/utils/env";
 
 const { t } = useI18n();
@@ -676,9 +677,16 @@ function onCardDrop(e: DragEvent) {
 
 /** 手柄拖起：携带任务标题（便于调试），拖拽源 id 由父级通过 drag-start 记录 */
 function onHandleDragStart(e: DragEvent) {
+  beginElementDrag()
   e.dataTransfer?.setData('text/plain', props.todo.title)
   if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
   emit('drag-start', props.todo.id)
+}
+
+/** 手柄拖拽结束（取消/落点均触发）：归还全局拖拽计数，父级语义照常派发 */
+function onHandleDragEnd() {
+  endElementDrag()
+  emit('drag-end')
 }
 
 // ===== 展示：子任务进度 / 循环摘要 / 子任务到期 / 回收站删除时间 =====
