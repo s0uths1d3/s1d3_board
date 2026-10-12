@@ -319,11 +319,14 @@
         </div>
       </div>
 
-      <!-- 日历视图：按月分桶展示，拖拽改期 / 勾选完成 -->
-      <TodoCalendar v-if="view === 'calendar'" :todos="calendarTodos" @change-due="changeDueFromCalendar" @toggle="toggleTodo" />
+      <!-- 视图切换过渡：复用全局 page-curtain（淡入 + 上浮），与主 Tab/设置分类切换观感一致；
+           列表/回收站同为 div，需 key 区分才能触发 Transition -->
+      <Transition name="page-curtain" mode="out-in">
+        <!-- 日历视图：按月分桶展示，拖拽改期 / 勾选完成 -->
+        <TodoCalendar v-if="view === 'calendar'" key="calendar" :todos="calendarTodos" @change-due="changeDueFromCalendar" @toggle="toggleTodo" />
 
       <!-- 回收站视图：软删任务（恢复 / 彻底删除） -->
-      <div v-else-if="view === 'trash'" id="todoListContainer" class="space-y-3">
+      <div v-else-if="view === 'trash'" key="trash" id="todoListContainer" class="space-y-3">
         <TodoItem
             v-for="todo in trashTopTodos"
             :key="todo.id"
@@ -342,7 +345,7 @@
       </div>
 
       <!-- 列表视图：仅渲染顶级任务，子任务由父卡片内联展示 -->
-      <div v-else id="todoListContainer" class="space-y-3">
+      <div v-else key="list" id="todoListContainer" class="space-y-3">
         <TodoItem
             v-for="(todo, index) in topTodos"
             :key="todo.id"
@@ -371,6 +374,7 @@
             @drop="handleDrop"
         />
       </div>
+      </Transition>
 
       <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载"（仅列表视图） -->
       <div
