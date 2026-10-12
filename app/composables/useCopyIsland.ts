@@ -7,6 +7,7 @@ import { readImageBase64, readText } from 'tauri-plugin-clipboard-api';
 import dbService from '~/src/db/dbService';
 import statsService from '~/src/statistics/statsService';
 import { bus } from '~/src/core/events';
+import type { IslandCopyDetail } from '~/src/core/events';
 import { createBooleanSetting } from './useBooleanSetting';
 import { useI18n } from './useI18n';
 import { isPrivacyPaused } from './usePrivacySettings';
@@ -165,7 +166,27 @@ let lastPollText: string | null = null;
 let lastProbeSeq = 0;
 /** 最近一次由快速通道显示的复制内容（短期内同内容的原生事件不再重复弹岛；文本与图片均生效——
  *  图片路径监听回调先行派发带缩略图的岛事件，saveClipboard 写库后的二次派发据此去重） */
-let lastShownCopy: { type: 'text' | 'image' | 'html' | 'files'; content: string; until: number } | null = null;
+let lastShownCopy: { type: 'text' | 'image' | 'files'; content: string; until: number } | null = null;
+
+/** 去重桶类型归一：浏览器等应用复制文本时同时写纯文本与 CF_HTML，同一段内容会先后产生
+ *  text（快速轮询）与 html（富文本入库）两条事件——类型不同内容相同，按原类型比对会
+ *  重复弹岛（岛上的 ×2 重复徽标）。html 与 text 视为同一去重桶。 */
+function dedupTypeOf(type: 'text' | 'image' | 'html' | 'files'): 'text' | 'image' | 'files' {
+  return type === 'html' ? 'text' : type;
+}
+
+/** 近期已显示过同类型同内容（900ms 窗口内）则跳过本次弹岛 */
+function isRecentlyShown(type: 'text' | 'image' | 'html' | 'files', content: string): boolean {
+  return !!lastShownCopy
+    && lastShownCopy.type === dedupTypeOf(type)
+    && lastShownCopy.content === content
+    && Date.now() < lastShownCopy.until;
+}
+
+/** 记录「已显示」：归一后的类型 + 内容 + 有效窗口 */
+function markShown(type: 'text' | 'image' | 'html' | 'files', content: string): void {
+  lastShownCopy = { type: dedupTypeOf(type), content, until: Date.now() + 900 };
+}
 
 function startIslandPoller(): void {
   if (pollTimer || !isTauri()) return;
@@ -187,7 +208,9 @@ function startIslandPoller(): void {
       const changed = text !== lastPollText;
       lastPollText = text;
       if (!changed || !text || Date.now() < suppressUntil) return;
-      lastShownCopy = { type: 'text', content: text, until: Date.now() + 900 };
+      // 原生路径（saveClipboard 派发）抢先显示过的同内容不再重复弹岛
+      if (isRecentlyShown('text', text)) return;
+      markShown('text', text);
       // Ctrl+X 感知窗口内的剪贴板变化按"已剪切"提示（一次性消费，避免窗口内后续复制误标）
       void showIsland({ kind: consumeCut() ? 'cut' : 'copy', text: text.slice(0, PREVIEW_MAX) });
     }).catch(() => { /* 非文本内容（图片等）读取失败：交给原生路径 */ });
@@ -515,6 +538,40 @@ async function showIsland(payload: IslandShowPayload): Promise<void> {
   }, islandDelayMs.value);
 }
 
+/** island:copy 监听退订函数（HMR dispose 清理旧实例监听用） */
+let islandCopyOff: (() => void) | null = null;
+
+/** island:copy 事件处理（具名函数：便于退订与 HMR 清理） */
+function onIslandCopy(d: IslandCopyDetail): void {
+  if (!d || Date.now() < suppressUntil) return;
+  // 快速通道（80ms 轮询）已显示的同一内容不再重复弹岛（html 归一 text 同桶比对，
+  // 见 dedupTypeOf——浏览器复制同段文本会先后产生 text 与 html 两条事件）
+  if (isRecentlyShown(d.type, d.content)) return;
+  // Ctrl+X 感知窗口内的剪贴板变化（文本与图片均可）按"已剪切"提示（快速通道已显示的同一文本内容已被上方去重跳过）
+  const cut = consumeCut();
+  markShown(d.type, d.content);
+  // 文件条目：content 是 JSON 路径数组，岛胶囊只展示文件名序列（JSON 串对用户无意义）
+  const isFiles = d.type === 'files';
+  const filesText = isFiles ? clipFilesPreview(d.content) : '';
+  // 二维码图片：链接写入 text（胶囊文本与缩略图并存）并随 qrText 出站；无识别结果维持纯图片语义
+  const qr = d.qrText || undefined;
+  // 图片内容双形态：快速通道 content 为 imgfile: 引用（原图不过 IPC，岛只显示几十 KB 缩略图），
+  // 旧链路 content 为原图 data URL——仅后者随 show-ui 下发原图渐进渲染
+  const isImgRef = d.type === 'image' && typeof d.content === 'string' && d.content.startsWith('imgfile:');
+  void showIsland(cut
+    ? {
+        kind: 'cut',
+        text: d.type === 'text' || isFiles ? (isFiles ? filesText : d.content).slice(0, PREVIEW_MAX) : (qr ?? ''),
+        image: d.type === 'image' && !isImgRef ? d.content : undefined,
+        imageRef: isImgRef ? d.content : undefined,
+        thumb: d.type === 'image' && d.thumb ? d.thumb : undefined,
+        qrText: d.type === 'image' ? qr : undefined,
+      }
+    : d.type === 'image'
+      ? { kind: 'copy-image', text: qr, image: isImgRef ? undefined : d.content, imageRef: isImgRef ? d.content : undefined, thumb: d.thumb ?? undefined, qrText: qr }
+      : { kind: 'copy', text: (isFiles ? filesText : d.content).slice(0, PREVIEW_MAX) });
+}
+
 /** 主窗口初始化（app.vue 调用）：挂复制事件监听驱动灵动岛，并在开启时预创建岛窗口 */
 export function initCopyIsland(): void {
   if (inited || !isTauri()) return;
@@ -522,33 +579,7 @@ export function initCopyIsland(): void {
   // 复制文本 / 复制图片：任何应用里 Ctrl+C 都会走到这里（saveClipboard 派发；
   // 图片路径监听回调先行派发带缩略图的版本，写库后 saveClipboard 的二次派发按内容去重跳过）。
   // 快速通道已显示的同一内容（900ms 内）不重复弹岛（文本与图片均去重）
-  bus.on('island:copy', (d) => {
-    if (!d || Date.now() < suppressUntil) return;
-    if (lastShownCopy && lastShownCopy.type === d.type && lastShownCopy.content === d.content && Date.now() < lastShownCopy.until) return;
-    // Ctrl+X 感知窗口内的剪贴板变化（文本与图片均可）按"已剪切"提示（快速通道已显示的同一文本内容已被上方去重跳过）
-    const cut = consumeCut();
-    lastShownCopy = { type: d.type, content: d.content, until: Date.now() + 900 };
-    // 文件条目：content 是 JSON 路径数组，岛胶囊只展示文件名序列（JSON 串对用户无意义）
-    const isFiles = d.type === 'files';
-    const filesText = isFiles ? clipFilesPreview(d.content) : '';
-    // 二维码图片：链接写入 text（胶囊文本与缩略图并存）并随 qrText 出站；无识别结果维持纯图片语义
-    const qr = d.qrText || undefined;
-    // 图片内容双形态：快速通道 content 为 imgfile: 引用（原图不过 IPC，岛只显示几十 KB 缩略图），
-    // 旧链路 content 为原图 data URL——仅后者随 show-ui 下发原图渐进渲染
-    const isImgRef = d.type === 'image' && typeof d.content === 'string' && d.content.startsWith('imgfile:');
-    void showIsland(cut
-      ? {
-          kind: 'cut',
-          text: d.type === 'text' || isFiles ? (isFiles ? filesText : d.content).slice(0, PREVIEW_MAX) : (qr ?? ''),
-          image: d.type === 'image' && !isImgRef ? d.content : undefined,
-          imageRef: isImgRef ? d.content : undefined,
-          thumb: d.type === 'image' && d.thumb ? d.thumb : undefined,
-          qrText: d.type === 'image' ? qr : undefined,
-        }
-      : d.type === 'image'
-        ? { kind: 'copy-image', text: qr, image: isImgRef ? undefined : d.content, imageRef: isImgRef ? d.content : undefined, thumb: d.thumb ?? undefined, qrText: qr }
-        : { kind: 'copy', text: (isFiles ? filesText : d.content).slice(0, PREVIEW_MAX) });
-  });
+  islandCopyOff = bus.on('island:copy', onIslandCopy);
   // 系统提示（如敏感内容拦截）：纯文字 info 胶囊——载荷是 i18n key，此处翻译；
   // 历史里只留提示文字，敏感内容本身不回显不入库。
   // t 回调内现取（useI18n 为纯函数读模块级 locale），避免闭包捕获过期状态
@@ -579,6 +610,19 @@ export function initCopyIsland(): void {
       // 预热定位 IPC 链路（首次查询较慢），让真正复制时只做一次定位
       if (win) void positionIsland(win).catch(() => {});
     });
+  });
+}
+
+// HMR 安全：热更新重载本模块时，旧实例的 80ms 轮询定时器与 bus 监听不会随模块状态
+// 消失（setInterval 持有旧闭包继续跑、window CustomEvent 监听仍挂着），开发期每次改
+// 动本文件都会叠加一套实例——同一次复制弹多条岛（×2/×4 重复徽标）。dispose 彻底清理。
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    stopIslandPoller();
+    islandCopyOff?.();
+    islandCopyOff = null;
+    if (pendingShowTimer) { clearTimeout(pendingShowTimer); pendingShowTimer = null; }
+    inited = false;
   });
 }
 
