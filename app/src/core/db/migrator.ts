@@ -20,9 +20,9 @@ import { CLEAR_BACKUP_TABLES } from './repositories/backupRepository';
  * clipboard.type 约束放宽（兜底，对应 Rust v18）：v3 建列时带 CHECK (type IN ('text','image'))，
  * 富文本(html)/文件(files)类型无法写入；SQLite 不支持 DROP CONSTRAINT，按标准流程重建表。
  * 检测 sqlite_master 中的建表 SQL 含旧 CHECK 才重建（幂等：v18 重建后不再命中）。
- * 重建 DDL 已含 html_content/encrypted 两列，后续 wanted 循环对其余列做兜底补齐。
+ * 重建 DDL 已含 html_content 列，后续 wanted 循环对其余列做兜底补齐。
  */
-/** clipboard 表新结构 DDL（与 Rust 侧 v18 迁移同构）：CHECK 已放宽，含 html_content/encrypted */
+/** clipboard 表新结构 DDL（与 Rust 侧 v18 迁移同构）：CHECK 已放宽，含 html_content */
 function clipboardTableDdl(table: string) {
     return `
     CREATE TABLE ${table}
@@ -38,8 +38,7 @@ function clipboardTableDdl(table: string) {
         type         TEXT DEFAULT 'text',
         source_app   TEXT,
         qr_text      TEXT,
-        html_content TEXT,
-        encrypted    INTEGER NOT NULL DEFAULT 0
+        html_content TEXT
     )
 `;
 }
@@ -87,8 +86,8 @@ async function relaxClipboardTypeCheck(db: SqlDatabase) {
         await db.execute(clipboardTableDdl('clipboard_v18'));
         await db.execute(`
             INSERT INTO clipboard_v18
-                (id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, html_content, encrypted)
-            SELECT id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, NULL, 0
+                (id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, html_content)
+            SELECT id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, NULL
             FROM clipboard
         `);
         await db.execute('DROP TABLE clipboard');
@@ -101,7 +100,7 @@ async function relaxClipboardTypeCheck(db: SqlDatabase) {
 }
 
 async function ensureFeatureColumns(db: SqlDatabase) {
-    // type CHECK 放宽先行：重建 DDL 已含 html_content/encrypted，避免重建后重复补列
+    // type CHECK 放宽先行：重建 DDL 已含 html_content，避免重建后重复补列
     await relaxClipboardTypeCheck(db);
     // 兜底建表：app_usage / app_icons / clip_templates（方案）
     // ——防止旧二进制（无对应迁移）下前端查询/写入报 no such table
@@ -201,8 +200,6 @@ async function ensureFeatureColumns(db: SqlDatabase) {
         { table: 'clipboard', column: 'qr_text', ddl: 'ALTER TABLE clipboard ADD COLUMN qr_text TEXT' },
         // 富文本正文（HTML）：html 类型条目的原始 HTML（content 保持纯文本语义）
         { table: 'clipboard', column: 'html_content', ddl: 'ALTER TABLE clipboard ADD COLUMN html_content TEXT' },
-        // 字段级加密标记：1 = content 存 S1ENC1 加密载荷（AES-256-GCM，密钥在 OS 凭据库）
-        { table: 'clipboard', column: 'encrypted', ddl: 'ALTER TABLE clipboard ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0' },
         // 常用剪贴板条目标签（tags 存 JSON 字符串数组，应用层解析）
         { table: 'pinned_clip', column: 'tags', ddl: 'ALTER TABLE pinned_clip ADD COLUMN tags TEXT' },
         // 待办功能扩展六列（对应 Rust v19）：循环规则 / 子任务父 id / 标签 / 手动排序 / 软删 / 链接

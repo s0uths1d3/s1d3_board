@@ -125,8 +125,6 @@ pub fn run() {
             ai::engine::ai_complete,
             ai::secret::ai_key_get,
             ai::secret::ai_key_set,
-            commands::secure::encrypt_clip_text,
-            commands::secure::decrypt_clip_text,
             island::api::island_api_apply,
             island::api::island_history_result,
             island::webhook::island_webhook_apply,

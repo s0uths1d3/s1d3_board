@@ -18,8 +18,6 @@ export interface ClipboardData {
     qr_text?: string | null;
     /** 富文本正文（HTML）：仅 type='html' 条目有值 */
     html_content?: string | null;
-    /** 字段级加密标记：1 = content 存 S1ENC1 加密载荷（AES-256-GCM，密钥在 OS 凭据库），仅文本条目可标记 */
-    encrypted?: number;
 }
 
 export interface PinnedClip {

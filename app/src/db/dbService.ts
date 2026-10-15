@@ -113,12 +113,6 @@ class DatabaseService {
         return this.clipboard.purgeExpiredClips();
     }
 
-    /** 字段级加密标记切换（仅文本条目；加密/解密在 Rust 侧完成，密钥不出进程） */
-    public async setClipboardEncrypted(id: number, encrypted: boolean): Promise<void> {
-        await this.ensureDbInitialized();
-        return this.clipboard.setClipboardEncrypted(id, encrypted);
-    }
-
     /** 磁盘图片缓存清理（图片缓存上限可设置，默认 256MB；孤儿文件 + 不常用原图优先淘汰）。
      * 可撤回第一阶段：只删 DB 行（victim 行备份到 image_cleanup_backup），文件延迟到 finalizeImageCleanup 删除；
      * 返回清理结果：设置页手动「立即清理」按结果开启撤回窗口，启动/入库联动场景忽略返回值 */

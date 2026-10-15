@@ -12,6 +12,5 @@ pub mod lifecycle;
 pub mod menu;
 pub mod notify;
 pub mod paste;
-pub mod secure;
 
 pub use paste::register_global_paste_hotkey;

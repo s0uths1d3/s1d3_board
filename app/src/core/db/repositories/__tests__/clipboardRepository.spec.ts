@@ -90,6 +90,17 @@ describe('clipboardRepository', () => {
         expect(selects.at(-1)?.sql).toContain('LIMIT 100');
     });
 
+    it('fetchClipboardData：来源应用筛选走 source_app 条件，与收藏条件叠加时参数按序编号', async () => {
+        const { db, selects } = stubDb();
+        const conn = await connWith(db);
+        const { repo } = makeRepo(conn);
+
+        await repo.fetchClipboardData({ value: { favorite: 1, searchContent: '', type: 'all', sourceApp: 'WeChat.exe' } });
+
+        expect(selects.at(-1)?.sql).toContain('WHERE is_favorite = $1 AND source_app = $2');
+        expect(selects.at(-1)?.params).toEqual([1, 'WeChat.exe']);
+    });
+
     it('fetchClipboardData：搜索词 LIKE 转义 % _ \\，文本与图片二维码均可命中', async () => {
         const { db, selects } = stubDb();
         const conn = await connWith(db);
@@ -106,7 +117,7 @@ describe('clipboardRepository', () => {
         const conn = await connWith(db);
         const { repo } = makeRepo(conn);
 
-        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '会议 "项目 周报"', type: 'text' } });
+        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '会议 "项目 周报"', types: ['text'] } });
 
         expect(selects.at(-1)?.params).toEqual(['%会议%', '%项目 周报%']);
     });
@@ -116,7 +127,7 @@ describe('clipboardRepository', () => {
         const conn = await connWith(db);
         const { repo } = makeRepo(conn);
 
-        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '会议 "项目 周报"', type: 'text', advanced: false } });
+        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '会议 "项目 周报"', types: ['text'], advanced: false } });
 
         expect(selects.at(-1)?.params).toEqual(['%会议 "项目 周报"%']);
     });
@@ -126,7 +137,7 @@ describe('clipboardRepository', () => {
         const conn = await connWith(db);
         const { repo } = makeRepo(conn);
 
-        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '*小曲', type: 'text' } });
+        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '*小曲', types: ['text'] } });
 
         expect(selects.at(-1)?.params).toEqual(['%%小曲%']);
     });
@@ -136,7 +147,7 @@ describe('clipboardRepository', () => {
         const conn = await connWith(db);
         const { repo } = makeRepo(conn);
 
-        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '第?章', type: 'text' } });
+        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '第?章', types: ['text'] } });
 
         expect(selects.at(-1)?.params).toEqual(['%第_章%']);
     });
@@ -146,10 +157,10 @@ describe('clipboardRepository', () => {
         const conn = await connWith(db);
         const { repo } = makeRepo(conn);
 
-        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '会议 a|b c', type: 'text' } });
+        await repo.fetchClipboardData({ value: { favorite: 0, searchContent: '会议 a|b c', types: ['text'] } });
 
         expect(selects.at(-1)?.sql).toContain(
-            "content LIKE $1 ESCAPE '\\' AND (content LIKE $2 ESCAPE '\\' OR content LIKE $3 ESCAPE '\\') AND content LIKE $4 ESCAPE '\\'",
+            "(type IN ('text', 'html') AND content LIKE $1 ESCAPE '\\') AND ((type IN ('text', 'html') AND content LIKE $2 ESCAPE '\\') OR (type IN ('text', 'html') AND content LIKE $3 ESCAPE '\\')) AND (type IN ('text', 'html') AND content LIKE $4 ESCAPE '\\')",
         );
         expect(selects.at(-1)?.params).toEqual(['%会议%', '%a%', '%b%', '%c%']);
     });

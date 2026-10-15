@@ -3,7 +3,6 @@ import type { DatabaseConnection } from '../connection';
 import type { ClipboardData } from '../../../entities';
 import { bus } from '../../events';
 import { resolveImageRows, deleteImageFileByRef, invalidateImageCache } from '../imageRef';
-import { encryptClipText, decryptClipText, isEncryptedContent } from '../../../clipboard/encryption';
 import { escapeLike, withPage, parseSearchTokens, likePatternFromToken, type PageQuery } from '../sql';
 import type { RecordStats } from './noteRepository';
 
@@ -148,15 +147,6 @@ export interface ClipboardRepository {
      */
     purgeExpiredClips(): Promise<number>;
     /**
-     * 字段级加密标记切换（仅文本条目；加密实现见 src-tauri/src/commands/secure.rs）：
-     * - encrypted=true：content 原地替换为 S1ENC1: 载荷（AES-256-GCM，密钥在 OS 凭据库），
-     *   encrypted 标记 1，明文派生列（html_content/qr_text）置 NULL——密文以 content UNIQUE 存储不破坏约束；
-     * - encrypted=false：载荷解密回明文，标记 0。
-     * 已处于目标状态时幂等返回；失败（凭据库不可用/密钥不符）抛出由调用方提示。
-     */
-    setClipboardEncrypted(id: number, encrypted: boolean): Promise<void>;
-    /**
-     * 磁盘图片缓存清理（可撤回清理的第一阶段，与「清空数据库」同款交互）：
      * 总占用超出「图片缓存上限」（image_cache_max_mb，默认 256MB）时，孤儿文件直接清、
      * 引用行按「使用次数少 → 最久未用」淘汰。本阶段只删 DB 行（victim 行先整行备份到
      * image_cleanup_backup 表），**文件一律不删**——待删清单暂存内存；5 秒窗口内
@@ -440,7 +430,8 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
 
             const favorite: number = filter.value.favorite;
             const content: string = filter.value.searchContent;
-            const type: string = filter.value.type ?? 'all';
+            // 类型多选筛选：[] / 缺省 = 全部类型（兼容未传该字段的旧调用）
+            const types: string[] = filter.value.types ?? [];
 
             // 搜索词分组：高级搜索开启时组内词元 OR（| 相连）、组间 AND；`*` `?` 为通配符、
             // 双引号短语为整句词元。关闭时整串按字面单词元（advanced 缺省视为开启，兼容旧调用）
@@ -460,27 +451,30 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
                 params.push(favorite);
             }
 
-            if (type === 'image') {
-                // 仅图片：图片本体无文本内容，按二维码识别结果检索（未识别/无码 qr_text 为 NULL/''）
-                conds.push("type = 'image'");
+            // 来源应用筛选（'' / 缺省 = 全部应用，兼容未传该字段的旧调用）
+            const sourceApp: string = filter.value.sourceApp ?? '';
+            if (sourceApp) {
+                paramIdx += 1;
+                conds.push(`source_app = $${paramIdx}`);
+                params.push(sourceApp);
+            }
+
+            if (types.length > 0) {
+                // 类型多选：每个词元在所选类型的对应字段中匹配（图片本体无文本，按二维码识别结果检索）。
+                // 类型 → [类型限定 SQL, 匹配字段]；组内（词元 × 类型）任一命中即可（OR），组间 AND
+                const condsByType: Array<[typeSql: string, field: string]> = [];
+                if (types.includes('text')) condsByType.push(["type IN ('text', 'html')", 'content']);
+                if (types.includes('files')) condsByType.push(["type = 'files'", 'content']);
+                if (types.includes('image')) condsByType.push(["type = 'image'", 'qr_text']);
                 for (const group of groups) {
                     const parts: string[] = [];
                     for (const pattern of group) {
-                        paramIdx += 1;
-                        parts.push(`qr_text LIKE $${paramIdx} ESCAPE '\\'`);
-                        params.push(pattern);
-                    }
-                    conds.push(parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`);
-                }
-            } else if (type === 'text') {
-                // 仅文本：按内容逐词匹配（富文本条目随纯文本兜底一并命中）
-                conds.push("type IN ('text', 'html')");
-                for (const group of groups) {
-                    const parts: string[] = [];
-                    for (const pattern of group) {
-                        paramIdx += 1;
-                        parts.push(`content LIKE $${paramIdx} ESCAPE '\\'`);
-                        params.push(pattern);
+                        const perType = condsByType.map(([typeSql, field]) => {
+                            paramIdx += 1;
+                            params.push(pattern);
+                            return `(${typeSql} AND ${field} LIKE $${paramIdx} ESCAPE '\\')`;
+                        });
+                        parts.push(perType.length === 1 ? perType[0]! : `(${perType.join(' OR ')})`);
                     }
                     conds.push(parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`);
                 }
@@ -627,35 +621,6 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
             }
             console.info(`[clipboard] 过期清理完成：删除 ${victims.length} 条（保留 ${days} 天）`);
             return victims.length;
-        },
-
-        async setClipboardEncrypted(id: number, encrypted: boolean): Promise<void> {
-            const db = await conn.ready();
-            const rows = await db.select<{ content: string; type: string }[]>(
-                "SELECT content, type FROM clipboard WHERE id = $1", [id]
-            );
-            const row = rows[0];
-            if (!row) throw new Error('clipboard entry not found');
-            if (row.type !== 'text') throw new Error('only text entries can be encrypted');
-            if (encrypted) {
-                if (isEncryptedContent(row.content)) return; // 已加密：幂等
-                const payload = await encryptClipText(row.content);
-                // 密文以 content UNIQUE 存储（明文丢失，但载荷仍可识别/解密回写）；
-                // 明文派生列一并清除（密文条目不留任何可读明文）
-                await conn.executeWithRetry(
-                    "UPDATE clipboard SET content = $1, encrypted = 1, html_content = NULL, qr_text = NULL WHERE id = $2",
-                    [payload, id]
-                );
-            } else {
-                if (!isEncryptedContent(row.content)) return; // 未加密：幂等
-                const plaintext = await decryptClipText(row.content);
-                await conn.executeWithRetry(
-                    "UPDATE clipboard SET content = $1, encrypted = 0 WHERE id = $2",
-                    [plaintext, id]
-                );
-            }
-            // 通知前端列表立即刷新（密文占位 ↔ 明文展示切换）
-            bus.emit('clipboard:changed');
         },
     };
 }

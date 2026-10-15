@@ -390,12 +390,12 @@ CREATE TABLE IF NOT EXISTS clip_templates
                         },
                         Migration {
                             version: 18,
-                            description: "Extend clipboard with rich-text/encrypted columns, relax type CHECK; add pinned_clip tags",
+                            description: "Extend clipboard with rich-text column, relax type CHECK; add pinned_clip tags",
                             kind: MigrationKind::Up,
                             sql: r#"
 -- clipboard.type 在 v3 定义时带 CHECK (type IN ('text','image')) 约束，无法直接存
 -- 富文本(html)/文件(files)类型；SQLite 不支持 DROP CONSTRAINT，按标准流程重建表放宽约束，
--- 同时补齐富文本与加密标记两列（与前端 ensureFeatureColumns 兜底逻辑同 DDL）。
+-- 同时补齐富文本列（与前端 ensureFeatureColumns 兜底逻辑同 DDL）。
 CREATE TABLE clipboard_v18
 (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -410,15 +410,13 @@ CREATE TABLE clipboard_v18
     source_app   TEXT,
     qr_text      TEXT,
     -- 富文本正文（HTML）：仅 html 类型条目有值，content 保持纯文本语义（搜索/岛显示/合并复制）
-    html_content TEXT,
-    -- 字段级加密标记：1 = content 存 S1ENC1 加密载荷（AES-256-GCM，密钥在 OS 凭据库）
-    encrypted    INTEGER NOT NULL DEFAULT 0
+    html_content TEXT
 );
 
 INSERT INTO clipboard_v18
-    (id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, html_content, encrypted)
+    (id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, html_content)
 SELECT
-    id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, NULL, 0
+    id, content, created_at, source, is_favorite, category, count, updated_at, type, source_app, qr_text, NULL
 FROM clipboard;
 
 DROP TABLE clipboard;

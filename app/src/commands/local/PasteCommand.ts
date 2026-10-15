@@ -5,7 +5,6 @@ import {
 } from './clipboardStore';
 import clipboardService from '~/src/db/dbService';
 import { pasteContentToActiveApp } from './pasteUtil';
-import { decryptClipText, isEncryptedContent } from '../../clipboard/encryption';
 import { notifyIsland } from '~/composables/useCopyIsland';
 import { useI18n } from '~/composables/useI18n';
 import { activeTab } from '~/composables/useTabs';
@@ -65,23 +64,13 @@ export class PasteCommand implements Command {
         await pasteContentToActiveApp(content, type, htmlContent ?? undefined);
     }
 
-    /** 粘贴单条（序列与普通粘贴共用）：加密条目先解密，显式计数防双计 */
+    /** 粘贴单条（序列与普通粘贴共用）：显式计数防双计 */
     private async pasteItem(item: { id: number; content: string; type?: string; html_content?: string | null }): Promise<void> {
         if (!item.content) return;
-        // 加密条目先解密为明文再写剪贴板；解密失败中止粘贴
-        let pasteText = item.content;
-        if (isEncryptedContent(item.content)) {
-            try {
-                pasteText = await decryptClipText(item.content);
-            } catch (e) {
-                console.error('粘贴加密条目解密失败:', e);
-                return;
-            }
-        }
         clipboardService.suppressUseCountBump();
         await clipboardService.increaseUseCount(item.id).catch((err) => {
             console.error('记录使用次数失败:', err);
         });
-        await pasteContentToActiveApp(pasteText, (item.type ?? 'text') as 'text' | 'image' | 'html' | 'files', item.html_content ?? undefined);
+        await pasteContentToActiveApp(item.content, (item.type ?? 'text') as 'text' | 'image' | 'html' | 'files', item.html_content ?? undefined);
     }
 }

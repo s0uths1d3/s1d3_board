@@ -106,7 +106,7 @@ describe('migrator', () => {
     it('clipboard 已是放宽约束的新结构（无旧 CHECK）：不再重建', async () => {
         const { db, executes } = stubDb((sql) => {
             if (sql.includes('sqlite_master') && sql.includes("name IN ('clipboard', 'clipboard_v18')")) {
-                return [{ name: 'clipboard', sql: "CREATE TABLE clipboard (type TEXT DEFAULT 'text', html_content TEXT, encrypted INTEGER NOT NULL DEFAULT 0)" }];
+                return [{ name: 'clipboard', sql: "CREATE TABLE clipboard (type TEXT DEFAULT 'text', html_content TEXT)" }];
             }
             return [];
         });

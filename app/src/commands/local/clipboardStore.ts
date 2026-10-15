@@ -71,13 +71,16 @@ export function clearBatchSelection() {
   batchAnchorIndex = -1;
 }
 
-/** 过滤条件：是否仅收藏 + 搜索关键字 + 类型筛选（all 全部 / image 仅图片）+ 高级搜索开关 */
+/** 过滤条件：是否仅收藏 + 搜索关键字 + 类型多选筛选（[] = 全部类型）+ 高级搜索开关 + 来源应用筛选 */
 export const filter = ref({
   favorite: 0,
   searchContent: '',
-  type: 'all' as 'all' | 'image',
+  // 类型多选：同时勾选文本/图片/文件的任意组合（数组替换式更新，watch 按引用感知）
+  types: [] as ('text' | 'image' | 'files')[],
   // 高级搜索：true = 空格拆词 AND + 引号整句；false = 整串按字面单词元匹配
   advanced: true,
+  // 来源应用筛选（复制瞬间的前台进程名）：'' = 全部应用
+  sourceApp: '',
 });
 
 /** 高级搜索开关持久化键（settings KV）：'1' 开 / '0' 关 */
