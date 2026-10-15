@@ -13,10 +13,9 @@
 | 4 | 按时间过期策略 | ✅ 已实现 | 保留天数、启动/变更即清理 |
 | 5 | 常用剪贴板标签 | ✅ 已实现 | 编辑器字段、卡片展示 |
 | 6 | 序列粘贴 | ✅ 已实现 | 多选设队列、Enter 步进、弹岛进度 |
-| 7 | 敏感条目落盘加密 | ✅ 已实现 | AES-256-GCM 字段级加密 |
-| 8 | 历史条目直接编辑 | ❌ **未实现** | 见 [未实现项](#未实现项) |
-| 9 | 图片 OCR 提取文字 | ❌ **未实现** | 见 [未实现项](#未实现项) |
-| 10 | 粘贴前处理规则 | ❌ **未实现** | 见 [未实现项](#未实现项) |
+| 7 | 历史条目直接编辑 | ❌ **未实现** | 见 [未实现项](#未实现项) |
+| 8 | 图片 OCR 提取文字 | ❌ **未实现** | 见 [未实现项](#未实现项) |
+| 9 | 粘贴前处理规则 | ❌ **未实现** | 见 [未实现项](#未实现项) |
 
 ---
 
@@ -175,7 +174,7 @@
 
 - **队列状态**（[clipboardStore.ts](../app/src/commands/local/clipboardStore.ts)）：`sequenceQueueIds`（id 数组，Set 插入序 = 点选顺序）+ `sequenceCursor`（游标，循环取模步进）。状态放共享 store——`index.vue` 与 `PasteCommand` 命中同一实例。
 - **入队**：批量多选（`Ctrl`/`Shift` 点选）≥ 2 条后，批量工具栏出现「设为序列粘贴队列」按钮。
-- **步进粘贴**（[PasteCommand.ts](../app/src/commands/local/PasteCommand.ts)）：序列模式激活时 `Enter` 忽略当前选中行，按游标取队列条目粘贴（加密条目自动解密、显式计数防双计），粘贴后 700ms 弹岛进度（延迟到「已粘贴」胶囊之后，岛单窗覆盖展示）。
+- **步进粘贴**（[PasteCommand.ts](../app/src/commands/local/PasteCommand.ts)）：序列模式激活时 `Enter` 忽略当前选中行，按游标取队列条目粘贴（显式计数防双计），粘贴后 700ms 弹岛进度（延迟到「已粘贴」胶囊之后，岛单窗覆盖展示）。
 - **容错**：队列条目被删除/裁剪后不在加载数据中时自动退出序列模式，防止粘贴错误内容。
 - **退出**：批量选择清空后显示「序列粘贴中」状态条，点击「退出序列模式」结束。
 
@@ -189,44 +188,6 @@
 ### 相关设置
 
 序列粘贴为**会话级功能，无全局设置**：队列由批量工具栏「设为序列粘贴队列」入口创建，退出走状态条按钮或清空批量选择；未激活时对普通粘贴行为零影响，队列不持久化（重启后自动失效）。
-
----
-
-## 七、敏感条目落盘加密（✅ 已实现）
-
-### 功能说明
-
-对任意**文本**历史条目可开启「加密存储」：数据库中的内容替换为密文（AES-256-GCM），列表界面不再回显明文（锁形占位），tooltip/拖拽/批量复制等所有旁路同样不泄露明文；粘贴时自动解密。加密密钥保存在**操作系统凭据库**（Windows Credential Manager），不落 SQLite。
-
-### 技术实现方案
-
-- **加密原语**（[secure.rs](../src-tauri/src/commands/secure.rs)）：
-  - 算法：AES-256-GCM（`aes-gcm 0.10`），每次加密随机 12 字节 nonce，AAD 绑定 `"S1d3Board-clip"` 防载荷移植。
-  - 载荷格式：`S1ENC1:` 前缀 + base64(nonce ‖ 密文含 16 字节 tag)——前缀同时作为**明文/密文判别哨兵**（`isEncryptedContent`）。
-  - 密钥管理：`keyring` get-or-create（服务名 `S1d3Board` / 用户 `clip_secret`，32 字节 hex），密钥永不出 Rust 进程；解密通过 `decrypt_clip_text` 命令完成。
-- **切换实现**（`setClipboardEncrypted`，[clipboardRepository.ts](../app/src/core/db/repositories/clipboardRepository.ts)）：仅 `type='text'` 条目可加密（其他类型抛错）；加密时 `content` 原地替换为载荷、`encrypted=1`、明文派生列（`html_content`/`qr_text`）置 NULL；解除时解密回明文、`encrypted=0`。幂等：已处于目标状态直接返回。
-- **UI 集成**（[index.vue](../app/pages/index.vue)）：
-  - 右键菜单：文本条目出现「加密存储 / 解除加密」（按当前状态切换文案）。
-  - 列表渲染：`encrypted=1` 条目内容区显示锁形「已加密条目」占位 + 信息行「已加密」徽章。
-  - 明文防泄露旁路：tooltip 独立窗口不出加密条目预览；拖拽置空载荷；右键复制先解密再写；批量复制逐条解密合并（解密失败的密文条目剔除，不进剪贴板）；添加到常用剪贴板被拦截。
-- **粘贴解密**（[PasteCommand.ts](../app/src/commands/local/PasteCommand.ts) / [ClipboardSlotPasteCommand.ts](../app/src/commands/local/ClipboardSlotPasteCommand.ts)）：粘贴前按 `S1ENC1:` 前缀判定，先 `decrypt_clip_text` 解密为明文再写剪贴板；解密失败（凭据库不可用/密钥不符）中止粘贴。
-
-### 操作指南
-
-1. 右键任意文本条目 → **加密存储**：内容立即变为锁形占位，数据库落盘为密文。
-2. 粘贴：`Enter` / `Ctrl+数字` / 右键复制均自动解密为明文，使用无感。
-3. 右键已加密条目 → **解除加密**：恢复明文存储与列表显示。
-4. 密钥在系统凭据库中（Windows：控制面板 → 凭据管理器 → Windows 凭据 → `S1d3Board`）；卸载应用不清除密钥，重装后仍可解密历史数据。
-
-### 边界说明（如实标注）
-
-- 加密范围为**文本条目**（图片/文件/富文本条目无加密入口）；富文本条目本身不加密。
-- 密文存于本地 SQLite，密钥存于 OS 凭据库——二者同机共存时防「直接读库泄露明文」；**不能**防拥有系统登录权限的本地攻击者。
-- 加密条目不参与全文搜索（搜密文无意义）；智能剪贴板解析管道对密文不生效。
-
-### 相关设置
-
-加密为**条目级操作**（右键菜单逐条开关），无全局设置项；无应用内密钥管理界面。密钥的存取位置由 OS 凭据库决定（Windows：控制面板 → 凭据管理器 → Windows 凭据 → `S1d3Board`），卸载应用不清除密钥。
 
 ---
 
@@ -247,7 +208,6 @@
 | 文件复制支持 | 自动 | 复制文件即记录，无开关 |
 | 常用剪贴板标签 | 条目级 | 常用剪贴编辑器内逐条填写 |
 | 序列粘贴 | 会话级 | 批量工具栏入口创建队列，退出即结束，不持久化 |
-| 敏感条目落盘加密 | 条目级 | 右键菜单逐条加解密，密钥存 OS 凭据库 |
 
 ---
 
@@ -281,7 +241,7 @@
 
 | 变更 | 内容 |
 |------|------|
-| `clipboard` 表重建 | `type` CHECK 放宽为 `text/image/html/files`；新增 `html_content TEXT`；新增 `encrypted INTEGER NOT NULL DEFAULT 0`（SQLite 不支持 DROP CONSTRAINT，走标准「建新表 → 拷数据 → 删旧表 → 重命名 → 重建索引」流程，并校正 `sqlite_sequence`） |
+| `clipboard` 表重建 | `type` CHECK 放宽为 `text/image/html/files`；新增 `html_content TEXT`（SQLite 不支持 DROP CONSTRAINT，走标准「建新表 → 拷数据 → 删旧表 → 重命名 → 重建索引」流程，并校正 `sqlite_sequence`） |
 | `pinned_clip` 加列 | `tags TEXT`（条目标签，JSON 字符串数组） |
 
 ## 验证结论
@@ -290,4 +250,4 @@
 |--------|------|------|
 | 前端类型检查 | `npx vue-tsc --noEmit`（app/） | ✅ 0 错误 |
 | 单元测试 | `npm run test` | ✅ 26 文件 / 215 用例全绿（含同步更新的 clipboardRepository.spec / bootOrder.spec） |
-| Rust 编译检查 | `cargo check`（src-tauri/） | ✅ 通过（含 secure.rs 单元测试编译） |
+| Rust 编译检查 | `cargo check`（src-tauri/） | ✅ 通过 |

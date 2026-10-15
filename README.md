@@ -57,7 +57,7 @@ It isn't a window you keep open all day. It stays in the tray until a global sho
 
 | Module | What it solves | Key capabilities |
 |---|---|---|
-| 📋 **Clipboard** | Copied things vanish | Text / images / rich text / files captured automatically, full-text search, favorites, sequence paste, per-item encryption, retention & ignore rules |
+| 📋 **Clipboard** | Copied things vanish | Text / images / rich text / files captured automatically, full-text search, favorites, sequence paste, retention & ignore rules |
 | 📌 **Pinned** | Re-finding the same snippets | Pin frequent items with custom name & tags, paste directly with `Ctrl+1 ~ Ctrl+0` |
 | ✅ **Todo** | Things living in your head | Priority, category, due date, smart/custom recurring reminders |
 | 🗒️ **Notes** | Nowhere to put stray thoughts | Multi-color masonry notes, `Ctrl+N` to create, `Ctrl+Enter` to save |
@@ -78,7 +78,6 @@ Key capabilities by module:
 - **Favorites**: `Ctrl+L` to star / unstar
 - **One-key paste**: `Enter` pastes the selection; `Ctrl+Shift+1 ~ Ctrl+Shift+0` pastes the top 10 globally
 - **Sequence paste**: multi-select entries into a queue and step through it with `Enter` — the island capsule shows the progress
-- **Per-item encryption**: any text entry can be stored as AES-256-GCM ciphertext (lock placeholder everywhere, paste decrypts on the fly); the key lives in the OS credential manager and never leaves the Rust process
 - **Dedicated viewers**: a hover tooltip shows full content (original indentation preserved); an image viewer supports zoom / rotate / switching
 
 > Full implementation notes: [.docs/clipboard-features.md](.docs/clipboard-features.md)
@@ -177,7 +176,6 @@ Copied content flows through an "**extractor → scheme → smart segmentation**
 | Frontend | [Nuxt 4](https://nuxt.com) + [Vue 3](https://vuejs.org) |
 | Styling | [Tailwind CSS 4](https://tailwindcss.com) (CSS-first `@theme` configuration) |
 | Database | SQLite ([@tauri-apps/plugin-sql](https://github.com/tauri-apps/plugins-workspace/tree/v2/plugins/sql)) |
-| Encryption | AES-256-GCM field-level encryption for sensitive clipboard entries; keys via the OS credential store ([keyring](https://crates.io/crates/keyring)) |
 | System | global shortcuts, clipboard read/write, notifications, window control, tray, autostart, single instance, external links |
 | Open API | loopback HTTP/SSE server + outbound webhooks (Rust side, listens on `127.0.0.1` only) |
 | Data collection | Rust foreground-app watcher (per-platform for Windows / macOS / Linux, 30s segments) |
@@ -295,7 +293,7 @@ For a build with debug symbols (troubleshooting): `npm run tauri build -- --debu
 │       ├── clipboard/       # thumb (resize + QR scan), image_store (content-addressed file storage)
 │       ├── island/          # api (loopback HTTP/SSE + history query), webhook (HMAC push + retry)
 │       ├── ai/              # AI provider proxy (OpenAI-compatible / Anthropic / custom JSON, SSE)
-│       ├── commands/        # lifecycle / menu / paste / secure (field-level AES-256-GCM encryption)
+│       ├── commands/        # lifecycle / menu / paste
 │       └── app_usage/       # Foreground app tracking (windows / macos / linux / unsupported)
 ├── .docs/                   # Design docs (architecture / database / clipboard features / island-api / smart-clip AI analysis)
 ├── nuxt.config.ts
@@ -313,7 +311,7 @@ For a build with debug symbols (troubleshooting): `npm run tauri build -- --debu
 - **Batched statistics writes**: counters accumulate in memory, flush through throttled UPSERTs and force-flush on exit (no data loss)
 - **App usage pipeline**: Rust accumulates foreground time in 30s segments (nothing is collected while the toggle is off); the frontend pulls deltas into the `app_usage` table and the page aggregates by range
 - **Smart clipboard pipeline**: local segmentation and pre-judgment tagging are pure functions (zero AI cost, silent); only pressing `Ctrl+B` triggers an AI call; results are cooldown-cached and failures never pollute
-- **Clipboard safety net**: ignored-app blocking and retention cleanup run inside the clipboard listener before anything is written; sensitive entries are encrypted in place with AES-256-GCM — the payload carries a `S1ENC1:` sentinel prefix and the key is kept in the OS credential manager, never in the database
+- **Clipboard safety net**: ignored-app blocking and retention cleanup run inside the clipboard listener before anything is written
 - **Dynamic island pipeline**: copy / paste / cut and operation feedback from every module funnel through the island service; third parties push via the loopback API or subscribe via SSE / webhooks
 - **Multi-window collaboration**: the main window and the dynamic island / ring bubbles / tooltip / image viewer / delete confirm windows communicate over Tauri events (show, hide, hover, activate); theme and language changes broadcast to every window
 - **Settings persistence**: lightweight settings live in a `settings` key-value table (`getKeyValue/setKeyValue`); text inputs debounce before writing and flush on unmount
