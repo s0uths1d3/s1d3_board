@@ -7,6 +7,7 @@ import { useLongPressReorder } from "~/composables/useLongPressReorder";
 import { cycleColorScheme, useColorScheme, type ColorSchemeMode } from "~/composables/useColorScheme";
 import { useI18n } from "~/composables/useI18n";
 import { notifyIsland, toggleIslandHistoryWindow } from "~/composables/useCopyIsland";
+import { clipToNote, clipToTodos, CLIP_SOURCE_LINK_TITLE } from "~/src/commands/local/dispatchClip";
 
 /** 标题栏导航项：仅渲染当前可见的 tab（统计 Tab 受解锁门槛控制，§7.9，解锁后动态出现） */
 const visibleTabs = computed(() => getVisibleTabItems());
@@ -29,6 +30,48 @@ const navReorder = useLongPressReorder({
 function onNavTabClick(key: TabKey) {
   if (navReorder.consumeDragged()) return;
   setActiveTab(key);
+}
+
+// ===== 剪贴板条目拖入 Tab 跨模块分发：文本类条目拖到 待办/便签 Tab 上直接创建 =====
+// 来源识别用自定义 MIME（dragstart 侧写入）：拖放中 getData 受浏览器保护不可读，
+// 但 types 列表随时可读——据此判断是否来自剪贴板列表（系统文件拖入不会误创建）
+const CLIP_DRAG_TYPE = 'application/x-s1de-clip';
+const dragOverTab = ref<string | null>(null);
+
+const isClipDrag = (e: DragEvent): boolean => e.dataTransfer?.types.includes(CLIP_DRAG_TYPE) ?? false;
+
+/** 悬停判定：仅 剪贴板来源 × 待办/便签 Tab 放行（preventDefault 才允许 drop），并点亮目标高亮 */
+function onTabDragOver(key: string, e: DragEvent) {
+  if (!isClipDrag(e) || (key !== 'todo' && key !== 'note')) return;
+  e.preventDefault();
+  e.dataTransfer!.dropEffect = 'copy';
+  dragOverTab.value = key;
+}
+
+function onTabDragLeave(key: string) {
+  if (dragOverTab.value === key) dragOverTab.value = null;
+}
+
+/** 落成分发：按目标 Tab 走共享 dispatchClip 管道（多行清单逐条建待办/原文落便签），成功后切换 Tab */
+async function onTabDrop(key: string, e: DragEvent) {
+  dragOverTab.value = null;
+  if (!isClipDrag(e) || (key !== 'todo' && key !== 'note')) return;
+  e.preventDefault();
+  const text = e.dataTransfer?.getData('text/plain') ?? '';
+  if (!text) return;
+  try {
+    if (key === 'todo') {
+      const n = await clipToTodos(text, { title: CLIP_SOURCE_LINK_TITLE, url: text });
+      notifyIsland({ kind: 'success', text: n > 1 ? t('clip.dispatched_todos', { n }) : t('clip.dispatched_todo') });
+    } else {
+      await clipToNote(text);
+      notifyIsland({ kind: 'success', text: t('clip.dispatched_note') });
+    }
+    setActiveTab(key as TabKey);
+  } catch (err) {
+    console.error('拖拽分发失败:', err);
+    notifyIsland({ kind: 'error', text: t('clip.dispatch_failed') });
+  }
 }
 
 // ===== 导航下划线：单元素在 Tab 间移动 =====
@@ -194,10 +237,14 @@ onBeforeUnmount(() => {
             class="nav-tab flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-all duration-300 ease-soft"
             :class="[
               activeTab === tab.key ? 'is-active text-gold' : 'text-ink-soft hover:text-ink',
-              draggingTabKey === tab.key ? 'relative z-10 scale-110 opacity-60 cursor-grabbing shadow-float' : ''
+              draggingTabKey === tab.key ? 'relative z-10 scale-110 opacity-60 cursor-grabbing shadow-float' : '',
+              dragOverTab === tab.key ? 'ring-2 ring-gold/70 bg-gold/10' : ''
             ]"
             @pointerdown="navReorder.pressStart(tab.key, $event); onTabPressStart(tab.key)"
             @click="onNavTabClick(tab.key)"
+            @dragover="onTabDragOver(tab.key, $event)"
+            @dragleave="onTabDragLeave(tab.key)"
+            @drop="onTabDrop(tab.key, $event)"
         >
         <!-- 图标：通用动效组件，按 tab.key 从 assets/svg/nav/ 取分层 SVG。
              长按进入拖拽排序时 interrupt 置真，图标原路退回而不是顺势转完 -->

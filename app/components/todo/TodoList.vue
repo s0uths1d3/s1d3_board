@@ -88,21 +88,6 @@
               </button>
             </div>
 
-            <!-- 批量模式：进入/退出多选（列表视图） -->
-            <button
-                v-if="view === 'list'"
-                type="button"
-                class="btn-soft flex h-10 shrink-0 items-center gap-1.5 px-3"
-                :class="batchMode ? '!text-gold' : ''"
-                v-tip="t(batchMode ? 'todo.batch_exit' : 'todo.batch')"
-                @click="toggleBatchMode"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M9 5l7 7-7 7" /><rect x="3" y="5" width="6" height="6" rx="1" /><path d="M9 15.5l2 2 4-4" />
-              </svg>
-              <span class="hidden text-sm sm:inline">{{ t(batchMode ? 'todo.batch_exit' : 'todo.batch') }}</span>
-            </button>
-
             <!-- 新增任务：位于搜索框最右侧，点击下拉展开表单（与原先效果一致） -->
             <button
                 @click="toggleAddForm"
@@ -308,17 +293,6 @@
         </div>
       </div>
 
-      <!-- 批量操作栏：多选后的统一操作（完成 / 分类 / 删除 / 全选） -->
-      <div v-if="batchMode && view === 'list'" class="glass-card mb-3 flex flex-wrap items-center gap-2 rounded-2xl p-3">
-        <span class="text-sm text-gold">{{ t('todo.batch_selected', { n: batchSelectedIds.size }) }}</span>
-        <button type="button" class="btn-soft px-3 py-1.5 text-xs" @click="toggleSelectAll">{{ t('todo.select_all') }}</button>
-        <div class="ml-auto flex flex-wrap items-center gap-2">
-          <button type="button" class="btn-gold px-3 py-1.5 text-xs" :disabled="batchSelectedIds.size === 0" @click="batchComplete">{{ t('todo.batch_complete') }}</button>
-          <CategorySelect v-model="batchCategory" :placeholder="t('todo.batch_category')" @update:model-value="batchSetCategory" />
-          <button type="button" class="btn-soft px-3 py-1.5 text-xs text-danger hover:!bg-danger/10" :disabled="batchSelectedIds.size === 0" @click="batchDelete">{{ t('todo.batch_delete') }}</button>
-        </div>
-      </div>
-
       <!-- 视图切换过渡：复用全局 page-curtain（淡入 + 上浮），与主 Tab/设置分类切换观感一致；
            列表/回收站同为 div，需 key 区分才能触发 Transition -->
       <Transition name="page-curtain" mode="out-in">
@@ -344,8 +318,8 @@
         </div>
       </div>
 
-      <!-- 列表视图：仅渲染顶级任务，子任务由父卡片内联展示 -->
-      <div v-else key="list" id="todoListContainer" class="space-y-3">
+      <!-- 列表视图：仅渲染顶级任务，子任务由父卡片内联展示；空白区 drop = 子任务拖出提升为顶级 -->
+      <div v-else key="list" id="todoListContainer" class="space-y-3" @dragover.prevent @drop="onListDrop">
         <TodoItem
             v-for="(todo, index) in topTodos"
             :key="todo.id"
@@ -353,10 +327,8 @@
             :children="childrenMap.get(todo.id) ?? []"
             :highlight-string="searchQuery"
             :highlight="searchQuery.trim() !== ''"
-            :selected="!batchMode && index === selectedTodoIndex"
+            :selected="index === selectedTodoIndex"
             :edit-signal="editSignal"
-            :batch-mode="batchMode"
-            :batch-selected="batchSelectedIds.has(todo.id)"
             :drag-enabled="dragEnabled"
             @toggle="toggleTodo"
             @update="updateTodo"
@@ -366,12 +338,12 @@
             @reminder-change="changeReminder"
             @category-delete="handleCategoryDelete"
             @select="selectTodoIndex(index)"
-            @toggle-select="toggleBatchSelect"
             @promote="promoteTodo"
             @add-child="addChild"
             @drag-start="draggingId = $event"
             @drag-end="draggingId = null"
             @drop="handleDrop"
+            @to-note="todoToNote"
         />
       </div>
       </Transition>
@@ -385,7 +357,6 @@
         <span v-if="loadingMore">{{ t('todo.loading_more') }}</span>
         <span v-else>{{ t('clip.scroll_more') }}</span>
       </div>
-      <div v-else-if="view === 'list' && todos.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
 
       <div v-if="view === 'list' && filteredAndSortedTodos.length === 0" class="py-20 text-center">
         <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -418,8 +389,9 @@ import type {Todo, ReminderRule, TodoRecurrence} from '~/src/entities'
 import { nextDueDate } from '~/src/todo/recurrence'
 import { parseTagsText } from '~/src/todo/tags'
 import { parseTodoFromText, NLP_ERR_NOT_CONFIGURED, NLP_ERR_BAD_RESPONSE } from '~/src/todo/todoNlp'
+import { clipToNote, CLIP_SOURCE_LINK_TITLE } from '~/src/commands/local/dispatchClip'
 import { useTodoTemplates, type TodoTemplate } from '~/composables/useTodoTemplates'
-import { bus } from '~/src/core/events'
+import { bus, type GlobalSearchJumpDetail } from '~/src/core/events'
 import {isTauri} from "~/utils/env"
 import statsService from "~/src/statistics/statsService"
 import DueTimeSelect from '~/components/todo/DueTimeSelect.vue'
@@ -486,16 +458,10 @@ const newTodo = ref({
 // ===== 视图切换：列表 / 日历 / 回收站 =====
 const view = ref<'list' | 'calendar' | 'trash'>('list')
 
-// ===== 批量多选模式：顶级任务复选，统一完成/分类/删除 =====
-const batchMode = ref(false)
-const batchSelectedIds = ref<Set<string>>(new Set())
-/** 批量分类选择器的临时值（选择即应用，应用后清空） */
-const batchCategory = ref('')
-
 // ===== 拖拽层级调整：draggingId 由 drag-start/drag-end 事件维护 =====
 const draggingId = ref<string | null>(null)
-/** 拖拽手柄在列表视图（非批量）下常驻可用：拖到目标卡片上即变为它的子任务 */
-const dragEnabled = computed(() => view.value === 'list' && !batchMode.value)
+/** 拖拽手柄在列表视图下常驻可用：拖到目标卡片上即变为它的子任务 */
+const dragEnabled = computed(() => view.value === 'list')
 
 // ===== 优先级等级系统（0-255）：选择/排序/筛选/删除等级后的自动重映射 =====
 const { levels: priorityLevels, nearestLevel } = useTodoPriorities()
@@ -771,35 +737,93 @@ async function spawnRecurrenceNext(todo: Todo): Promise<void> {
   statsTodos.value.unshift(next)
 }
 
+/** 单条任务完成态落库（乐观更新 + 失败回滚 + 引用同步）；父子联动时对每条任务复用 */
+const setCompletedState = async (todo: Todo, completed: 0 | 1): Promise<boolean> => {
+  const prevCompleted = todo.completed
+  const prevUpdatedAt = todo.updated_at
+  todo.completed = completed
+  todo.updated_at = String(Date.now())
+  const ok = await withDbWrite(() => clipboardService.updateTodo(todo), () => {
+    notifyIsland({ kind: 'error', text: t('todo.update_failed') })
+  })
+  if (!ok) {
+    // 写库失败：回滚乐观更新，保证 UI 与数据库一致
+    todo.completed = prevCompleted
+    todo.updated_at = prevUpdatedAt
+    return false
+  }
+  syncTodoRef(todo)
+  return true
+}
+
 const toggleTodo = async (id: string) => {
   const todo = findTodo(id)
-  if (todo) {
-    const prevCompleted = todo.completed
-    const prevUpdatedAt = todo.updated_at
-    const completing = todo.completed === 0
-    todo.completed = completing ? 1 : 0
-    todo.updated_at = String(Date.now())
-    const ok = await withDbWrite(() => clipboardService.updateTodo(todo), () => {
-      notifyIsland({ kind: 'error', text: t('todo.update_failed') })
-    })
-    if (!ok) {
-      // 写库失败：回滚乐观更新，保证 UI 与数据库一致
-      todo.completed = prevCompleted
-      todo.updated_at = prevUpdatedAt
-      return
-    }
-    // 灵动岛反馈：完成（success）/ 取消完成（info）
-    notifyIsland({ kind: completing ? 'success' : 'info', text: t(completing ? 'todo.island_completed' : 'todo.island_uncompleted', { title: todo.title.slice(0, 100) }) })
-    // 完成状态变化影响提醒计划，同步给调度服务（完成 → 撤销其全部提醒）
-    syncTodoRef(todo)
-    // 循环任务完成：生成下一期（仅顶级任务参与循环；下一期继承规则与业务字段）
-    if (completing && todo.recurrence && !todo.parentId) {
-      await spawnRecurrenceNext(todo)
-    }
-    void reminderService.sync(statsTodos.value)
-    // 统计埋点（fire-and-forget）：仅"切换为完成"时 +1
-    if (completing) void statsService.record({ todo_completed: 1 })
+  if (!todo) return
+  const completing = todo.completed === 0
+  const target: 0 | 1 = completing ? 1 : 0
+  const ok = await setCompletedState(todo, target)
+  if (!ok) return
+  // 灵动岛反馈：完成（success）/ 取消完成（info）
+  notifyIsland({ kind: completing ? 'success' : 'info', text: t(completing ? 'todo.island_completed' : 'todo.island_uncompleted', { title: todo.title.slice(0, 100) }) })
+  // 循环任务完成：生成下一期（仅顶级任务参与循环；下一期继承规则与业务字段）
+  if (completing && todo.recurrence && !todo.parentId) {
+    await spawnRecurrenceNext(todo)
   }
+  // 完成状态变化影响提醒计划，同步给调度服务（完成 → 撤销其全部提醒）；联动落库后统一同步一次
+  void reminderService.sync(statsTodos.value)
+  // 统计埋点（fire-and-forget）：仅"切换为完成"时 +1（级联不重复计）
+  if (completing) {
+    void statsService.record({ todo_completed: 1 })
+    // 来源剪贴板回写（跨模块联动）：经"转为待办"创建的任务完成时，
+    // 反哺其来源剪贴板条目的使用计数（links 里以 title=clipboard 标记来源）
+    for (const link of todo.links ?? []) {
+      if (link.title === CLIP_SOURCE_LINK_TITLE && link.url) {
+        void clipboardService.increaseUseCountByContent(link.url)
+      }
+    }
+  }
+
+  // ===== 父子完成状态联动 =====
+  // 主任务勾/取消 → 全部子任务同步（用全量数据而非 childrenMap：搜索过滤视图下隐藏的子任务也要联动）
+  if (!todo.parentId) {
+    for (const child of todos.value.filter(t => t.parentId === id && t.completed !== target)) {
+      await setCompletedState(child, target)
+    }
+    return
+  }
+  // 子任务勾/取消 → 主任务联动：子任务全部完成时主任务自动完成；任一子任务取消时已完成的主任务回退
+  const parent = findTodo(todo.parentId)
+  if (!parent) return
+  const siblings = todos.value.filter(t => t.parentId === todo.parentId)
+  const allDone = siblings.every(t => t.completed === 1)
+  if (allDone && parent.completed === 0) {
+    const parentOk = await setCompletedState(parent, 1)
+    if (!parentOk) return
+    // 主任务补齐联动与手动完成同语义：灵动岛反馈 + 循环下一期 + 统计 + 剪贴板回写
+    notifyIsland({ kind: 'success', text: t('todo.island_completed', { title: parent.title.slice(0, 100) }) })
+    if (parent.recurrence) await spawnRecurrenceNext(parent)
+    void statsService.record({ todo_completed: 1 })
+    for (const link of parent.links ?? []) {
+      if (link.title === CLIP_SOURCE_LINK_TITLE && link.url) {
+        void clipboardService.increaseUseCountByContent(link.url)
+      }
+    }
+  } else if (!allDone && parent.completed === 1) {
+    const parentOk = await setCompletedState(parent, 0)
+    if (!parentOk) return
+    notifyIsland({ kind: 'info', text: t('todo.island_uncompleted', { title: parent.title.slice(0, 100) }) })
+  }
+}
+
+/** 待办 → 便签（跨模块分发）：标题+描述合并为便签内容，落默认色卡片，灵动岛反馈 */
+const todoToNote = async (id: string) => {
+  const todo = findTodo(id)
+  if (!todo) return
+  const content = todo.description ? `${todo.title}\n${todo.description}` : todo.title
+  const ok = await withDbWrite(() => clipToNote(content), () => {
+    notifyIsland({ kind: 'error', text: t('todo.island_to_note_failed') })
+  })
+  if (ok) notifyIsland({ kind: 'success', text: t('todo.island_to_note') })
 }
 
 const updateTodo = async (id: string, updates: Partial<Todo>) => {
@@ -982,15 +1006,16 @@ async function executeTodoPurge(id: string) {
   notifyIsland({ kind: 'success', text: t('todo.island_purged') })
 }
 
-// ===== 拖拽层级调整：落在目标任务卡片上 = 变为它的子任务 =====
+// ===== 拖拽层级调整：落在目标任务卡片上 = 变为它的子任务（顶级/子任务均可作拖拽源） =====
 async function handleDrop(targetId: string, pos: 'before' | 'after' | 'child') {
   const srcId = draggingId.value
   draggingId.value = null
   if (!srcId || srcId === targetId) return
   const src = findTodo(srcId)
   const target = findTodo(targetId)
-  if (!src || !target || src.parentId) return // 仅顶级任务参与拖拽
+  if (!src || !target) return
   if (pos !== 'child') return // 同级重排已随手动排序模式移除，仅保留层级调整
+  if (src.parentId && src.parentId === targetId) return // 拖回当前父级 = 无操作
 
   // 单层嵌套：目标必须是顶级任务；带子任务的任务不能变为子任务（避免出现孙层级）
   if (target.parentId || (childrenMap.value.get(srcId)?.length ?? 0) > 0) return
@@ -1002,6 +1027,14 @@ async function handleDrop(targetId: string, pos: 'before' | 'after' | 'child') {
     notifyIsland({ kind: 'error', text: t('todo.update_failed') }))
   if (!ok) return
   syncTodoRef(src)
+}
+
+/** 列表空白区松手：拖的是子任务 = 提升为顶级（拖出子任务列表的快捷方式；顶级任务无操作） */
+function onListDrop() {
+  const id = draggingId.value
+  draggingId.value = null
+  if (!id) return
+  if (findTodo(id)?.parentId) void promoteTodo(id)
 }
 
 /** 子任务提升为顶级：parentId 置空（写 NULL），追加到顶级末尾 */
@@ -1048,92 +1081,6 @@ async function addChild(parentId: string, title: string) {
   statsTodos.value.push(child)
   void reminderService.sync(statsTodos.value)
   notifyIsland({ kind: 'success', text: t('todo.island_added', { title: title.slice(0, 100) }) })
-}
-
-// ===== 批量操作：多选后统一完成/分类/删除（子任务随父级联） =====
-function toggleBatchMode() {
-  batchMode.value = !batchMode.value
-  batchSelectedIds.value = new Set()
-}
-
-function toggleBatchSelect(id: string) {
-  const next = new Set(batchSelectedIds.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  batchSelectedIds.value = next
-}
-
-/** 全选/清空：以当前可见顶级任务为准 */
-function toggleSelectAll() {
-  const all = topTodos.value.map(t => t.id)
-  const allSelected = all.length > 0 && all.every(id => batchSelectedIds.value.has(id))
-  batchSelectedIds.value = allSelected ? new Set() : new Set(all)
-}
-
-function exitBatch() {
-  batchMode.value = false
-  batchSelectedIds.value = new Set()
-}
-
-/** 批量完成：未完成任务逐条置完成（循环任务同步生成下一期），汇总一条灵动岛反馈 */
-async function batchComplete() {
-  const targets = [...batchSelectedIds.value]
-      .map(id => findTodo(id))
-      .filter((t): t is Todo => !!t && t.completed === 0)
-  if (targets.length === 0) return
-  for (const todo of targets) {
-    todo.completed = 1
-    todo.updated_at = String(Date.now())
-  }
-  const ok = await withDbWrite(async () => {
-    for (const todo of targets) await clipboardService.updateTodo(todo)
-  }, () => notifyIsland({ kind: 'error', text: t('todo.update_failed') }))
-  if (!ok) return
-  targets.forEach(syncTodoRef)
-  // 循环任务生成下一期（写库成功后再生成，避免失败残留）
-  for (const todo of targets) {
-    if (todo.recurrence && !todo.parentId) await spawnRecurrenceNext(todo)
-  }
-  void statsService.record({ todo_completed: targets.length })
-  void reminderService.sync(statsTodos.value)
-  notifyIsland({ kind: 'success', text: t('todo.island_batch_done', { n: targets.length }) })
-  exitBatch()
-}
-
-/** 批量删除：软删进回收站（可恢复），子任务随父级联 */
-async function batchDelete() {
-  const ids = [...batchSelectedIds.value]
-  if (ids.length === 0) return
-  const idSet = new Set(ids)
-  const ok = await withDbWrite(async () => {
-    for (const id of ids) await clipboardService.deleteTodo(id)
-  }, (error) => notifyIsland({ kind: 'error', text: t('todo.island_delete_failed', { reason: islandErrText(error) }) }))
-  if (!ok) return
-  removeTodo(t => idSet.has(t.id) || (!!t.parentId && idSet.has(t.parentId)))
-  statsTodos.value = statsTodos.value.filter(t => !idSet.has(t.id) && !(t.parentId && idSet.has(t.parentId)))
-  void reminderService.sync(statsTodos.value)
-  notifyIsland({ kind: 'success', text: t('todo.island_batch_deleted', { n: ids.length }) })
-  exitBatch()
-}
-
-/** 批量设置分类：选中任务统一改分类（CategorySelect 选择即应用） */
-async function batchSetCategory(category: string) {
-  const ids = [...batchSelectedIds.value]
-  if (!category || ids.length === 0) return
-  const targets = ids.map(id => findTodo(id)).filter((t): t is Todo => !!t)
-  if (targets.length === 0) return
-  for (const todo of targets) {
-    todo.category = category
-    todo.updated_at = String(Date.now())
-  }
-  const ok = await withDbWrite(async () => {
-    for (const todo of targets) await clipboardService.updateTodo(todo)
-  }, () => notifyIsland({ kind: 'error', text: t('todo.update_failed') }))
-  if (!ok) return
-  targets.forEach(syncTodoRef)
-  notifyIsland({ kind: 'success', text: t('todo.island_batch_categorized', { n: targets.length }) })
-  batchCategory.value = ''
-  exitBatch()
 }
 
 // ===== 日历视图：数据源为全量集合（跨月可见未加载任务）；改期复用 updateTodo 通路 =====
@@ -1277,6 +1224,9 @@ async function onSearchQueryChange(q: string) {
 
 // 生命周期
 onMounted(async () => {
+  // 全局搜索跳转：必须先于首个 await 注册——面板在切 Tab 挂载后立即派发搜索词，
+  // 若排在 await fetchTodos() 之后注册会错过这次派发
+  bus.on('global-search:jump', onGlobalSearchJump)
   await fetchTodos() // 先完成首次加载并进入调度（含启动补发汇总）
 
   // 方向键下移到已加载末尾时，触发加载下一页（todoStore 由全局方向键命令驱动）
@@ -1319,6 +1269,7 @@ onBeforeUnmount(() => {
   bus.off('focus-search', onFocusSearch)
   bus.off('todo:edit-request', onEditRequest)
   bus.off('todo:delete-request', onDeleteRequest)
+  bus.off('global-search:jump', onGlobalSearchJump)
 })
 
 /** 列表同步：顶级任务列表 → todoStore（供方向键选择/编辑使用，子任务不参与导航），并修正越界选中 */
@@ -1340,7 +1291,6 @@ const onEditRequest = () => {
 
 /** Del 键：对当前选中待办执行软删（进回收站，可恢复；与点击卡片删除按钮同一流程） */
 const onDeleteRequest = () => {
-  if (batchMode.value) return
   const todo = todoList.value[selectedTodoIndex.value]
   if (!todo) return
   void deleteTodo(todo.id)
@@ -1354,5 +1304,13 @@ const selectTodoIndex = (index: number) => {
 /** Ctrl+F 聚焦待办搜索框 */
 const onFocusSearch = () => {
   nextTick(() => todoSearchInput.value?.focus())
+}
+
+/** 全局搜索跳转：写入搜索词走既有防抖搜索管道（全量查库替换展示）；
+ *  视图强制回列表——日历/回收站不展示搜索结果，停在原视图会表现为"跳转无效果" */
+const onGlobalSearchJump = (p: GlobalSearchJumpDetail) => {
+  if (p.module !== 'todo') return
+  view.value = 'list'
+  searchQuery.value = p.query
 }
 </script>

@@ -1,6 +1,6 @@
 import type { DatabaseConnection } from '../connection';
 import type { Note } from '../../../entities';
-import { escapeLike, withPage, type PageQuery } from '../sql';
+import { withPage, buildLikeGroups, type PageQuery } from '../sql';
 
 /**
  * 便签领域仓储（note 表）。
@@ -110,8 +110,11 @@ export function createNoteRepository({ conn, recordStats }: { conn: DatabaseConn
             const db = await conn.ready();
 
             const content: string = filter.value.searchContent;
-            const baseSql = "SELECT * FROM note WHERE deleted_at IS NULL AND content LIKE $1 ESCAPE '\\' ORDER BY updated_at DESC, id DESC";
-            const params = [`%${escapeLike(content)}%`];
+            // 高级搜索：与剪贴板同一套词法（buildLikeGroups 收编 parseSearchTokens + likePatternFromToken）——
+            // 空格拆词 AND、双引号整句、* ? 通配符、| 组内 OR；开关随 filter.advanced（缺省视为开启，同剪贴板）。
+            // 空搜索词无 LIKE 条件（全量），全量查询行为不变
+            const { sql: likeSql, params } = buildLikeGroups(content, 'content', filter.value.advanced !== false);
+            const baseSql = `SELECT * FROM note WHERE deleted_at IS NULL${likeSql ? ` AND ${likeSql}` : ''} ORDER BY updated_at DESC, id DESC`;
 
             if (page) {
                 const { sql, params: pageParams } = withPage(page, params);

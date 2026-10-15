@@ -137,6 +137,8 @@
             @request-purge="onRequestPurge"
             @pin-desktop="pinToDesktop"
             @ai-organize="onAiOrganize"
+            @copy-content="copyNoteContent"
+            @to-todo="noteToTodo"
             @toggle-batch-select="toggleBatchSelect(note.id)"
             @drag-move="onNoteDragMove"
             @drag-drop="onNoteDragDrop"
@@ -153,7 +155,6 @@
         <span v-if="loading">{{ t('note.loading_more') }}</span>
         <span v-else>{{ t('clip.scroll_more') }}</span>
       </div>
-      <div v-else-if="view === 'list' && notes.length" class="py-6 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
 
       <div v-if="gridNotes.length === 0" class="py-20 text-center">
         <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -177,11 +178,13 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import StickyNoteItem from "./StickyNoteItem.vue";
 import { useNoteColors, resolveNoteColor } from "~/composables/useNoteColors";
+import { writeText } from 'tauri-plugin-clipboard-api';
+import { clipToTodos } from '~/src/commands/local/dispatchClip';
 import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
 import clipboardService from '~/src/db/dbService'
 import { v4 as uuidv4 } from 'uuid'
 import type { Note } from "~/src/entities";
-import { bus } from '~/src/core/events';
+import { bus, type GlobalSearchJumpDetail } from '~/src/core/events';
 import {isTauri} from "~/utils/env";
 import { shortcuts } from "~/src/commands/shortcuts/InitShortcuts";
 import { matchesKeyId } from "~/utils/shortcutFormat";
@@ -474,6 +477,32 @@ const createNote = async () => {
 
 /** Ctrl+N 新建便签（CreateNoteCommand 派发 create-note 事件） */
 const onCreateNote = () => createNote()
+
+/** 便签 → 系统剪贴板（跨模块分发）：内容原文写入，灵动岛反馈 */
+const copyNoteContent = async (id: string) => {
+  const note = notes.value.find(n => n.id === id)
+  if (!note?.content) return
+  try {
+    await writeText(note.content)
+    showHint(t('note.copied'))
+  } catch (e) {
+    console.error('便签内容复制失败:', e)
+    showHint(t('note.copy_failed'), 'error')
+  }
+}
+
+/** 便签 → 待办（跨模块分发）：多行清单逐条建待办，灵动岛反馈 */
+const noteToTodo = async (id: string) => {
+  const note = notes.value.find(n => n.id === id)
+  if (!note?.content) return
+  try {
+    const n = await clipToTodos(note.content)
+    showHint(n > 1 ? t('clip.dispatched_todos', { n }) : t('clip.dispatched_todo'))
+  } catch (e) {
+    console.error('便签转待办失败:', e)
+    showHint(t('clip.dispatch_failed'), 'error')
+  }
+}
 
 // ===== 即时反馈提示 → 灵动岛（屏幕顶部全局胶囊，替代窗口内 toast） =====
 const showHint = (msg: string, kind: IslandKind = 'success') => {
@@ -892,6 +921,8 @@ onMounted(() => {
   bus.on('create-note', onCreateNote)
   // Ctrl+F：聚焦便签搜索框（FocusSearchCommand 派发）
   bus.on('focus-search', onFocusSearch)
+  // Ctrl+P 全局搜索跳转：切"全部"范围 + 写入搜索词（既有 watcher 查库刷新）
+  bus.on('global-search:jump', onGlobalSearchJump)
 });
 
 onBeforeUnmount(() => {
@@ -904,10 +935,18 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown, true);
   bus.off('create-note', onCreateNote);
   bus.off('focus-search', onFocusSearch);
+  bus.off('global-search:jump', onGlobalSearchJump);
 });
 
 /** Ctrl+F 聚焦便签搜索框 */
 const onFocusSearch = () => {
   nextTick(() => noteSearchInput.value?.focus())
+}
+
+/** 全局搜索跳转：切"全部"范围（查库涵盖未加载便签）+ 写入搜索词，既有 watcher 防抖刷新 */
+const onGlobalSearchJump = (p: GlobalSearchJumpDetail) => {
+  if (p.module !== 'note') return
+  searchScope.value = 'all'
+  noteSearch.value = p.query
 }
 </script>

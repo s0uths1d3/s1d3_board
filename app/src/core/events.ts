@@ -36,6 +36,13 @@ export interface FocusSearchDetail {
     tab: string;
 }
 
+/** global-search:jump 载荷：全局搜索跳转定位（clip 携带条目 id 供选中，todo/note/setting 只带搜索词） */
+export interface GlobalSearchJumpDetail {
+    module: 'clip' | 'todo' | 'note' | 'setting';
+    query: string;
+    clipId?: number;
+}
+
 /** 应用内事件映射：事件名 → 载荷类型（void = 无载荷）。事件名与既有 CustomEvent 完全一致 */
 export interface AppEventMap {
     'clipboard:changed': void;
@@ -51,6 +58,10 @@ export interface AppEventMap {
     'todo:delete-request': void;
     'delete-request': void;
     'focus-search': FocusSearchDetail;
+    /** Ctrl+P 全局搜索：命令面板开关（GlobalSearchCommand 派发，GlobalSearch 组件响应） */
+    'global-search:toggle': void;
+    /** 全局搜索跳转：各模块各自监听并按 module 过滤（clip→index.vue、todo→TodoList、note→StickyNote、setting→SettingMain） */
+    'global-search:jump': GlobalSearchJumpDetail;
     /** 隐私模式（暂停记录）开关变化：托盘菜单重建勾选态（设置页/托盘任一入口切换后派发） */
     'privacy-pause-changed': void;
     /** 系统提示胶囊（如敏感内容拦截）：载荷为 i18n key，岛端翻译——监听管道不依赖文案层 */

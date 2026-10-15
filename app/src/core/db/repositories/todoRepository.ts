@@ -1,6 +1,6 @@
 import type { DatabaseConnection } from '../connection';
 import type { Todo, ReminderRule, TodoRecurrence, TodoLink } from '../../../entities';
-import { escapeLike, withPage, type PageQuery } from '../sql';
+import { withPage, buildLikeGroups, type PageQuery } from '../sql';
 import type { RecordStats } from './noteRepository';
 
 /** 优先级数值收敛：整数 0-255（越界/非法回退 127 中档） */
@@ -251,8 +251,11 @@ export function createTodoRepository({ conn, recordStats }: { conn: DatabaseConn
             const db = await conn.ready();
 
             const content: string = filter.value.searchContent;
-            const baseSql = "SELECT * FROM todo WHERE deleted_at IS NULL AND title LIKE $1 ESCAPE '\\' ORDER BY updated_at DESC, id DESC";
-            const params = [`%${escapeLike(content)}%`];
+            // 高级搜索：与剪贴板同一套词法（buildLikeGroups 收编 parseSearchTokens + likePatternFromToken）——
+            // 空格拆词 AND、双引号整句、* ? 通配符、| 组内 OR；开关随 filter.advanced（缺省视为开启，同剪贴板）。
+            // 空搜索词无 LIKE 条件（全量），提醒调度 sync 行为不变
+            const { sql: likeSql, params } = buildLikeGroups(content, 'title', filter.value.advanced !== false);
+            const baseSql = `SELECT * FROM todo WHERE deleted_at IS NULL${likeSql ? ` AND ${likeSql}` : ''} ORDER BY updated_at DESC, id DESC`;
 
             let rows: Todo[];
             if (page) {

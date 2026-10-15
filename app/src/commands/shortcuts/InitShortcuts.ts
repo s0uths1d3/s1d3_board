@@ -16,6 +16,7 @@ import {ClipboardSlotPasteCommand} from "~/src/commands/local/ClipboardSlotPaste
 import {ContextEditCommand} from "~/src/commands/local/ContextEditCommand"
 import {CreateNoteCommand} from "~/src/commands/local/CreateNoteCommand"
 import {FocusSearchCommand} from "~/src/commands/local/FocusSearchCommand"
+import {GlobalSearchCommand} from "~/src/commands/local/GlobalSearchCommand"
 import {CycleColorSchemeCommand} from "~/src/commands/local/CycleColorSchemeCommand"
 import {BubbleToggleCommand} from "~/src/commands/local/BubbleToggleCommand"
 import dbService from "~/src/db/dbService";
@@ -39,6 +40,8 @@ const contextEditCommand = new ContextEditCommand()
 // Ctrl+N：新建便签
 const createNoteCommand = new CreateNoteCommand()
 const focusSearchCommand = new FocusSearchCommand()
+// Ctrl+P：全局搜索命令面板
+const globalSearchCommand = new GlobalSearchCommand()
 const cycleColorSchemeCommand = new CycleColorSchemeCommand()
 const pinnedClipCommands = Array.from({ length: 10 }, (_, i) => new PinnedClipPasteCommand(i + 1))
 
@@ -171,6 +174,15 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         scope: 'local',
         command: focusSearchCommand,
         title: 'shortcut.find_in_tab',
+        enabled: true
+    },
+    {
+        id: 'global_search',
+        key: 'CommandOrControl+P',
+        defaultKey: 'CommandOrControl+P',
+        scope: 'local',
+        command: globalSearchCommand,
+        title: 'shortcut.global_search',
         enabled: true
     },
     {

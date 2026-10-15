@@ -31,14 +31,29 @@ describe('todoRepository', () => {
 
         const todos = await repo.fetchTodos({ value: { searchContent: '' } });
 
-        // selects[0] 是连接就绪的 PRAGMA；取业务查询断言
-        expect(selects.map(s => s.sql).find(sql => sql.includes('FROM todo'))).toContain('deleted_at IS NULL AND title LIKE');
+        // selects[0] 是连接就绪的 PRAGMA；取业务查询断言。
+        // 空搜索词无 LIKE 条件（全量，提醒调度 sync 依赖此行为）；词法行为见下方高级搜索用例
+        expect(selects.map(s => s.sql).find(sql => sql.includes('FROM todo'))).toContain('WHERE deleted_at IS NULL ORDER BY');
         expect(todos[0]?.parentId).toBe('p1');
         expect(todos[0]?.sortOrder).toBe(7);
         expect(todos[0]?.deletedAt).toBeNull();
         expect(todos[0]?.tags).toEqual(['a', 'b']);
         expect(todos[0]?.links).toEqual([{ title: '文档', url: 'https://x' }]);
         expect(todos[0]?.recurrence).toEqual({ freq: 'monthly', interval: 1, monthDay: 31, from: 'due' });
+    });
+
+    it('fetchTodos：高级搜索词法（空格拆词组间 AND、| 组内 OR、* 通配符）', async () => {
+        const { db, selects } = stubDb(() => []);
+        const repo = createTodoRepository({ conn: await connWith(db), recordStats: vi.fn(async () => {}) });
+
+        await repo.fetchTodos({ value: { searchContent: '会议 a|b c*' } });
+
+        const call = selects.map(s => ({ sql: s.sql, params: s.params })).find(s => s.sql.includes('FROM todo'));
+        // `会议`、`c*`（* → % 通配）为两组（AND）；`a`、`b` 同组（OR）
+        expect(call?.params).toEqual(['%会议%', '%a%', '%b%', '%c%%']);
+        expect(call?.sql).toContain('title LIKE $1 ESCAPE');
+        expect(call?.sql).toContain('(title LIKE $2 ESCAPE');
+        expect(call?.sql).toContain('title LIKE $4 ESCAPE');
     });
 
     it('fetchTodos：非法 tags/links/recurrence（损坏 JSON / 非法字段）容错为 undefined', async () => {

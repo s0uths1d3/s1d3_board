@@ -28,15 +28,17 @@ import SettingMain from "~/components/setting/SettingMain.vue";
 import ContextMenu from "~/components/mainpage/ContextMenu.vue";
 import PinnedClipList from "~/components/pinned/PinnedClipList.vue";
 import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
-import { activeTab } from "~/composables/useTabs";
-import { bus } from "~/src/core/events";
+import GlobalSearch from "~/components/common/GlobalSearch.vue";
+import SearchInputBar from "~/components/common/SearchInputBar.vue";
+import { activeTab, setActiveTab } from "~/composables/useTabs";
+import { bus, type GlobalSearchJumpDetail } from "~/src/core/events";
 import { beginElementDrag, endElementDrag } from "~/src/core/dragState";
 import { SwitchTabCommand } from "~/src/commands/local/SwitchTabCommand";
+import { CLIP_SOURCE_LINK_TITLE, clipToNote, clipToTodos } from "~/src/commands/local/dispatchClip";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
 import { isTooltipWrapEnabled } from "~/composables/useTooltipWrap";
 import { useI18n } from "~/composables/useI18n";
 import { notifyIsland, type IslandKind } from "~/composables/useCopyIsland";
-import { decryptClipText, isEncryptedContent } from "~/src/clipboard/encryption";
 import { clipFilesPreview } from "~/composables/useCopyIsland";
 // 统计页懒加载（§14.5）：统计 Tab 非首屏，异步加载降低主窗口初始包体与内存
 import { defineAsyncComponent } from "vue";
@@ -71,7 +73,7 @@ watch(data, (items) => {
 });
 const { t } = useI18n();
 const formatDateLocalized = useFormatDate();
-const searchInput = ref<HTMLElement | null>(null);
+const searchInput = ref<InstanceType<typeof SearchInputBar> | null>(null);
 
 /** 剪贴板写库事件的去抖合并计时器（连续复制时避免频繁查库） */
 let clipChangeEventTimer: ReturnType<typeof setTimeout> | null = null;
@@ -104,7 +106,7 @@ watch(() => filter.value.searchContent, () => {
   if (searchResetTimer) clearTimeout(searchResetTimer);
   searchResetTimer = setTimeout(() => void resetClips(), 300);
 });
-watch(() => [filter.value.favorite, filter.value.type, filter.value.advanced], () => {
+watch(() => [filter.value.favorite, filter.value.types, filter.value.advanced, filter.value.sourceApp], () => {
   void resetClips();
 });
 
@@ -381,9 +383,14 @@ function onListKeydown(e: KeyboardEvent) {
     e.stopPropagation();
     clearBatchSelection();
   } else if (e.key === 'Delete') {
-    // 直接响应 Delete 键：停止冒泡避免 ShortcutManager 的 delete_item 重复触发，并弹出删除确认框
+    // 直接响应 Delete 键：停止冒泡避免 ShortcutManager 的 delete_item 重复触发，并弹出删除确认框。
+    // 多选中（≥1 条）时 Delete 作用于整个多选集合（批量确认框）；无多选才删当前选中项
     e.preventDefault();
     e.stopPropagation();
+    if (batchSelectedIds.value.size > 0) {
+      batchDeleteConfirmVisible.value = true;
+      return;
+    }
     const item = getSelectedItem();
     if (item) handleDelete(item);
   }
@@ -392,11 +399,6 @@ function onListKeydown(e: KeyboardEvent) {
 function showTooltip(index: number, item: ClipboardData, event: MouseEvent) {
   // 设置项「提示窗口」关闭时不弹出 tooltip
   if (!tooltipEnabled.value) return;
-  // 加密条目不出 tooltip：tooltip 是独立窗口，明文预览会绕过「落盘加密」的防护边界
-  if (item.encrypted === 1) {
-    scheduleHideTooltip();
-    return;
-  }
   // 环盘（Ctrl+B 气泡环）显示期间禁止 tooltip：主窗口被 __ringActive 豁免保持可见，
   // 悬停 clip 列表不应再弹出 tooltip 窗口；关环（__ringActive 置 false）后自动恢复
   if ((window as any).__ringActive) return;
@@ -494,34 +496,76 @@ function handleFilter() {
   filter.value.favorite = filter.value.favorite === 1 ? 0 : 1
 }
 
-function handleTypeFilter() {
-  filter.value.type = filter.value.type === 'image' ? 'all' : 'image'
+// ===== 类型筛选下拉（多选：文本/图片/文件任意组合，空 = 全部类型） =====
+const TYPE_FILTER_OPTIONS = [
+  { value: 'text', label: 'clip.filter_type_text' },
+  { value: 'image', label: 'clip.filter_type_image' },
+  { value: 'files', label: 'clip.filter_type_files' },
+] as const;
+const showTypeFilter = ref(false);
+const typeFilterPanelRef = ref<HTMLElement | null>(null);
+const typeFilterBtnRef = ref<HTMLElement | null>(null);
+/** 切换某一类型（多选 toggle，面板保持展开便于连续勾选）；清空组合回全部类型 */
+function toggleTypeFilter(v: 'text' | 'image' | 'files') {
+  const set = new Set(filter.value.types);
+  if (set.has(v)) set.delete(v); else set.add(v);
+  filter.value.types = [...set];
+}
+function setAllTypes() {
+  filter.value.types = [];
+  showTypeFilter.value = false;
 }
 
 /** 切换高级搜索（空格拆词 + 引号整句 ⇄ 整串字面匹配），开关状态持久化到 settings */
 function handleAdvancedSearch() {
   void setAdvancedSearch(!filter.value.advanced);
 }
+// 高级搜索语法说明（? 按钮 + 面板）抽为共享组件 SearchHelpPanel，全局搜索面板同款复用
 
-/** 高级搜索语法说明面板：搜索框右侧 ? 按钮切换，点击面板/按钮以外区域自动收起 */
-const showSearchHelp = ref(false);
-const searchHelpPanelRef = ref<HTMLElement | null>(null);
-const searchHelpBtnRef = ref<HTMLElement | null>(null);
-const searchHelpRows = computed(() => [
-  { sym: t('clip.search_help_sym_space'), desc: t('clip.search_help_space') },
-  { sym: t('clip.search_help_sym_quote'), desc: t('clip.search_help_quote') },
-  { sym: '*', desc: t('clip.search_help_star') },
-  { sym: '?', desc: t('clip.search_help_question') },
-  { sym: '|', desc: t('clip.search_help_pipe') },
-]);
-function onSearchHelpOutside(e: PointerEvent) {
-  const target = e.target as Node;
-  if (searchHelpPanelRef.value?.contains(target)) return;
-  if (searchHelpBtnRef.value?.contains(target)) return; // 点在 ? 按钮上交给其自身 toggle
-  showSearchHelp.value = false;
+/** 应用筛选下拉：每次打开都重新拉取来源应用清单（数据始终新鲜），
+ *  点击面板/按钮以外区域自动收起（与搜索帮助面板同一套 outside 模式） */
+const showAppFilter = ref(false);
+const appFilterPanelRef = ref<HTMLElement | null>(null);
+const appFilterBtnRef = ref<HTMLElement | null>(null);
+const sourceApps = ref<{ app: string; cnt: number }[]>([]);
+async function toggleAppFilter() {
+  showAppFilter.value = !showAppFilter.value;
+  if (!showAppFilter.value) return;
+  try {
+    sourceApps.value = await clipboardService.fetchDistinctSourceApps();
+  } catch (e) {
+    console.error('加载来源应用清单失败:', e);
+  }
 }
-onMounted(() => document.addEventListener('pointerdown', onSearchHelpOutside, true));
-onBeforeUnmount(() => document.removeEventListener('pointerdown', onSearchHelpOutside, true));
+function setAppFilter(app: string) {
+  filter.value.sourceApp = app;
+  showAppFilter.value = false;
+}
+/** 两个筛选面板（应用/类型）共用的点击外侧收起：点在各自面板或触发按钮上交给其自身 toggle */
+function onFilterPanelOutside(e: PointerEvent) {
+  const target = e.target as Node;
+  if (showAppFilter.value
+      && !appFilterPanelRef.value?.contains(target)
+      && !appFilterBtnRef.value?.contains(target)) {
+    showAppFilter.value = false;
+  }
+  if (showTypeFilter.value
+      && !typeFilterPanelRef.value?.contains(target)
+      && !typeFilterBtnRef.value?.contains(target)) {
+    showTypeFilter.value = false;
+  }
+}
+onMounted(() => document.addEventListener('pointerdown', onFilterPanelOutside, true));
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onFilterPanelOutside, true));
+
+/** 当前生效的筛选标签（筛选提示条展示用，按固定顺序拼接） */
+const activeFilterLabels = computed(() => {
+  const labels: string[] = [];
+  for (const tp of filter.value.types) labels.push(t(`clip.filter_type_${tp}`));
+  if (filter.value.favorite === 1) labels.push(t('clip.filter_favorite'));
+  if (filter.value.sourceApp) labels.push(filter.value.sourceApp);
+  return labels;
+});
 
 /** 鼠标侧键导航：后退键(XButton1, button=3)=上一个标签，前进键(XButton2, button=4)=下一个标签。
  *  复用 SwitchTabCommand 的循环切换（与 Ctrl+←/→ 一致，统计页未解锁自动跳过）。
@@ -576,16 +620,49 @@ onMounted(async () => {
     const u4 = await listen('add-to-pinned:result', onAddToPinnedResult);
     const u5 = await listen('favorite:result', onFavoriteResult);
     const u6 = await listen('image-viewer:closed', onImageViewerClosed);
-    unlistenCommandResults = [u4, u5, u6];
+    // 灵动岛胶囊快捷动作（转待办/存便签）：岛窗口不落库，转发到此执行（共享 dispatchClip 管道）
+    const u7 = await listen<{ action: 'todo' | 'note'; text: string }>('island:dispatch', (ev) => {
+      void handleIslandDispatch(ev.payload);
+    });
+    unlistenCommandResults = [u4, u5, u6, u7];
   }
   // Delete 键请求删除：弹出内联删除确认框（DeleteConfirm 组件，与便签一致）
   bus.on('delete-request', onDeleteRequest);
   // 列表加载失败（DB 故障等）：提示用户，替代「列表静默没反应」
   bus.on('clip:load-failed', () => showPinnedHint(t('clip.load_failed'), 'error'));
+  // Ctrl+P 全局搜索跳转（剪贴板侧）：写搜索词 → 切 Tab → 按条目 id 选中定位
+  bus.on('global-search:jump', onGlobalSearchJump);
 });
+
+/** 全局搜索跳转（剪贴板）：搜索词写入高亮词（联动 filter → 防抖重查），切 Tab 后按条目 id 选中定位 */
+async function onGlobalSearchJump(p: GlobalSearchJumpDetail): Promise<void> {
+  if (p.module !== 'clip') return;
+  if (highlightContent.value !== p.query) highlightContent.value = p.query;
+  setActiveTab('clip');
+  // 等待防抖重查完成（300ms 防抖 + 查询耗时）再定位；搜索词未变化时无重查，等待仅为统一节奏
+  await new Promise((r) => setTimeout(r, 420));
+  const idx = data.value.findIndex((d) => d.id === p.clipId);
+  if (idx >= 0) selectRow(idx);
+}
 
 /** 命令结果事件的监听取消函数（onBeforeUnmount 统一清理） */
 let unlistenCommandResults: Array<() => void> = [];
+
+/** 灵动岛快捷动作落库：待办（多行清单逐条，记来源链接）/ 便签（原文落卡），岛提示反馈 */
+async function handleIslandDispatch(p: { action: 'todo' | 'note'; text: string }) {
+  try {
+    if (p.action === 'todo') {
+      const n = await clipToTodos(p.text, { title: CLIP_SOURCE_LINK_TITLE, url: p.text });
+      showPinnedHint(n > 1 ? t('clip.dispatched_todos', { n }) : t('clip.dispatched_todo'));
+    } else {
+      await clipToNote(p.text);
+      showPinnedHint(t('clip.dispatched_note'));
+    }
+  } catch (e) {
+    console.error('灵动岛快捷分发失败:', e);
+    showPinnedHint(t('clip.dispatch_failed'), 'error');
+  }
+}
 
 function onAddToPinnedResult(ev: unknown) {
   const status = (ev as { payload?: { status?: string } })?.payload?.status;
@@ -678,6 +755,7 @@ onBeforeUnmount(async () => {
   unlistenCommandResults = [];
   bus.off('delete-request', onDeleteRequest);
   bus.off('clipboard:changed', onClipboardChanged);
+  bus.off('global-search:jump', onGlobalSearchJump);
   if (clipChangeEventTimer) {
     clearTimeout(clipChangeEventTimer);
     clipChangeEventTimer = null;
@@ -720,14 +798,12 @@ const batchItems = computed(() => {
   return picked;
 });
 
-/** 批量复制：选中可复制条目（文本/富文本）按选择顺序合并（换行分隔，富文本取纯文本兜底）写入系统剪贴板；加密条目先解密为明文 */
+/** 批量复制：选中可复制条目（文本/富文本）按选择顺序合并（换行分隔，富文本取纯文本兜底）写入系统剪贴板 */
 async function batchCopy() {
   const items = batchItems.value;
-  const texts = (await Promise.all(items
+  const texts = items
     .filter((it: ClipboardData) => (it.type ?? 'text') === 'text' || it.type === 'html')
-    .map(async (it: ClipboardData) => it.encrypted === 1 ? await decryptClipText(it.content) : it.content)))
-    // 加密条目解密失败（密钥不符/凭据库不可用）时返回原文密文，剔除避免把密文写进剪贴板
-    .filter((t) => !isEncryptedContent(t));
+    .map((it: ClipboardData) => it.content);
   if (texts.length === 0) {
     showPinnedHint(t('clip.batch_copy_no_text'), 'info');
     return;
@@ -823,11 +899,11 @@ function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
       label: item.is_favorite === 1 ? t('clip.ctx_unfavorite') : t('clip.ctx_favorite'),
       action: () => favorite(item.id, item.is_favorite === 1 ? 0 : 1),
     },
-    // 字段级加密切换（仅文本条目）：落盘密文 + 界面不回显明文；图片条目无此入口
-    ...((item.type ?? 'text') === 'text' ? [{
-      label: item.encrypted === 1 ? t('clip.ctx_decrypt') : t('clip.ctx_encrypt'),
-      action: () => toggleEncrypt(item),
-    }] : []),
+    // 跨模块分发（仅文本类条目）：内容作为收件箱流向待办/便签（共享 dispatchClip 管道）
+    ...((item.type ?? 'text') === 'text' || item.type === 'html' ? [
+      { label: t('clip.ctx_to_todo'), action: () => dispatchToTodo(item) },
+      { label: t('clip.ctx_to_note'), action: () => dispatchToNote(item) },
+    ] : []),
     // 普通删除：弹内联确认框（与列表行删除按钮一致；anchor 为空走居中兜底）
     { label: t('clip.delete'), danger: true, action: () => handleDelete(item) },
   ];
@@ -873,7 +949,7 @@ async function copyQrContent(item: ClipboardData) {
 
 /** 右键「复制」：文本写系统剪贴板（触发既有弹岛链路）；富文本条目 HTML+纯文本双写还原格式；
  *  文件条目还原 CF_HDROP（解析路径列表 writeFiles）；图片项不支持（data URL 直接回写
- *  无意义且会污染剪贴板历史），提示引导用双击查看大图；加密条目先解密再写入明文 */
+ *  无意义且会污染剪贴板历史），提示引导用双击查看大图 */
 async function copyClipItem(item: ClipboardData) {
   if ((item.type ?? 'text') === 'image') {
     showPinnedHint(t('clip.ctx_copy_image_unsupported'), 'info');
@@ -892,11 +968,10 @@ async function copyClipItem(item: ClipboardData) {
       showPinnedHint(t('clip.copied'));
       return;
     }
-    const text = item.encrypted === 1 ? await decryptClipText(item.content) : item.content;
     if (item.type === 'html' && item.html_content) {
-      await writeHtmlAndText(item.html_content, text);
+      await writeHtmlAndText(item.html_content, item.content);
     } else {
-      await writeText(text);
+      await writeText(item.content);
     }
     showPinnedHint(t('clip.copied'));
   } catch (e) {
@@ -905,28 +980,31 @@ async function copyClipItem(item: ClipboardData) {
   }
 }
 
-/** 右键「加密存储/解除加密」：字段级 AES-256-GCM 加密切换（仅文本条目，密钥在系统凭据库），
- *  完成后刷新列表让界面按 encrypted 标记渲染锁态 */
-async function toggleEncrypt(item: ClipboardData) {
-  const target = item.encrypted !== 1;
+/** 右键「转为待办」：多行清单逐条建待办（默认最低优先级），来源条目记入 links——完成待办时回写剪贴板使用计数 */
+async function dispatchToTodo(item: ClipboardData) {
   try {
-    await clipboardService.setClipboardEncrypted(item.id, target);
-    await fetchData();
-    showPinnedHint(t(target ? 'clip.encrypt_success' : 'clip.decrypt_success'));
+    const n = await clipToTodos(item.content, { title: CLIP_SOURCE_LINK_TITLE, url: item.content });
+    showPinnedHint(n > 1 ? t('clip.dispatched_todos', { n }) : t('clip.dispatched_todo'));
   } catch (e) {
-    console.error('加密状态切换失败:', e);
-    showPinnedHint(t('clip.encrypt_failed'), 'error');
+    console.error('剪贴内容转待办失败:', e);
+    showPinnedHint(t('clip.dispatch_failed'), 'error');
+  }
+}
+
+/** 右键「存为便签」：内容原样落一张默认色便签卡 */
+async function dispatchToNote(item: ClipboardData) {
+  try {
+    await clipToNote(item.content);
+    showPinnedHint(t('clip.dispatched_note'));
+  } catch (e) {
+    console.error('剪贴内容存便签失败:', e);
+    showPinnedHint(t('clip.dispatch_failed'), 'error');
   }
 }
 
 /** 把当前剪贴项（文本/图片）添加到常用剪贴板列表末尾 */
 async function addToPinned(item: ClipboardData) {
   if (!item?.content) return;
-  // 加密条目不进常用剪贴板：内容为密文，收藏副本无意义且扩大密文扩散面
-  if (item.encrypted === 1) {
-    showPinnedHint(t('clip.encrypted_no_pinned'), 'info');
-    return;
-  }
   // 文件条目不进常用剪贴板：常用剪贴粘贴通道只支持文本/图片，收藏路径列表无法还原 CF_HDROP
   if (item.type === 'files') {
     showPinnedHint(t('clip.files_no_pinned'), 'info');
@@ -992,8 +1070,14 @@ function cancelDelete() {
   refocusList();
 }
 
-/** Delete 键请求：对当前选中项打开独立删除确认窗口 */
+/** Delete 键请求：多选中时对整个多选集合弹批量确认框，否则对当前选中项弹删除确认窗口 */
 function onDeleteRequest() {
+  if (deleteConfirmVisible.value) return;
+  // 多选中（≥1 条）：走批量删除确认（与列表内 Delete 键一致），不误删单条
+  if (batchSelectedIds.value.size > 0) {
+    batchDeleteConfirmVisible.value = true;
+    return;
+  }
   // 直接从 store 取当前选中项，避免依赖易过期的 deleteTarget（fetchData 每秒刷新 data 数组）
   const item = getSelectedItem();
   if (item) handleDelete(item);
@@ -1074,8 +1158,6 @@ function clipFileCount(content: string): number {
 function handleDragStart(item: ClipboardData, event: DragEvent) {
   // 全局拖拽计数 +1：拖动中按 Esc 取消本次拖拽，不触发 hide_window（dragend 必触发配对归还）
   beginElementDrag();
-  // 加密条目不参与拖拽：dragstart 是同步事件，无法等待异步解密，置空载荷防密文外泄
-  if (item.encrypted === 1) return;
   // 文件条目拖出仅携带纯文本路径列表（WebView 无法还原 CF_HDROP 拖放语义）
   if (item.type === 'files') {
     const names = clipFilesPreview(item.content);
@@ -1083,6 +1165,11 @@ function handleDragStart(item: ClipboardData, event: DragEvent) {
     return;
   }
   event.dataTransfer?.setData('text/plain', item.content);
+  // 自定义来源标记（drop 侧经 dataTransfer.types 识别，拖放中 getData 被浏览器保护不可读）：
+  // 文本类条目可拖到标题栏 待办/便签 Tab 直接分发（TitleBar.onTabDrop）
+  if ((item.type ?? 'text') === 'text' || item.type === 'html') {
+    event.dataTransfer?.setData('application/x-s1de-clip', item.type ?? 'text');
+  }
 }
 
 function handleDragEnd(item: ClipboardData, event: DragEvent) {
@@ -1189,126 +1276,166 @@ async function openImageViewer(item: ClipboardData) {
           <div :key="activeTab" :data-tab-key="activeTab">
             <!-- 剪贴板 -->
             <div v-if="activeTab === 'clip'" class="space-y-4">
-              <!-- 常驻搜索框：始终悬浮在列表最上方 -->
+              <!-- 常驻搜索框：始终悬浮在列表最上方（通用 SearchInputBar，列表专属开关经 slot 注入） -->
               <div class="sticky top-0 z-30 page-pad-bleed bg-[linear-gradient(135deg,var(--bg-grad-1),var(--bg-grad-3))] pt-1 pb-2">
-                <div class="glass-card flex items-center gap-2 rounded-2xl px-3 py-2 text-ink">
-                  <svg
-                      class="h-5 w-5 shrink-0 text-ink-faint"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      viewBox="0 0 24 24"
-                  >
-                    <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 104.5 4.5a7.5 7.5 0 0012.15 12.15z"
-                    />
-                  </svg>
-                  <input
-                      ref="searchInput"
-                      v-model="highlightContent"
-                      type="text"
-                      :placeholder="t('clip.search_placeholder')"
-                      class="list-search-input w-full bg-transparent text-ink placeholder:text-ink-faint focus:outline-hidden"
-                  />
+                <SearchInputBar
+                    ref="searchInput"
+                    v-model="highlightContent"
+                    :placeholder="t('clip.search_placeholder')"
+                    :advanced="filter.advanced"
+                    :tip-clear="t('clip.clear_search')"
+                    class="glass-card rounded-2xl px-3 py-2 text-ink"
+                    @update:advanced="handleAdvancedSearch"
+                    @clear="highlightContent = ''"
+                >
+                  <template #prepend>
+                    <button
+                        type="button"
+                        class="btn-soft btn-circle p-0 ml-1"
+                        :class="filter.favorite === 1 ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+                        v-tip="t(filter.favorite === 1 ? 'clip.favorite_off' : 'clip.favorite_on')"
+                        @click="handleFilter"
+                    >
+                      <svg class="h-4 w-4" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M253.488042 1024c-16.9 0-33.2875-5.1125-47.6125-15.3625-26.625-18.425-39.425-49.6625-34.3125-81.925l40.9625-251.9c1.5375-10.2375-1.5375-20.475-8.7-27.65L28.213042 466.4375c-22.0125-22.525-29.1875-55.3-19.45-84.9875 9.725-29.7 35.325-51.2 66.05-55.8125l237.575-36.35c10.75-1.5375 19.4625-8.1875 24.0625-17.925L441.388042 48.125c13.825-29.7 42.5-48.125 75.2625-48.125s61.4375 18.4375 75.2625 48.125l104.45 223.2375c4.6125 9.725 13.825 16.375 24.0625 17.925L958.000542 325.625a82.355 82.355 0 0 1 66.05 55.8125c10.2375 29.7 2.5625 62.4625-19.45 84.9875l-175.625 180.7375c-7.1625 7.175-10.2375 17.925-8.7 27.65l40.9625 251.9c5.125 31.75-8.1875 63.4875-34.3 81.925-26.1125 18.4375-59.9 20.4875-88.0625 4.6125l-206.85-114.6875c-9.725-5.1125-20.9875-5.1125-30.7125 0l-207.3625 115.2c-12.8125 6.65-26.6375 10.2375-40.4625 10.2375zM516.650542 51.2c-12.8 0-23.55 7.1625-29.1875 18.4375L383.525542 292.875c-11.775 25.0875-35.325 43.0125-62.975 47.1l-237.575 36.35c-12.2875 2.05-21.5 9.7375-25.6 21.5-4.1 11.775-1.025 24.0625 7.665 32.775L240.688042 611.325c18.4375 18.95 26.625 45.5625 22.525 71.675L222.250542 934.9125c-2.05 12.8 3.075 24.575 13.3125 31.7775 10.2375 7.175 23.0375 7.6875 33.7875 1.5375l207.3625-115.2c25.0875-13.825 55.3-13.825 80.3875 0l207.3625 115.2c10.75 6.1375 23.55 5.625 33.8-1.5375 10.2375-7.1625 15.3625-18.95 13.3125-31.7375L770.625542 683.0125c-4.1-26.1125 4.1-52.7375 22.525-71.675l175.625-180.7375c8.7-8.7 11.2625-20.9875 7.675-32.775-4.0875-11.775-13.3125-19.9625-25.6-21.5l-237.5625-36.35c-27.65-4.0875-51.2-22.0125-62.975-47.1L545.838042 69.6375c-5.625-11.2625-16.375-18.4375-29.1875-18.4375z m0 0" fill="currentColor"></path>
+                      </svg>
+                    </button>
+                    <button
+                        type="button"
+                        ref="typeFilterBtnRef"
+                        class="btn-soft btn-circle p-0 ml-1"
+                        :class="filter.types.length > 0 ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+                        v-tip="t('clip.filter_type')"
+                        @click="showTypeFilter = !showTypeFilter"
+                    >
+                      <!-- 类型筛选（分层图标）：全部/文本/图片/文件，取代原"仅图片"单按钮 -->
+                      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                        <polyline points="2 12 12 17 22 12" />
+                        <polyline points="2 17 12 22 22 17" />
+                      </svg>
+                    </button>
+                  </template>
+                  <!-- 按应用筛选：漏斗按钮展开来源应用下拉（选中应用名显示在筛选提示条） -->
                   <button
                       type="button"
+                      ref="appFilterBtnRef"
                       class="btn-soft btn-circle p-0 ml-1"
-                      :class="filter.favorite === 1 ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
-                      v-tip="t(filter.favorite === 1 ? 'clip.favorite_off' : 'clip.favorite_on')"
-                      @click="handleFilter"
+                      :class="filter.sourceApp ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+                      v-tip="t('clip.filter_app')"
+                      @click="toggleAppFilter"
                   >
-                    <svg class="h-4 w-4" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M253.488042 1024c-16.9 0-33.2875-5.1125-47.6125-15.3625-26.625-18.425-39.425-49.6625-34.3125-81.925l40.9625-251.9c1.5375-10.2375-1.5375-20.475-8.7-27.65L28.213042 466.4375c-22.0125-22.525-29.1875-55.3-19.45-84.9875 9.725-29.7 35.325-51.2 66.05-55.8125l237.575-36.35c10.75-1.5375 19.4625-8.1875 24.0625-17.925L441.388042 48.125c13.825-29.7 42.5-48.125 75.2625-48.125s61.4375 18.4375 75.2625 48.125l104.45 223.2375c4.6125 9.725 13.825 16.375 24.0625 17.925L958.000542 325.625a82.355 82.355 0 0 1 66.05 55.8125c10.2375 29.7 2.5625 62.4625-19.45 84.9875l-175.625 180.7375c-7.1625 7.175-10.2375 17.925-8.7 27.65l40.9625 251.9c5.125 31.75-8.1875 63.4875-34.3 81.925-26.1125 18.4375-59.9 20.4875-88.0625 4.6125l-206.85-114.6875c-9.725-5.1125-20.9875-5.1125-30.7125 0l-207.3625 115.2c-12.8125 6.65-26.6375 10.2375-40.4625 10.2375zM516.650542 51.2c-12.8 0-23.55 7.1625-29.1875 18.4375L383.525542 292.875c-11.775 25.0875-35.325 43.0125-62.975 47.1l-237.575 36.35c-12.2875 2.05-21.5 9.7375-25.6 21.5-4.1 11.775-1.025 24.0625 7.665 32.775L240.688042 611.325c18.4375 18.95 26.625 45.5625 22.525 71.675L222.250542 934.9125c-2.05 12.8 3.075 24.575 13.3125 31.7775 10.2375 7.175 23.0375 7.6875 33.7875 1.5375l207.3625-115.2c25.0875-13.825 55.3-13.825 80.3875 0l207.3625 115.2c10.75 6.1375 23.55 5.625 33.8-1.5375 10.2375-7.1625 15.3625-18.95 13.3125-31.7375L770.625542 683.0125c-4.1-26.1125 4.1-52.7375 22.525-71.675l175.625-180.7375c8.7-8.7 11.2625-20.9875 7.675-32.775-4.0875-11.775-13.3125-19.9625-25.6-21.5l-237.5625-36.35c-27.65-4.0875-51.2-22.0125-62.975-47.1L545.838042 69.6375c-5.625-11.2625-16.375-18.4375-29.1875-18.4375z m0 0" fill="currentColor"></path>
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                    </svg>
+                  </button>
+                </SearchInputBar>
+
+                <!-- 类型筛选面板（分层按钮展开）：多选文本/图片/文件任意组合（点项不收起，便于连续勾选），「全部类型」清空组合 -->
+                <div
+                    v-if="showTypeFilter"
+                    ref="typeFilterPanelRef"
+                    class="glass-card absolute right-1 top-full z-40 mt-1 w-44 rounded-2xl p-2 text-xs shadow-float"
+                >
+                  <div class="px-2 pb-1 pt-1.5 text-sm font-semibold text-gold">{{ t('clip.filter_type') }}</div>
+                  <button
+                      type="button"
+                      class="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors"
+                      :class="filter.types.length === 0 ? 'bg-gold/15 text-gold' : 'text-ink-soft hover:bg-gold/10'"
+                      @click="setAllTypes"
+                  >
+                    <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+                      <rect x="3" y="3" width="7" height="7" rx="1" />
+                      <rect x="14" y="3" width="7" height="7" rx="1" />
+                      <rect x="3" y="14" width="7" height="7" rx="1" />
+                      <rect x="14" y="14" width="7" height="7" rx="1" />
+                    </svg>
+                    <span class="flex-1 truncate">{{ t('clip.filter_type_all') }}</span>
+                    <svg v-if="filter.types.length === 0" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20 6 9 17l-5-5" />
                     </svg>
                   </button>
                   <button
+                      v-for="opt in TYPE_FILTER_OPTIONS"
+                      :key="opt.value"
                       type="button"
-                      class="btn-soft btn-circle p-0 ml-1"
-                      :class="filter.type === 'image' ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
-                      v-tip="t(filter.type === 'image' ? 'clip.images_off' : 'clip.images_on')"
-                      @click="handleTypeFilter"
+                      class="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors"
+                      :class="filter.types.includes(opt.value) ? 'bg-gold/15 text-gold' : 'text-ink-soft hover:bg-gold/10'"
+                      @click="toggleTypeFilter(opt.value)"
                   >
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg v-if="opt.value === 'text'" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <polyline points="14 2 14 8 20 8" />
+                      <line x1="8" y1="13" x2="16" y2="13" />
+                      <line x1="8" y1="17" x2="16" y2="17" />
+                    </svg>
+                    <svg v-else-if="opt.value === 'image'" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                       <circle cx="8.5" cy="8.5" r="1.5" />
                       <polyline points="21 15 16 10 5 21" />
                     </svg>
-                  </button>
-                  <button
-                      type="button"
-                      class="btn-soft btn-circle p-0 ml-1"
-                      :class="filter.advanced ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
-                      v-tip="t(filter.advanced ? 'clip.advanced_off' : 'clip.advanced_on')"
-                      @click="handleAdvancedSearch"
-                  >
-                    <!-- 高级搜索：空格拆词 AND + 引号整句 + * ? 通配符 + | OR；关闭后整串按字面匹配 -->
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
-                      <path d="M19 15l.9 2.4L22 18l-2.1.6L19 21l-.9-2.4L16 18l2.1-.6L19 15z" />
+                    <svg v-else class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                     </svg>
-                  </button>
-                  <!-- 高级搜索语法说明入口：? 按钮展开面板，点击面板外自动收起。
-                       内容用 h-4 w-4 固定盒（与相邻按钮的 h-4 w-4 图标同尺寸）撑起按钮，
-                       裸文本节点会把按钮挤成竖长胶囊（btn-circle 并无定义，按钮尺寸全靠内容） -->
-                  <button
-                      type="button"
-                      ref="searchHelpBtnRef"
-                      class="btn-soft btn-circle p-0 ml-1 text-sm font-bold leading-none"
-                      :class="showSearchHelp ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
-                      v-tip="t('clip.search_help_btn')"
-                      @click="showSearchHelp = !showSearchHelp"
-                  ><span class="flex h-4 w-4 items-center justify-center">?</span></button>
-                  <button
-                      type="button"
-                      class="btn-soft btn-circle p-0 ml-1"
-                      v-tip="t('clip.clear_search')"
-                      @click="highlightContent = ''"
-                  >
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M6 18L18 6M6 6l12 12" />
+                    <span class="flex-1 truncate">{{ t(opt.label) }}</span>
+                    <svg v-if="filter.types.includes(opt.value)" class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20 6 9 17l-5-5" />
                     </svg>
                   </button>
                 </div>
 
-                <!-- 高级搜索语法说明面板（? 按钮展开） -->
+                <!-- 应用筛选面板（漏斗按钮展开）：来源应用清单（去重 + 条数），点击项即按该应用过滤 -->
                 <div
-                    v-if="showSearchHelp"
-                    ref="searchHelpPanelRef"
-                    class="glass-card absolute right-1 top-full z-40 mt-1 w-80 rounded-2xl p-4 text-xs shadow-float"
+                    v-if="showAppFilter"
+                    ref="appFilterPanelRef"
+                    class="glass-card absolute right-1 top-full z-40 mt-1 w-64 rounded-2xl p-2 text-xs shadow-float"
                 >
-                  <div class="mb-2 flex items-center justify-between">
-                    <span class="text-sm font-semibold text-gold">{{ t('clip.search_help_title') }}</span>
-                    <button type="button" class="text-ink-faint transition-colors hover:text-ink" @click="showSearchHelp = false">
-                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                        <path d="M6 18L18 6M6 6l12 12" />
+                  <div class="px-2 pb-1 pt-1.5 text-sm font-semibold text-gold">{{ t('clip.filter_app') }}</div>
+                  <div class="max-h-60 overflow-y-auto">
+                    <button
+                        type="button"
+                        class="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors"
+                        :class="filter.sourceApp === '' ? 'bg-gold/15 text-gold' : 'text-ink-soft hover:bg-gold/10'"
+                        @click="setAppFilter('')"
+                    >
+                      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+                        <rect x="3" y="3" width="7" height="7" rx="1" />
+                        <rect x="14" y="3" width="7" height="7" rx="1" />
+                        <rect x="3" y="14" width="7" height="7" rx="1" />
+                        <rect x="14" y="14" width="7" height="7" rx="1" />
                       </svg>
+                      <span class="flex-1 truncate">{{ t('clip.filter_app_all') }}</span>
                     </button>
+                    <button
+                        v-for="a in sourceApps"
+                        :key="a.app"
+                        type="button"
+                        class="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors"
+                        :class="filter.sourceApp === a.app ? 'bg-gold/15 text-gold' : 'text-ink-soft hover:bg-gold/10'"
+                        @click="setAppFilter(a.app)"
+                    >
+                      <img v-if="sourceIcons.get(a.app)" :src="sourceIcons.get(a.app)" class="h-4 w-4 shrink-0 rounded" alt="" />
+                      <!-- 无图标缓存的应用用首字母占位（图标按列表数据增量加载，清单里可能先于图标出现） -->
+                      <span v-else class="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-gold/15 text-[10px] leading-none text-gold">{{ a.app.slice(0, 1).toUpperCase() }}</span>
+                      <span class="flex-1 truncate">{{ a.app }}</span>
+                      <span class="shrink-0 text-ink-faint">{{ a.cnt }}</span>
+                    </button>
+                    <div v-if="sourceApps.length === 0" class="px-2 py-3 text-center text-ink-faint">{{ t('clip.filter_app_empty') }}</div>
                   </div>
-                  <ul class="space-y-1.5">
-                    <li v-for="row in searchHelpRows" :key="row.sym" class="flex items-start gap-2">
-                      <code class="w-12 shrink-0 rounded-lg bg-gold/10 px-1.5 py-0.5 text-center font-mono text-[11px] leading-5 text-gold">{{ row.sym }}</code>
-                      <span class="leading-5 text-ink-soft">{{ row.desc }}</span>
-                    </li>
-                  </ul>
-                  <p class="mt-3 border-t border-gold/20 pt-2 text-[11px] leading-relaxed text-ink-faint">{{ t('clip.search_help_off') }}</p>
                 </div>
               </div>
 
-              <!-- 筛选状态提示条：当前处于"仅图片/仅收藏"筛选时显示，点击 ✕ 取消筛选 -->
+              <!-- 筛选状态提示条：当前处于"仅图片/仅收藏/按应用"筛选时显示，点击 ✕ 取消全部筛选 -->
               <div
-                  v-if="filter.favorite === 1 || filter.type === 'image'"
+                  v-if="activeFilterLabels.length > 0"
                   class="flex items-center justify-between rounded-2xl border border-gold/50 bg-gold/10 px-3 py-1.5 text-xs text-gold"
               >
-                <span>
-                  {{ t('clip.filtered') }}{{ filter.type === 'image' ? t('clip.filter_image') : '' }}{{ filter.type === 'image' && filter.favorite === 1 ? ' + ' : '' }}{{ filter.favorite === 1 ? t('clip.filter_favorite') : '' }}
-                </span>
+                <span>{{ t('clip.filtered') }}{{ activeFilterLabels.join(' + ') }}</span>
                 <button
                     type="button"
                     class="flex h-5 w-5 items-center justify-center rounded-full text-gold transition-colors hover:bg-gold/20"
                     v-tip="t('common.clear_all_filters')"
-                    @click="filter.favorite = 0; filter.type = 'all'"
+                    @click="filter.favorite = 0; filter.types = []; filter.sourceApp = ''"
                 >
                   <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
                     <path d="M6 18L18 6M6 6l12 12" />
@@ -1409,17 +1536,7 @@ async function openImageViewer(item: ClipboardData) {
                         class="tabular-nums overflow-hidden text-ellipsis break-words whitespace-pre-wrap p-[3px]"
                         style="display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2"
                       >
-                        <template v-if="item.encrypted === 1">
-                          <span class="inline-flex items-center gap-1 text-ink-faint" v-tip="t('clip.encrypted_tip')">
-                            <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                            </svg>
-                            {{ t('clip.encrypted_placeholder') }}
-                          </span>
-                        </template>
                         <HighlightText
-                          v-else
                           :text="getFirstTwoLines(item.content)"
                           :highlightString="highlightContent" :advanced="filter.advanced"
                         />
@@ -1461,18 +1578,6 @@ async function openImageViewer(item: ClipboardData) {
                           <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" fill="currentColor"></path>
                         </svg>
                         {{ t('clip.favorited') }}
-                      </span>
-                      <!-- 加密徽章：落盘为密文（与列表锁形占位呼应） -->
-                      <span
-                        v-if="item.encrypted === 1"
-                        class="inline-flex items-center gap-1 rounded-full bg-surface-field px-1.5 py-px text-ink-faint"
-                        v-tip="t('clip.encrypted_tip')"
-                      >
-                        <svg class="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                        </svg>
-                        {{ t('clip.encrypted_placeholder') }}
                       </span>
                       <!-- 文件徽章：路径条数 -->
                       <span
@@ -1516,7 +1621,6 @@ async function openImageViewer(item: ClipboardData) {
                 <span v-if="loadingMore">{{ t('clip.loading_more') }}</span>
                 <span v-else>{{ t('clip.scroll_more') }}</span>
               </div>
-              <div v-else-if="data.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
 
               <ContextMenu
                   :visible="ctxMenuVisible"
@@ -1561,5 +1665,8 @@ async function openImageViewer(item: ClipboardData) {
         </Transition>
       </div>
     </main>
+
+    <!-- Ctrl+P 全局搜索命令面板（Teleport 到 body，覆盖所有 Tab） -->
+    <GlobalSearch />
   </div>
 </template>

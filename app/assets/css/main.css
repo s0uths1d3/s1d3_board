@@ -197,6 +197,12 @@ body::after {
 }
 
 @layer components {
+  /* 全屏蒙层压暗：原生 rgb alpha（不走 Tailwind 透明度修饰符的 color-mix 编译），
+     保证任何 WebView 版本下必然渲染——模态浮层的蒙层失效会让下层元素"漏"出来 */
+  .overlay-dim {
+    background-color: rgb(0 0 0 / 0.42);
+  }
+
   /* 玻璃拟态（导航/弹层）：半透明面，随配色切换透明度 */
   .glass {
     background-color: rgb(var(--glass-bg) / var(--glass-bg-alpha));
@@ -465,11 +471,6 @@ body.note-drag-selecting * {
    会覆盖它（动画期间变 100%、结束又跳回 97% = 缩放跳动）；占位卡直接瞬移落位 */
 .note-move.note-drag-source {
   transition: none;
-}
-
-/* 常用剪贴拖动重排：同列卡片 FLIP 让位/落位（双列瀑布流跨列移动为节点重建，瞬移落位） */
-.pinned-move {
-  transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 

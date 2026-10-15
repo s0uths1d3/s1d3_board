@@ -39,6 +39,27 @@ export function likePatternFromToken(token: string): string {
 }
 
 /**
+ * 搜索输入 → SQL LIKE 条件与参数（待办/便签搜索共用，剪贴板为跨列 OR 自行拼接）：
+ * 组内 OR、组间 AND（与 parseSearchTokens 分组语义对应）。advanced=false 时整串
+ * 字面单词元（同剪贴板「关闭高级搜索」语义）。field 为 LIKE 左侧列名，
+ * 占位符按拼接顺序从 $1 编号——调用方的其他条件须拼在其后（withPage 追加分页参数亦然）。
+ */
+export function buildLikeGroups(input: string, field: string, advanced = true): { sql: string; params: string[] } {
+    const groups = parseSearchTokens(input, advanced).map((group) =>
+        group.map((kw) => (advanced ? likePatternFromToken(kw) : escapeLike(kw))),
+    );
+    const params: string[] = [];
+    const conds = groups.map((group) => {
+        const parts = group.map((pattern) => {
+            params.push(`%${pattern}%`);
+            return `${field} LIKE $${params.length} ESCAPE '\\'`;
+        });
+        return parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`;
+    });
+    return { sql: conds.join(' AND '), params };
+}
+
+/**
  * 搜索输入解析（OR 分组）：
  * - 返回分组列表：组内任一词元命中即可（OR），组与组之间需全部命中（AND）；
  * - 双引号短语为单词元（短语内空格与 | 均按字面），可作为 | 的操作数；

@@ -61,7 +61,8 @@ import type { ClipExtractor, ClipScheme } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
 import { updateSmartClipConfig } from '~/src/smart-clip/smartClip';
 import { ISLAND_API_DEFAULT_PORT, applyIslandApi, ensureIslandApiToken, generateIslandApiToken, lastIslandApiFailure } from '~/src/island/islandApi';
-import { bus } from '~/src/core/events';
+import { bus, type GlobalSearchJumpDetail } from '~/src/core/events';
+import { settings, type SettingGroup } from '~/src/setting/settingGroups';
 import { loadIslandWebhookConfig, saveIslandWebhookConfig, testIslandWebhook, validateWebhookUrl, type WebhookTarget } from '~/src/island/islandWebhook';
 import {
   loadExtractors, persistExtractors, missingBuiltinExtractors,
@@ -75,6 +76,7 @@ import { isTauri } from '~/utils/env';
 import { configureVTip } from '~/utils/vTip';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
 import { useIslandEnabled, setIslandEnabled, useIslandTiming, ensureIslandTimingLoaded, setIslandDelayMs, setIslandDurationMs, notifyIsland, type IslandKind, ISLAND_DELAY_DEFAULT, ISLAND_DURATION_DEFAULT } from '~/composables/useCopyIsland';
+import { useMaskBlur, ensureMaskBlurLoaded, setMaskBlur, MASK_BLUR_DEFAULT } from '~/composables/useMaskBlur';
 import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
 import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
 import { useI18n, setLocaleMode, LOCALES, type LocaleMode } from '~/composables/useI18n';
@@ -105,29 +107,8 @@ import HighlightText from '~/components/mainpage/HighlightText.vue';
 
 const osType = ref('');
 
-interface SettingItem {
-  label: string;
-  value: string | string[];
-  type: 'input' | 'select' | 'checkbox' | 'action';
-  /** 搜索结果专用：命中项的来源分组标题（正常渲染时无此字段，用于结果列表显示归属） */
-  groupTitle?: string;
-}
-
-/** 子分组：顶层分组内的分节卡片（标题 + 该节设置项），控制左侧分类数量 */
-interface SettingChildGroup {
-  title: string;
-  items: SettingItem[];
-}
-
-interface SettingGroup {
-  title: string;
-  type: string;
-  items: SettingItem[];
-  /** 子分组（有则渲染为多张分节卡片，items 直挂方式仅剩类型兼容默认值） */
-  children?: SettingChildGroup[];
-}
-
 // 各设置项的响应式状态（直接承载值，并通过 watch 实时持久化，无需“应用”按钮）
+// 分组静态清单（settings）与类型移至 ~/src/setting/settingGroups 共享（全局搜索也据它建索引）
 const apiKey = ref('');
 /** 系统凭据库不可用警示：API Key 降级为 KV 明文存储时置真（输入框下方常驻警示） */
 const aiKeyPlaintext = ref(false);
@@ -214,6 +195,25 @@ async function saveIslandDuration() {
   await setIslandDurationMs(val === '' ? ISLAND_DURATION_DEFAULT : Number(val));
   islandDurationInput.value = String(islandDurationMs.value);
   showHint(t('setting.general.island_duration_saved'));
+}
+
+// ===== 蒙版模糊度（0~1，默认 1）：模态浮层蒙层的背景模糊强度，0 = 关闭模糊 =====
+const { maskBlur } = useMaskBlur();
+const maskBlurInput = ref('');
+// 异步加载落定后回填输入框（未设置过则显示默认值）
+void ensureMaskBlurLoaded().then(() => {
+  maskBlurInput.value = String(maskBlur.value);
+});
+// 实时保存：逐字符输入加 400ms 防抖，停顿后落库并钳制
+watch(maskBlurInput, (val) => {
+  debouncePersist('mask_blur', () => setMaskBlur(val.trim() === '' ? MASK_BLUR_DEFAULT : Number(val)));
+});
+/** 失焦保存：立即写入（不等防抖）并把输入框收敛为实际生效值（钳制/默认回填） */
+async function saveMaskBlur() {
+  const val = maskBlurInput.value.trim();
+  await setMaskBlur(val === '' ? MASK_BLUR_DEFAULT : Number(val));
+  maskBlurInput.value = String(maskBlur.value);
+  showHint(t('setting.general.mask_blur_saved'));
 }
 
 // ===== 窗口弹出位置（快捷键唤出主窗口时的落点） =====
@@ -1490,131 +1490,7 @@ function replayOnboarding() {
   bus.emit('onboarding:replay');
 }
 
-const settings: SettingGroup[] = [
-  {
-    title: 'setting.categories.shortcuts',
-    type: 'shortcut',
-    items: [],
-  },
-  {
-    title: 'setting.categories.nav',
-    type: 'nav',
-    items: [],
-  },
-  {
-    // 剪贴板：存储上限 / 悬浮预览 / 隐私与安全 三个子分组
-    title: 'setting.categories.clipboard',
-    type: 'general',
-    items: [],
-    children: [
-      {
-        title: 'setting.subgroups.clipboard_general',
-        items: [
-          { label: 'setting.general.clipboard_limit', value: '', type: 'input' },
-          { label: 'setting.general.image_limit', value: '', type: 'input' },
-          { label: 'setting.general.clip_retention', value: '', type: 'select' },
-          { label: 'setting.general.popup_position', value: '', type: 'select' },
-        ],
-      },
-      {
-        title: 'setting.subgroups.preview',
-        items: [
-          { label: 'setting.general.tooltip_window', value: '', type: 'checkbox' },
-          { label: 'setting.general.tooltip_wrap', value: '', type: 'checkbox' },
-          { label: 'setting.general.paste_restore_clipboard', value: '', type: 'checkbox' },
-        ],
-      },
-      {
-        title: 'setting.subgroups.privacy',
-        items: [
-          { label: 'setting.general.privacy_pause', value: '', type: 'checkbox' },
-          { label: 'setting.general.sensitive_filter', value: '', type: 'checkbox' },
-          { label: 'setting.general.ignored_apps', value: '', type: 'action' },
-        ],
-      },
-    ],
-  },
-  {
-    // 灵动岛：显示效果子组 + 灵动岛 API 与 Webhook 配置卡片（模板尾部按 title 挂载）
-    title: 'setting.categories.island',
-    type: 'island',
-    items: [],
-    children: [
-      {
-        title: 'setting.subgroups.island_display',
-        items: [
-          { label: 'setting.general.island_hint', value: '', type: 'checkbox' },
-          { label: 'setting.general.island_delay', value: '', type: 'input' },
-          { label: 'setting.general.island_duration', value: '', type: 'input' },
-        ],
-      },
-    ],
-  },
-  {
-    // 智能与 AI：智能剪贴板专属块在前（模板按 type==='smart' 渲染），AI 分析子组卡片在后
-    title: 'setting.categories.smart',
-    type: 'smart',
-    items: [],
-    children: [
-      {
-        title: 'setting.subgroups.ai',
-        items: [
-          { label: 'setting.general.ai_provider', value: '', type: 'select' },
-          { label: 'setting.general.ai_base_url', value: '', type: 'input' },
-          { label: 'setting.general.ai_model', value: '', type: 'input' },
-          { label: 'setting.general.ai_test', value: '', type: 'action' },
-          { label: 'setting.general.api_key', value: '', type: 'input' },
-          { label: 'setting.general.ai_analysis_max', value: '', type: 'input' },
-        ],
-      },
-    ],
-  },
-  {
-    // 通用：应用 / 外观与语言 / 待办与提醒 / 数据管理 四个子组
-    title: 'setting.categories.general',
-    type: 'general',
-    items: [],
-    children: [
-      {
-        title: 'setting.subgroups.app',
-        items: [
-          { label: 'setting.general.launch_at_startup', value: '', type: 'checkbox' },
-          { label: 'setting.general.auto_hide', value: '', type: 'checkbox' },
-          { label: 'setting.general.app_usage_tracking', value: '', type: 'checkbox' },
-          { label: 'setting.general.replay_onboarding', value: '', type: 'action' },
-        ],
-      },
-      {
-        title: 'setting.subgroups.appearance',
-        items: [
-          { label: 'setting.general.color_scheme', value: '', type: 'select' },
-          { label: 'setting.general.locale', value: '', type: 'select' },
-        ],
-      },
-      {
-        title: 'setting.subgroups.todo_notify',
-        items: [
-          { label: 'setting.general.smart_reminder', value: '', type: 'checkbox' },
-          { label: 'setting.general.todo_system_notify', value: '', type: 'checkbox' },
-        ],
-      },
-      {
-        title: 'setting.subgroups.data',
-        items: [
-          { label: 'setting.general.clear_database', value: '', type: 'action' },
-          { label: 'setting.general.export_data', value: '', type: 'action' },
-          { label: 'setting.general.import_data', value: '', type: 'action' },
-          { label: 'setting.general.auto_backup_restore', value: '', type: 'action' },
-        ],
-      },
-    ],
-  },
-  {
-    title: 'setting.categories.about',
-    type: 'about',
-    items: [],
-  }
-];
+// 分组静态清单（settings）移至 ~/src/setting/settingGroups（全局搜索 Ctrl+P 也据它建索引）
 
 // 初始分组：优先取模块级保留值（同会话内再次进入无跳变），否则第一项
 const activeSetting = ref(settings.find(s => s.title === lastActiveSettingTitle) ?? settings[0]);
@@ -1690,6 +1566,14 @@ const onFocusSearch = () => {
 };
 onMounted(() => bus.on('focus-search', onFocusSearch));
 onBeforeUnmount(() => bus.off('focus-search', onFocusSearch));
+
+/** 全局搜索跳转：写入设置搜索词进入跨分组搜索态，右侧结果列表即命中项（与面板结果同源一致） */
+const onGlobalSearchJump = (p: GlobalSearchJumpDetail) => {
+  if (p.module !== 'setting') return
+  settingSearch.value = p.query
+};
+onMounted(() => bus.on('global-search:jump', onGlobalSearchJump));
+onBeforeUnmount(() => bus.off('global-search:jump', onGlobalSearchJump));
 
 // ===== 关于（版本 / 描述 / 作者 / 主页 / 检查更新）=====
 /** 版本单一来源：tauri.conf.json 的 version（经 getVersion 读取）；纯 Web 环境回退到该常量 */
@@ -3106,6 +2990,13 @@ onMounted(async () => {
                       v-model="islandDurationInput"
                       :placeholder="t('setting.general.island_duration_placeholder')"
                       @save="saveIslandDuration"
+                  />
+                  <!-- 蒙版模糊度：0~1 小数（默认 1），模态浮层蒙层背景模糊强度 -->
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.mask_blur'"
+                      v-model="maskBlurInput"
+                      :placeholder="t('setting.general.mask_blur_placeholder')"
+                      @save="saveMaskBlur"
                   />
                   <!-- 配色：琥珀/跟随系统/浅色/深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 -->
                   <UiDropdown
