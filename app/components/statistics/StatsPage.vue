@@ -28,6 +28,8 @@ import {
 import dbService from '~/src/db/dbService';
 import type { Todo } from '~/src/entities';
 import { isTodoOverdue } from '~/src/todo/overdue';
+import { activeTab } from '~/composables/useTabs';
+import { filter, resetClips } from '~/src/commands/local/clipboardStore';
 
 const { t, tName, locale } = useI18n();
 
@@ -694,6 +696,13 @@ function srcTip(a: { app: string; cnt: number }): string {
   return t('statistics.src_tip', { app: a.app, n: fmtNum(a.cnt), p: String(pct) });
 }
 
+/** 点击来源应用 → 跳剪贴板 Tab 并按该应用筛选（复用主列表 sourceApp 过滤条件） */
+async function openClipsByApp(app: string) {
+  filter.value.sourceApp = app;
+  await resetClips();
+  activeTab.value = 'clip';
+}
+
 /** 趋势图逐点 hover 描述：本期值 + 上一等长区间对照值（有幽灵数据时追加） */
 function barTip(idx: number): string {
   const point = series.value[idx];
@@ -1029,7 +1038,13 @@ function barTip(idx: number): string {
             </div>
             <div v-if="srcApps.length === 0" class="text-sm text-ink-faint">{{ t('statistics.src_empty') }}</div>
             <div v-else class="space-y-2">
-              <div v-for="(a, i) in srcApps" :key="a.app" class="flex cursor-default items-center gap-3" v-tip="srcTip(a)">
+              <div
+                v-for="(a, i) in srcApps"
+                :key="a.app"
+                class="flex cursor-pointer items-center gap-3 transition-opacity hover:opacity-80"
+                v-tip="srcTip(a)"
+                @click="openClipsByApp(a.app)"
+              >
                 <span class="w-5 shrink-0 text-xs tabular-nums" :class="i === 0 ? 'font-semibold text-gold' : 'text-ink-faint'">{{ i + 1 }}</span>
                 <span class="flex w-32 shrink-0 items-center gap-1.5 text-sm text-ink">
                   <!-- 真实程序图标（app_icons 采样库 / Rust 按名实时提取）；无图标回退纯文本名 -->

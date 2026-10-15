@@ -21,6 +21,8 @@ const emit = defineEmits<{
   select: [];
   paste: [];
   pin: [];
+  /** 落地分发：把片段文本转待办/存便签（跨模块动作，overlay → bubble 转发主窗口执行） */
+  dispatch: [action: 'todo' | 'note'];
 }>();
 
 const { t } = useI18n();
@@ -81,6 +83,27 @@ function onPointerMove(e: PointerEvent): void {
           <span
               v-if="isAi"
               class="rounded bg-gold/15 px-1 text-[9px] font-semibold leading-3 text-gold">AI</span>
+          <button
+              type="button"
+              class="rounded p-0.5 text-ink-faint opacity-0 transition-all duration-200 hover:bg-gold/10 hover:text-gold group-hover:opacity-100"
+              :title="t('island.to_todo')"
+              @click.stop="emit('dispatch', 'todo')">
+            <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="8" y="2" width="8" height="4" rx="1" />
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+              <path d="m9 14 2 2 4-4" />
+            </svg>
+          </button>
+          <button
+              type="button"
+              class="rounded p-0.5 text-ink-faint opacity-0 transition-all duration-200 hover:bg-gold/10 hover:text-gold group-hover:opacity-100"
+              :title="t('island.to_note')"
+              @click.stop="emit('dispatch', 'note')">
+            <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h10.5L20 15.5V5z" />
+              <path d="M15.5 20v-4.5H20" />
+            </svg>
+          </button>
           <button
               type="button"
               class="rounded p-0.5 text-ink-faint opacity-0 transition-all duration-200 hover:bg-gold/10 hover:text-gold group-hover:opacity-100"

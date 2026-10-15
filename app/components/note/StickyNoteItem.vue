@@ -128,6 +128,21 @@
             </div>
           </div>
         </UiDropdown>
+        <!-- 更多操作：复制内容 / 转为待办（跨模块分发，父级执行与反馈） -->
+        <UiDropdown align="end" :aria-label="t('note.more_actions')" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
+          <template #trigger>
+            <div
+                v-tip="t('note.more_actions')"
+                class="btn-soft flex h-6 w-6 items-center justify-center p-1 text-ink-soft outline-hidden transition-colors hover:bg-white/40 hover:text-ink focus:outline-hidden"
+            >
+              <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+            </div>
+          </template>
+          <div class="w-44">
+            <button type="button" class="w-full rounded-lg px-2 py-1 text-left text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink" @click="$emit('copy-content', note.id)">{{ t('note.copy_content') }}</button>
+            <button type="button" class="w-full rounded-lg px-2 py-1 text-left text-xs text-ink-soft transition-colors hover:bg-secondary hover:text-ink" @click="$emit('to-todo', note.id)">{{ t('note.to_todo') }}</button>
+          </div>
+        </UiDropdown>
         <button
             type="button"
             @click="$emit('request-delete', $event)"
@@ -307,6 +322,9 @@ const emit = defineEmits<{
   (e: 'request-purge', id: string): void
   (e: 'pin-desktop', id: string): void
   (e: 'ai-organize', id: string, action: 'summary' | 'extract'): void
+  /** 复制内容到系统剪贴板 / 转为待办（跨模块分发，父级执行） */
+  (e: 'copy-content', id: string): void
+  (e: 'to-todo', id: string): void
   (e: 'toggle-batch-select'): void
   /** 拖动重排（窗内阶段）：光标位置实时上报，父级做 grid 命中检测与让位预览 */
   (e: 'drag-move', payload: { id: string; x: number; y: number }): void

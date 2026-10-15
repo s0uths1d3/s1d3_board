@@ -11,6 +11,7 @@
  */
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from '~/composables/useI18n'
+import { setVTipSuspended } from '~/utils/vTip'
 
 const { t } = useI18n()
 
@@ -72,6 +73,9 @@ watch(
     () => props.visible,
     (v) => {
       if (v) {
+        // 确认框是无遮罩的浮动模态：打开期间全局暂停 v-tip，
+        // 避免鼠标移到背后列表的 v-tip 元素上时气泡盖在确认框场景上
+        setVTipSuspended(true)
         computeCentered()
         nextTick(() => {
           focusAction('confirm')
@@ -99,6 +103,7 @@ watch(
         // capture 阶段监听：在 ShortcutManager（bubble 阶段）之前处理键盘
         window.addEventListener('keydown', keyHandler, true)
       } else {
+        setVTipSuspended(false)
         if (keyHandler) window.removeEventListener('keydown', keyHandler, true)
         keyHandler = null
       }
@@ -110,6 +115,7 @@ watch(
 
 onBeforeUnmount(() => {
   if (keyHandler) window.removeEventListener('keydown', keyHandler, true)
+  setVTipSuspended(false)
 })
 </script>
 

@@ -11,7 +11,8 @@
  *   同应用窗口必在其下，跳过避让，气泡始终落在窗口内空间充裕的方位；
  * - 内容为空时不显示；滚动 / resize / 失焦 / 按下时自动隐藏；
  *   焦点触发的提示仅限键盘导航（focus-visible），鼠标点击落焦不弹气泡，
- *   避免操作后的提示气泡与灵动岛等操作反馈同时出现、互相打架。
+ *   避免操作后的提示气泡与灵动岛等操作反馈同时出现、互相打架；
+ *   删除确认框等模态打开期间全局暂停显示（setVTipSuspended），关闭后恢复。
  *
  * 用法：
  *   <button v-tip="'删除'">…</button>
@@ -34,6 +35,8 @@ let tipEl: HTMLDivElement | null = null;
 let currentEl: HTMLElement | null = null;
 let showTimer: ReturnType<typeof setTimeout> | null = null;
 let listenersBound = false;
+/** 模态层（删除确认框等）打开期间暂停 tooltip：背后元素的 hover 不再弹出气泡 */
+let suspended = false;
 
 const GAP = 10;
 /** 默认悬停延时：短暂路过不弹，避免鼠标路过时被连续弹出的气泡打断 */
@@ -50,6 +53,16 @@ export function configureVTip(options: { showDelay?: number }): void {
   if (typeof options?.showDelay === 'number' && options.showDelay >= 0) {
     showDelay = options.showDelay;
   }
+}
+
+/**
+ * 模态层打开期间暂停 / 关闭后恢复 tooltip 显示（删除确认框等浮动模态没有遮罩层，
+ * 鼠标移到背后列表的 v-tip 元素上仍会弹出气泡，与模态交互互相干扰）。
+ * 暂停瞬间已显示 / 待显示（延时倒计时中）的气泡一并收起。
+ */
+export function setVTipSuspended(v: boolean): void {
+  suspended = v;
+  if (v) hideTip();
 }
 
 /** 任意矩形（CSS 像素，当前窗口视口坐标系） */
@@ -198,6 +211,7 @@ function overlapArea(a: Rect, rects: Rect[]): number {
 }
 
 function showTip(el: HTMLElement, value: TipValue) {
+  if (suspended) return; // 模态层打开期间：背后元素的 hover 不弹气泡
   const { content, placement } = parseValue(value);
   if (!content) return;
   if (showTimer) clearTimeout(showTimer);

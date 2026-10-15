@@ -3,11 +3,10 @@
       class="glass-card todo-item group rounded-2xl p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
       :class="[
         selected ? '!border-gold ring-2 ring-gold/60 bg-gold/10 shadow-[0_0_22px_-2px_rgba(196,167,125,0.6)]' : '',
-        batchMode && batchSelected ? '!border-gold bg-gold/10' : '',
         // 手动排序拖拽落点指示：before/after 高亮卡片，child（变子任务）金色描边
         dropPos ? '!border-gold ring-2 ring-gold/60' : '',
       ]"
-      @click="batchMode ? $emit('toggle-select', todo.id) : $emit('select')"
+      @click="$emit('select')"
       @dragover="onCardDragOver"
       @dragleave="dropPos = ''"
       @drop="onCardDrop"
@@ -30,26 +29,7 @@
               <circle cx="9" cy="19" r="1.6" /><circle cx="15" cy="19" r="1.6" />
             </svg>
           </span>
-          <!-- 批量模式：左侧复选框替代完成勾选 -->
           <label
-              v-if="batchMode"
-              class="flex h-5 w-5 cursor-pointer items-center justify-center rounded border transition-all duration-300 ease-soft"
-              :class="batchSelected ? 'border-gold bg-gold' : 'border-line bg-surface-field hover:border-gold'"
-              v-tip="t('todo.batch_select')"
-              @click.stop
-          >
-            <input
-                type="checkbox"
-                :checked="batchSelected"
-                @change="$emit('toggle-select', todo.id)"
-                class="sr-only"
-            />
-            <svg v-if="batchSelected" class="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
-            </svg>
-          </label>
-          <label
-              v-else
               class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border transition-all duration-300 ease-soft hover:shadow-xs"
               :class="visualCompleted ? 'border-gold bg-gold hover:bg-gold-soft' : 'border-line bg-surface-field hover:border-gold hover:bg-secondary'"
               v-tip="t('common.mark_complete')"
@@ -278,7 +258,7 @@
                 </button>
               </template>
 
-              <template v-else-if="!batchMode">
+              <template v-else>
               <button
                   @click="startEditing"
                   v-tip="t('todo.edit')"
@@ -391,6 +371,19 @@
                   @update:rules="onReminderRules"
               />
 
+              <!-- 转为便签：标题+描述合并为便签内容（跨模块分发，StickyNote 卡片常显） -->
+              <button
+                  v-if="!trash"
+                  @click="$emit('to-note', todo.id)"
+                  v-tip="t('todo.to_note')"
+                  class="btn-soft flex h-8 w-8 items-center justify-center p-2 text-ink-soft hover:bg-secondary hover:text-ink"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20 5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h10.5L20 15.5V5z" />
+                  <path d="M15.5 20v-4.5H20" />
+                </svg>
+              </button>
+
               <!-- 删除按钮：红色垃圾桶（软删进回收站，可恢复） -->
               <button
                   @click="deleteTodo($event)"
@@ -416,6 +409,9 @@
           v-for="child in children"
           :key="child.id"
           class="group/child flex items-center gap-2 rounded-lg bg-surface-field/70 px-2 py-1.5"
+          :draggable="dragEnabled"
+          @dragstart="onChildDragStart(child.id, $event)"
+          @dragend="onChildDragEnd"
       >
         <label
             class="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full border transition-colors"
@@ -426,9 +422,23 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </label>
+        <!-- 子任务标题：点击进入行内编辑（轻量：仅标题，类型/标签等完整编辑留给主任务面板） -->
+        <input
+            v-if="editingChildId === child.id"
+            :ref="setChildEditInput"
+            v-model="editingChildTitle"
+            type="text"
+            maxlength="200"
+            class="min-w-0 flex-1 rounded-md border border-gold/60 bg-surface px-1.5 py-0.5 text-sm text-ink focus:outline-hidden"
+            @keydown.enter.prevent="saveChildEdit"
+            @keydown.esc.prevent="cancelChildEdit"
+            @blur="saveChildEdit"
+        />
         <span
-            class="min-w-0 flex-1 truncate text-sm"
+            v-else
+            class="min-w-0 flex-1 cursor-text truncate text-sm"
             :class="child.completed === 1 ? 'text-ink-faint line-through' : 'text-ink-soft'"
+            @click.stop="startChildEdit(child)"
         >{{ child.title }}</span>
         <span v-if="child.dueDate" class="shrink-0 text-xs tabular-nums text-ink-faint">{{ childDueText(child) }}</span>
         <!-- 提升为顶级任务 -->
@@ -456,8 +466,8 @@
       </div>
     </div>
 
-    <!-- 添加子任务内联输入（顶级任务 + 非批量/回收站态） -->
-    <div v-if="!trash && !batchMode && !todo.parentId" class="ml-6 mt-2">
+    <!-- 添加子任务内联输入（顶级任务 + 非回收站态） -->
+    <div v-if="!trash && !todo.parentId" class="ml-6 mt-2">
       <input
           v-model="childTitle"
           type="text"
@@ -600,10 +610,6 @@ const props = defineProps<{
   editSignal?: number
   /** 子任务列表（单层嵌套，缩进渲染在父卡片下方；仅顶级任务有） */
   children?: Todo[]
-  /** 批量多选模式：左侧复选框替代完成勾选，点击卡片切换选中 */
-  batchMode?: boolean
-  /** 批量模式下是否已选中 */
-  batchSelected?: boolean
   /** 回收站模式：操作区切换为 恢复 / 彻底删除 */
   trash?: boolean
   /** 手动排序模式：启用拖拽手柄（重排 / 拖到卡片中间变子任务） */
@@ -619,7 +625,6 @@ const emit = defineEmits<{
   (e: 'reminder-change', id: string, mode: Todo['remindMode'], rules?: ReminderRule[]): void
   (e: 'category-delete', name: string, rect?: DOMRect): void
   (e: 'select'): void
-  (e: 'toggle-select', id: string): void
   (e: 'restore', id: string): void
   (e: 'purge', id: string, rect?: DOMRect): void
   (e: 'promote', id: string): void
@@ -627,6 +632,8 @@ const emit = defineEmits<{
   (e: 'drag-start', id: string): void
   (e: 'drag-end'): void
   (e: 'drop', targetId: string, pos: 'before' | 'after' | 'child'): void
+  /** 转为便签（跨模块分发）：父级合并标题+描述建便签 */
+  (e: 'to-note', id: string): void
 }>()
 
 // ===== 链接辅助：地址规整 + 域名展示 + 打开 =====
@@ -666,13 +673,28 @@ function onCardDragOver(e: DragEvent) {
   dropPos.value = 'child'
 }
 
-/** 松手：携带目标卡 id 与落点交给父级（变子任务） */
+/** 松手：携带目标卡 id 与落点交给父级（变子任务）；阻止冒泡防列表容器空白区 drop 双触发 */
 function onCardDrop(e: DragEvent) {
   const pos = dropPos.value
   dropPos.value = ''
   if (!props.dragEnabled || !pos) return
   e.preventDefault()
+  e.stopPropagation()
   emit('drop', props.todo.id, pos)
+}
+
+/** 子任务行拖起：同样走 drag-start 交给父级记录（拖到其他顶级卡 = 换父，拖到空白区 = 提升为顶级） */
+function onChildDragStart(id: string, e: DragEvent) {
+  if (!props.dragEnabled) return
+  beginElementDrag()
+  e.dataTransfer?.setData('text/plain', props.children?.find(c => c.id === id)?.title ?? '')
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+  emit('drag-start', id)
+}
+function onChildDragEnd() {
+  if (!props.dragEnabled) return
+  endElementDrag()
+  emit('drag-end')
 }
 
 /** 手柄拖起：携带任务标题（便于调试），拖拽源 id 由父级通过 drag-start 记录 */
@@ -864,9 +886,9 @@ const priorityAnchor = ref<HTMLElement | null>(null)
 const categoryAnchor = ref<HTMLElement | null>(null)
 /** 编辑面板标签输入框（标签徽章点击后聚焦） */
 const tagsInputRef = ref<HTMLInputElement | null>(null)
-/** 徽章可点击：回收站视图（只读）与批量多选模式下不响应 */
-const badgeClickable = computed(() => !props.trash && !props.batchMode)
-/** 优先级徽章 hover 提示：等级档位 + 点击修改（回收站/批量下仅档位信息） */
+/** 徽章可点击：回收站视图（只读）不响应 */
+const badgeClickable = computed(() => !props.trash)
+/** 优先级徽章 hover 提示：等级档位 + 点击修改（回收站仅档位信息） */
 const priorityTip = computed(() => {
   const base = t('todo.priority_badge', { level: pLevel.value.level })
   return badgeClickable.value ? `${base} · ${t('todo.click_to_edit')}` : base
@@ -969,6 +991,33 @@ const onTitleEnterSave = (e: KeyboardEvent) => {
 
 const cancelEdit = () => {
   isEditing.value = false
+}
+
+// ===== 子任务行内编辑（轻量：仅标题；Enter/失焦保存，Esc 取消） =====
+const editingChildId = ref<string | null>(null)
+const editingChildTitle = ref('')
+const childEditInput = ref<HTMLInputElement | null>(null)
+/** v-for 内同一时刻只有一行处于编辑态：函数 ref 捕获输入框供自动聚焦 */
+const setChildEditInput = (el: unknown) => { childEditInput.value = (el as HTMLInputElement | null) ?? null }
+function startChildEdit(child: Todo) {
+  if (props.trash) return
+  editingChildId.value = child.id
+  editingChildTitle.value = child.title
+  nextTick(() => {
+    childEditInput.value?.focus()
+    childEditInput.value?.select()
+  })
+}
+function saveChildEdit() {
+  if (editingChildId.value === null) return
+  const id = editingChildId.value
+  const title = editingChildTitle.value.trim()
+  editingChildId.value = null // 先退出编辑态：Esc 取消后的 blur 由此不再重复保存
+  if (!title || title === (props.children?.find(c => c.id === id)?.title ?? '')) return
+  emit('update', id, { title })
+}
+function cancelChildEdit() {
+  editingChildId.value = null
 }
 
 const deleteTodo = (e?: MouseEvent) => {

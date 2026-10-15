@@ -24,6 +24,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   paste: [segment: RingSegment];
   pin: [segment: RingSegment];
+  /** 落地分发（转待办/存便签）：气泡卡片发起，附片段向上转发 */
+  dispatch: [payload: { action: 'todo' | 'note'; segment: RingSegment }];
   close: [];
 }>();
 
@@ -235,7 +237,8 @@ function navSpatial(dir: NavDir): void {
           :selected="pageStart + i === selected"
           @select="selectIndex(pageStart + i)"
           @paste="pasteSelected"
-          @pin="emit('pin', seg)" />
+          @pin="emit('pin', seg)"
+          @dispatch="(action) => emit('dispatch', { action, segment: seg })" />
     </div>
 
     <!-- 环心控制盘 -->

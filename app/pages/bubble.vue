@@ -387,6 +387,20 @@ async function pinRingSegment(seg: RingSegment): Promise<void> {
   });
 }
 
+/**
+ * 岛胶囊快捷动作：把当前文本提示分发到待办/便签。
+ * 岛窗口不直接落库——emit 全局事件由主窗口监听执行（与 ring:habit 同款跨窗口模式），
+ * 转发后立即收起胶囊，落库反馈由主窗口另起新岛提示。
+ */
+function dispatchIsland(action: 'todo' | 'note'): void {
+  if (!isTauri() || !islandText.value) return;
+  void emit('island:dispatch', { action, text: islandText.value });
+  collapseIsland();
+  // 用户已表达意图：取消悬停态并立即恢复隐藏计时（很快收起），主窗口反馈岛随后弹出
+  islandDomHover = false;
+  resumeIslandHide();
+}
+
 /** 钉住卡片：点击 = 复制到剪贴板（带已复制反馈，不模拟粘贴、不自我隐藏） */
 async function copyPinned(): Promise<void> {
   if (!pinnedText.value) return;
@@ -411,6 +425,12 @@ function closePin(): void {
 // ===== 环形盘意图转发（选中/导航/翻页/键盘全在 RingOverlay 内自治） =====
 function onRingPaste(seg: RingSegment): void {
   void emit('ring:paste-req', { text: seg.text, extractorId: seg.extractorId, contentHash: ringContentHash.value });
+}
+/** 环盘分段落地分发（转待办/存便签）：复用岛快捷动作事件由主窗口落库，转发后关环 */
+function onRingDispatch(p: { action: 'todo' | 'note'; segment: RingSegment }): void {
+  if (!isTauri() || !p.segment.text) return;
+  void emit('island:dispatch', { action: p.action, text: p.segment.text });
+  void emit('ring:close');
 }
 function onRingClose(): void {
   void emit('ring:close');
@@ -489,7 +509,7 @@ onBeforeUnmount(() => {
     <div class="island-col" @mouseenter="onIslandEnter" @mouseleave="onIslandLeave">
       <div
           ref="islandPillEl"
-          class="island-pill bg-surface text-ink border-line shadow-float"
+          class="island-pill group relative bg-surface text-ink border-line shadow-float"
           :class="[islandVisible ? 'island-in' : '', islandPulse ? 'island-pill-new' : '']"
       >
         <!-- 图标随 kind 变化并带语义色：粘贴=剪贴板打勾（中性）/ 成功=对勾圈（绿）/ 失败=叹号圈（红）/
@@ -545,6 +565,36 @@ onBeforeUnmount(() => {
             v-if="islandRepeat > 1"
             class="island-badge shrink-0 rounded-full bg-gold/15 px-1.5 text-[10px] font-semibold leading-4 tabular-nums text-gold"
         >×{{ islandRepeat }}</span>
+        <!-- 跨模块快捷动作（悬停淡入，绝对定位不挤占文本）：把当前文本提示分发到待办/便签；
+             主窗口监听 island:dispatch 执行落库，这里只负责转发与收起 -->
+        <div
+            v-if="islandText && !islandImage"
+            class="absolute right-2 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 rounded-full bg-surface/90 p-0.5 opacity-0 shadow-soft transition-opacity duration-150 group-hover:opacity-100"
+        >
+          <button
+              type="button"
+              v-tip="t('island.to_todo')"
+              class="flex h-6 w-6 items-center justify-center rounded-full text-ink-soft transition-colors hover:bg-gold/15 hover:text-gold"
+              @click.stop="dispatchIsland('todo')"
+          >
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="8" y="2" width="8" height="4" rx="1" />
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+              <path d="m9 14 2 2 4-4" />
+            </svg>
+          </button>
+          <button
+              type="button"
+              v-tip="t('island.to_note')"
+              class="flex h-6 w-6 items-center justify-center rounded-full text-ink-soft transition-colors hover:bg-gold/15 hover:text-gold"
+              @click.stop="dispatchIsland('note')"
+          >
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h10.5L20 15.5V5z" />
+              <path d="M15.5 20v-4.5H20" />
+            </svg>
+          </button>
+        </div>
       </div>
       <!-- 悬停展开的下拉面板：仅当内容溢出胶囊时渲染，逐行带行号展示完整内容（超高可滚动，样式与胶囊一致） -->
       <div
@@ -597,6 +647,7 @@ onBeforeUnmount(() => {
                :ai-pending="ringAiPending"
                @paste="onRingPaste"
                @pin="pinRingSegment"
+               @dispatch="onRingDispatch"
                @close="onRingClose" />
 </template>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
 import clipboardService from '~/src/db/dbService';
 import type { PinnedClip } from '~/src/entities';
 import { useFormatDate } from '~/composables/useFormatDate';
@@ -70,6 +70,36 @@ function isLink(item: PinnedClip) {
 
 // ===== 长按拖拽排序（与导航/设置分组同一套交互；'xy' 自由 2D 适配双列瀑布流）=====
 const draggingId = ref<number | null>(null);
+
+// ===== 重排 FLIP 动画：双列分属两个容器，TransitionGroup 无法跨容器 FLIP——
+// 跨列移动会节点重建瞬移落位，与同列滑行混在一起即拖动观感鬼畜。改为手动 FLIP：
+// 变更前记录各卡视口矩形，DOM 更新后按新旧矩形差反向偏移，WAAPI 从旧视觉位置
+// 平滑滑向新槽位；动画被更快的新重排打断时取消旧帧、从当前视觉位置重定向，不跳变
+const flipAnims = new Map<HTMLElement, Animation>();
+
+/** 包裹一次顺序变更：mutate 前后各采一次卡片矩形，对位移过的卡片播放 FLIP 滑行 */
+async function flipMove(mutate: () => void): Promise<void> {
+  const before = new Map<string, DOMRect>(
+      queryPinnedCards().map((el) => [el.dataset.reorderKey ?? '', el.getBoundingClientRect()]),
+  );
+  mutate();
+  await nextTick();
+  for (const el of queryPinnedCards()) {
+    const prev = before.get(el.dataset.reorderKey ?? '');
+    flipAnims.get(el)?.cancel();
+    flipAnims.delete(el);
+    if (!prev) continue; // 新挂载（非移动）的卡片不参与 FLIP
+    const now = el.getBoundingClientRect();
+    const dx = prev.left - now.left;
+    const dy = prev.top - now.top;
+    if (!dx && !dy) continue;
+    flipAnims.set(el, el.animate(
+        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+        { duration: 260, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+    ));
+  }
+}
+
 const pinnedReorder = useLongPressReorder({
   container: '#pinned-clip-root .pinned-grid',
   items: '.pinned-card',
@@ -80,10 +110,12 @@ const pinnedReorder = useLongPressReorder({
     const from = clips.value.findIndex(c => String(c.id) === fromKey);
     const to = clips.value.findIndex(c => String(c.id) === toKey);
     if (from < 0 || to < 0 || from === to) return;
-    const next = [...clips.value];
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved!);
-    clips.value = next;
+    void flipMove(() => {
+      const next = [...clips.value];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved!);
+      clips.value = next;
+    });
   },
   onDrop: () => { void persistOrder(); },
   onStateChange: (k) => { draggingId.value = k == null ? null : Number(k); },
@@ -182,7 +214,9 @@ async function togglePin(item: PinnedClip) {
     const pinning = !item.pinned_at;
     await clipboardService.pinPinnedClip(item.id, pinning);
     if (pinning) {
-      clips.value = [item, ...clips.value.filter(c => c.id !== item.id)];
+      void flipMove(() => {
+        clips.value = [item, ...clips.value.filter(c => c.id !== item.id)];
+      });
       await persistOrder();
     }
     await load();
@@ -309,6 +343,8 @@ onMounted(() => {
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown, true);
+  flipAnims.forEach(a => a.cancel());
+  flipAnims.clear();
 });
 </script>
 
@@ -327,8 +363,9 @@ onUnmounted(() => {
            grid 每行高度由该行最高卡决定，同行矮卡下方会被撑出大块空白（视觉间隔失真），
            列内独立堆叠则上下间距恒等于 gap-3，与左右一致 -->
       <div v-if="clips.length" class="pinned-grid grid grid-cols-2 items-start gap-3">
-        <!-- 列容器用 TransitionGroup：拖动重排时同列卡片 FLIP 让位/落位（跨列移动重建无动画） -->
-        <TransitionGroup v-for="(col, ci) in pinnedColumns" :key="ci" name="pinned" tag="div" class="flex flex-col gap-3">
+        <!-- 列容器为普通 div：重排/置顶的滑行动画由 flipMove 手动 FLIP 呈现
+             （TransitionGroup 无法跨容器做 FLIP，跨列移动只能瞬移） -->
+        <div v-for="(col, ci) in pinnedColumns" :key="ci" class="flex flex-col gap-3">
           <div
               v-for="entry in col"
               :key="entry.item.id"
@@ -342,7 +379,7 @@ onUnmounted(() => {
           <div
               class="relative overflow-hidden rounded-2xl border bg-surface-field/70 shadow-soft transition-all"
               :class="[
-                selectedIndex === entry.idx ? 'border-gold ring-2 ring-gold/60' : 'border-accent',
+                draggingId == null && selectedIndex === entry.idx ? 'border-gold ring-2 ring-gold/60' : 'border-accent',
                 draggingId === entry.item.id ? 'cursor-grabbing opacity-50 scale-[0.98]' : '',
               ]"
           >
@@ -449,10 +486,10 @@ onUnmounted(() => {
             </div>
           </div>
           </div>
-          </TransitionGroup>
+        </div>
       </div>
 
-      <!-- 流式加载：sentinel 进入视口时自动加载下一页；到底后显示"已全部加载" -->
+      <!-- 流式加载：sentinel 进入视口时自动加载下一页 -->
       <div
           v-if="hasMore && clips.length"
           ref="sentinel"
@@ -461,7 +498,6 @@ onUnmounted(() => {
         <span v-if="loading">{{ t('clip.loading_more') }}</span>
         <span v-else>{{ t('clip.scroll_more') }}</span>
       </div>
-      <div v-else-if="clips.length" class="py-4 text-center text-xs text-ink-faint">{{ t('clip.no_more') }}</div>
     </div>
 
     <!-- 删除确认框（内联组件，与剪贴板/便签一致，视口居中） -->
