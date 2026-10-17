@@ -97,6 +97,14 @@ export function paint(svg: SVGSVGElement, pose: NavPose) {
       transform('base', around(12, 21, 1 - 0.09 * detail + 0.35 * landing, 1))
       break
     }
+
+    case 'calendar':
+      // 翻页轻仰：页身绕顶部铰链小角度后仰，两挂环反向摆动，当日圆点弹出「选中今天」的手感
+      transform('page', `rotate(${-4 * detail} 12 5)`)
+      transform('ring1', `rotate(${12 * detail} 8 4)`)
+      transform('ring2', `rotate(${-12 * detail} 16 4)`)
+      transform('mark', around(16.5, 17.5, 1 + 0.35 * detail))
+      break
   }
 }
 

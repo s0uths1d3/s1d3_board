@@ -107,6 +107,7 @@ const MOTION_KIND: Record<string, NavMotionKind> = {
   note: 'reciprocate',
   pinned: 'reciprocate',
   statistics: 'reciprocate',
+  calendar: 'reciprocate',
   // 同向走到底：不能加闸门
   setting: 'continuous',
   app_usage: 'continuous',
