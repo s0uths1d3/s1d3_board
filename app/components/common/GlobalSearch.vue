@@ -36,6 +36,8 @@ const listEl = ref<HTMLElement | null>(null);
 // 高级搜索开关（与剪贴板同一套词法开关语义：开=空格拆词/引号整句/通配符/|，关=整串字面）。
 // 面板为临时弹层，内存态即可、不持久化，默认开启与剪贴板偏好一致
 const advanced = ref(true);
+/** 大小写区分（与高级搜索同套词法体系；面板内存态，关闭面板后重置由下一次打开继承） */
+const caseSensitive = ref(false);
 
 /** 单条搜索结果（四模块统一的扁平展示行） */
 interface SearchHit {
@@ -90,11 +92,11 @@ async function runSearch(q: string): Promise<void> {
   const seq = ++searchSeq;
   const [clips, todos, notes] = await Promise.all([
     clipboardService.fetchClipboardData(
-      { value: { favorite: 0, searchContent: q, type: 'all', advanced: advanced.value, sourceApp: '' } },
+      { value: { favorite: 0, searchContent: q, types: [], advanced: advanced.value, caseSensitive: caseSensitive.value, sourceApp: '' } },
       { offset: 0, limit: HITS_PER_MODULE },
     ).catch(() => [] as ClipboardData[]),
-    clipboardService.fetchTodos({ value: { searchContent: q, advanced: advanced.value } }, { offset: 0, limit: HITS_PER_MODULE }).catch(() => [] as Todo[]),
-    clipboardService.fetchNotes({ value: { searchContent: q, advanced: advanced.value } }, { offset: 0, limit: HITS_PER_MODULE }).catch(() => [] as Note[]),
+    clipboardService.fetchTodos({ value: { searchContent: q, advanced: advanced.value, caseSensitive: caseSensitive.value } }, { offset: 0, limit: HITS_PER_MODULE }).catch(() => [] as Todo[]),
+    clipboardService.fetchNotes({ value: { searchContent: q, advanced: advanced.value, caseSensitive: caseSensitive.value } }, { offset: 0, limit: HITS_PER_MODULE }).catch(() => [] as Note[]),
   ]);
   if (seq !== searchSeq) return; // 晚到响应：已有更新的查询结果在途/就位，丢弃
   // 设置项与设置页搜索同语义：按当前语言文案或 label 键包含匹配（高级词法不适用于静态清单）
@@ -221,10 +223,13 @@ onBeforeUnmount(() => bus.off('global-search:toggle', open));
             v-model="query"
             :placeholder="t('global_search.placeholder')"
             :advanced="advanced"
+            :case-sensitive="caseSensitive"
             :show-help="false"
+            :clear-always="true"
             :tip-clear="t('common.close')"
             class="border-b border-line px-4 py-3"
             @update:advanced="advanced = $event"
+            @update:case-sensitive="caseSensitive = $event"
             @clear="close"
         />
         <!-- 结果列表：空查询时整体不渲染——卡片收缩到只剩输入行，下方即蒙层透明区；

@@ -126,8 +126,10 @@ export interface IslandShowPayload {
 }
 
 const ISLAND_LABEL = 'clipboard-bubble-island';
-const ISLAND_W = 360;
-const ISLAND_H = 56;
+// 窗口宽 440 > 胶囊 344：为脉冲环扩散/节日光晕/彩蛋扫光的越界演出留余量（与页面侧 ISLAND_W 保持一致）
+// 高 96：胶囊 40 + 底部 48px 余量，容纳光晕/脉冲环纵向扩散（页面侧 ISLAND_H 同步）
+const ISLAND_W = 440;
+const ISLAND_H = 96;
 /** 文本预览长度上限（页面内还会做单行 truncate） */
 const PREVIEW_MAX = 120;
 

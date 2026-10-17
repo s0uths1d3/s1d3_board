@@ -3,7 +3,7 @@ import type { DatabaseConnection } from '../connection';
 import type { ClipboardData } from '../../../entities';
 import { bus } from '../../events';
 import { resolveImageRows, deleteImageFileByRef, invalidateImageCache } from '../imageRef';
-import { escapeLike, withPage, parseSearchTokens, likePatternFromToken, type PageQuery } from '../sql';
+import { withPage, parseSearchTokens, searchPattern, createSearchMatcher, type PageQuery } from '../sql';
 import type { RecordStats } from './noteRepository';
 
 /** 剪贴板默认保留上限：设置项 max_save_count 未设置/无效时生效（防 DB 无限膨胀） */
@@ -434,10 +434,13 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
             const types: string[] = filter.value.types ?? [];
 
             // 搜索词分组：高级搜索开启时组内词元 OR（| 相连）、组间 AND；`*` `?` 为通配符、
-            // 双引号短语为整句词元。关闭时整串按字面单词元（advanced 缺省视为开启，兼容旧调用）
+            // 双引号短语为整句词元。关闭时整串按字面单词元（advanced 缺省视为开启，兼容旧调用）。
+            // 大小写区分开关（caseSensitive 缺省不区分，兼容旧调用）：区分时切 GLOB 算子（* ? 通配语义不变）
             const advanced = filter.value.advanced !== false;
+            const caseSensitive = filter.value.caseSensitive === true;
+            const matcher = createSearchMatcher(caseSensitive);
             const groups = parseSearchTokens(content, advanced).map(group =>
-                group.map(kw => `%${advanced ? likePatternFromToken(kw) : escapeLike(kw)}%`),
+                group.map(kw => matcher.wrap(searchPattern(kw, advanced, caseSensitive))),
             );
 
             // 统一收集 WHERE 条件，按 $1/$2… 顺序编号参数
@@ -472,7 +475,7 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
                         const perType = condsByType.map(([typeSql, field]) => {
                             paramIdx += 1;
                             params.push(pattern);
-                            return `(${typeSql} AND ${field} LIKE $${paramIdx} ESCAPE '\\')`;
+                            return `(${typeSql} AND ${field} ${matcher.op} $${paramIdx}${matcher.suffix})`;
                         });
                         parts.push(perType.length === 1 ? perType[0]! : `(${perType.join(' OR ')})`);
                     }
@@ -480,7 +483,7 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
                 }
             } else {
                 // 默认（全部）：文本/富文本条目按内容匹配、图片条目按二维码识别结果匹配，
-                // 组内任一模式命中任一字段即可（OR），组间 AND；搜索词转义 % _ \，保证按字面匹配
+                // 组内任一模式命中任一字段即可（OR），组间 AND；搜索词按字面匹配（转义/大小写语义由 matcher 决定）
                 for (const group of groups) {
                     const parts: string[] = [];
                     for (const pattern of group) {
@@ -488,7 +491,7 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
                         const pContent = paramIdx;
                         paramIdx += 1;
                         const pQr = paramIdx;
-                        parts.push(`((type IN ('text', 'html') AND content LIKE $${pContent} ESCAPE '\\') OR qr_text LIKE $${pQr} ESCAPE '\\')`);
+                        parts.push(`((type IN ('text', 'html') AND content ${matcher.op} $${pContent}${matcher.suffix}) OR qr_text ${matcher.op} $${pQr}${matcher.suffix})`);
                         params.push(pattern, pattern);
                     }
                     conds.push(parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`);

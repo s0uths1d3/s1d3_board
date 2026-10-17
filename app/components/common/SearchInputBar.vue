@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * 通用搜索输入行（剪贴板列表 / 全局搜索面板共用，样式单一来源）：
+ * 通用搜索输入行（剪贴板列表 / 全局搜索面板 / 便签搜索栏共用，样式单一来源）：
  * 放大镜 + 输入框（list-search-input 联动搜索高亮）+ [前置按钮 slot] + 高级搜索开关（可选）
- * + 语法说明（?）+ 清空/关闭（✕）+ [尾部按钮 slot]。
+ * + 大小写区分（Aa，可选）+ 语法说明（?）+ 清空/关闭（✕）+ [尾部按钮 slot]。
  * 容器样式由使用方通过 attrs 提供（剪贴板 = glass-card 圆角行；面板内 = 底边框行），
  * ✕ 默认语义为清空（emit clear），全局搜索面板将其用作关闭入口（tipClear 自定义提示）。
  */
@@ -17,8 +17,12 @@ const props = withDefaults(defineProps<{
   placeholder?: string;
   /** 传入即显示高级搜索开关（受控）；不传则隐藏（无词法切换的场景） */
   advanced?: boolean;
-  /** 是否显示 ? 语法说明入口（全局搜索面板不展示，剪贴板默认展示） */
+  /** 传入即显示大小写区分开关（受控）；不传则隐藏 */
+  caseSensitive?: boolean;
+  /** 是否启用 ? 语法说明入口（配合高级搜索开启时显示；全局搜索/便签不启用） */
   showHelp?: boolean;
+  /** ✕ 是否常驻（全局搜索的关闭入口；默认 false = 仅有关键词时显示清空按钮） */
+  clearAlways?: boolean;
   /** ✕ 按钮提示文案（清空 / 关闭，随使用方语义） */
   tipClear: string;
 }>(), { showHelp: true });
@@ -26,8 +30,11 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: string];
   'update:advanced': [value: boolean];
+  'update:caseSensitive': [value: boolean];
   /** ✕ 点击：清空搜索词（剪贴板）或关闭面板（全局搜索） */
   clear: [];
+  /** 输入框内回车（便签搜索：跳转到首个匹配项） */
+  enter: [];
 }>();
 
 const inputEl = ref<HTMLInputElement | null>(null);
@@ -57,32 +64,44 @@ defineExpose({ focus: () => inputEl.value?.focus() });
         :placeholder="placeholder"
         class="list-search-input w-full bg-transparent text-ink placeholder:text-ink-faint focus:outline-hidden"
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+        @keydown.enter.prevent="emit('enter')"
     />
     <!-- 前置按钮位：剪贴板的收藏 / 图片筛选等列表专属开关 -->
     <slot name="prepend" />
     <button
         v-if="advanced !== undefined"
         type="button"
-        class="btn-soft btn-circle p-0 ml-1"
-        :class="advanced ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+        class="icon-ghost"
+        :class="advanced ? 'text-gold hover:bg-gold/10' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
         v-tip="t(advanced ? 'clip.advanced_off' : 'clip.advanced_on')"
         @click="emit('update:advanced', !advanced)"
     >
       <!-- 高级搜索：空格拆词 AND + 引号整句 + * ? 通配符 + | OR；关闭后整串按字面匹配 -->
-      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z" />
         <path d="M19 15l.9 2.4L22 18l-2.1.6L19 21l-.9-2.4L16 18l2.1-.6L19 15z" />
       </svg>
     </button>
-    <!-- 高级搜索语法说明入口：共享 SearchHelpPanel（? 按钮 + 面板自治；showHelp=false 时隐藏） -->
-    <SearchHelpPanel v-if="showHelp" />
+    <!-- 大小写区分（Aa）：开启后关键词按字面大小写匹配（GLOB 词法），关闭则忽略大小写（默认） -->
     <button
+        v-if="caseSensitive !== undefined"
         type="button"
-        class="btn-soft btn-circle p-0 ml-1"
+        class="icon-ghost"
+        :class="caseSensitive ? 'text-gold hover:bg-gold/10' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
+        v-tip="t(caseSensitive ? 'clip.case_on' : 'clip.case_off')"
+        @click="emit('update:caseSensitive', !caseSensitive)"
+    ><span class="text-[11px] font-semibold leading-none tracking-tight">Aa</span></button>
+    <!-- 高级搜索语法说明入口：仅剪贴板且高级搜索开启时展示（showHelp 控制是否启用，advanced 控制显隐） -->
+    <SearchHelpPanel v-if="showHelp && advanced" />
+    <!-- ✕：清空（列表搜索，仅有关键词时出现）/ 关闭面板（全局搜索常驻，clearAlways） -->
+    <button
+        v-if="clearAlways || modelValue.length > 0"
+        type="button"
+        class="icon-ghost text-ink-soft hover:bg-secondary hover:text-ink"
         v-tip="tipClear"
         @click="emit('clear')"
     >
-      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M6 18L18 6M6 6l12 12" />
       </svg>
     </button>

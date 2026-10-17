@@ -71,7 +71,7 @@ export function clearBatchSelection() {
   batchAnchorIndex = -1;
 }
 
-/** 过滤条件：是否仅收藏 + 搜索关键字 + 类型多选筛选（[] = 全部类型）+ 高级搜索开关 + 来源应用筛选 */
+/** 过滤条件：是否仅收藏 + 搜索关键字 + 类型多选筛选（[] = 全部类型）+ 高级搜索开关 + 大小写区分 + 来源应用筛选 */
 export const filter = ref({
   favorite: 0,
   searchContent: '',
@@ -79,6 +79,8 @@ export const filter = ref({
   types: [] as ('text' | 'image' | 'files')[],
   // 高级搜索：true = 空格拆词 AND + 引号整句；false = 整串按字面单词元匹配
   advanced: true,
+  // 大小写区分：true = 关键词按字面大小写匹配（GLOB 词法）；false = 忽略大小写（默认，LIKE 词法）
+  caseSensitive: false,
   // 来源应用筛选（复制瞬间的前台进程名）：'' = 全部应用
   sourceApp: '',
 });
@@ -106,6 +108,31 @@ export async function setAdvancedSearch(v: boolean): Promise<void> {
     await clipboardService.setKeyValue(ADVANCED_SEARCH_KEY, v ? '1' : '0');
   } catch (e) {
     console.error('保存高级搜索开关失败:', e);
+  }
+}
+
+const CASE_SENSITIVE_KEY = 'case_sensitive';
+
+/** 用户已显式切换过大小写区分开关：晚到的恢复响应不得覆盖用户操作（同高级搜索开关） */
+let caseTouched = false;
+
+/** 恢复大小写区分开关（剪贴板页挂载时调用；读取失败保持默认关闭） */
+export async function restoreCaseSensitive(): Promise<void> {
+  try {
+    const raw = await clipboardService.getKeyValue(CASE_SENSITIVE_KEY);
+    if (caseTouched) return;
+    filter.value.caseSensitive = raw === '1';
+  } catch { /* DB 未就绪等异常：保持默认值 */ }
+}
+
+/** 设置大小写区分开关并持久化（状态即时生效驱动重查；持久化失败仅记日志） */
+export async function setCaseSensitive(v: boolean): Promise<void> {
+  caseTouched = true;
+  filter.value.caseSensitive = v;
+  try {
+    await clipboardService.setKeyValue(CASE_SENSITIVE_KEY, v ? '1' : '0');
+  } catch (e) {
+    console.error('保存大小写区分开关失败:', e);
   }
 }
 

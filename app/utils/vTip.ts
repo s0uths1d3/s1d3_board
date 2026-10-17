@@ -220,6 +220,12 @@ function showTip(el: HTMLElement, value: TipValue) {
     if (currentEl !== el) return;
     const tip = getTip();
     tip.textContent = content;
+    // 节日皮肤继承：触发元素就近携带 data-festival（灵动岛骑缘徽章等）时，气泡同步换装——
+    // 节日变量组定义在全局 [data-festival]（main.css），气泡挂窗口 body 下不经过 island-wrap，
+    // 无法靠 DOM 继承，这里显式复制到气泡自身触发同一组变量
+    const festHost = el.closest('[data-festival]');
+    if (festHost) tip.dataset.festival = festHost.getAttribute('data-festival') || '';
+    else delete tip.dataset.festival;
     tip.style.visibility = 'visible';
     void (async () => {
       // 先取兄弟窗口坐标再测算：落位测量尽量靠近应用时机，

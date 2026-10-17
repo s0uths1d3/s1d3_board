@@ -37,11 +37,11 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onOutside, tru
   <button
       type="button"
       ref="btnRef"
-      class="btn-soft btn-circle p-0 ml-1 text-sm font-bold leading-none"
-      :class="show ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+      class="icon-ghost"
+      :class="show ? 'text-gold hover:bg-gold/10' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
       v-tip="t('clip.search_help_btn')"
       @click="show = !show"
-  ><span class="flex h-4 w-4 items-center justify-center">?</span></button>
+  ><span class="text-[11px] font-semibold leading-none">?</span></button>
   <div
       v-if="show"
       ref="panelRef"

@@ -354,9 +354,14 @@ onUnmounted(() => {
     <div class="rounded-2xl p-4">
       <p v-if="errorMsg" class="mb-2 text-sm text-danger">{{ errorMsg }}</p>
       <p v-if="loading && clips.length === 0" class="mb-2 text-sm text-ink-faint">{{ t('common.loading') }}</p>
-      <p v-if="!loading && clips.length === 0" class="mb-2 text-sm text-ink-faint">
-        {{ t('clip.pinned_empty') }}
-      </p>
+      <!-- 空状态：与待办/便签页同款「大图标 + 主文案 + 次级引导」居中样式（图钉图标与常用剪贴语义一致） -->
+      <div v-if="!loading && clips.length === 0" class="py-20 text-center">
+        <svg class="mx-auto mb-4 h-24 w-24 text-ink-faint/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 17v5" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+        </svg>
+        <p class="text-lg text-ink-faint">{{ t('clip.pinned_empty') }}</p>
+        <p class="mt-2 text-xs text-ink-faint/70">{{ t('clip.pinned_empty_hint') }}</p>
+      </div>
 
       <!-- 双列独立堆叠（行优先槽位）：偶数槽位入左列、奇数入右列——Ctrl+1 左上、Ctrl+2 右上、
            Ctrl+3 紧贴 Ctrl+1 正下方。用列容器 flex 纵向堆叠而非 grid 行轨道：
@@ -470,15 +475,15 @@ onUnmounted(() => {
 
                 <!-- 操作按钮（编辑/置顶/删除） -->
                 <div class="flex items-center gap-1 border-t border-accent/50 px-3 py-2">
-                  <button type="button" class="btn-soft btn-circle p-1.5" v-tip="t('common.edit')" @click="startEdit(entry.item)" @pointerdown.stop.prevent>
+                  <button type="button" class="btn-soft btn-circle p-1" v-tip="t('common.edit')" @click="startEdit(entry.item)" @pointerdown.stop.prevent>
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
                   </button>
-                  <button type="button" class="btn-soft btn-circle p-1.5" v-tip="entry.item.pinned_at ? t('clip.unpinned') : t('clip.pinned')" @click="togglePin(entry.item)" @pointerdown.stop.prevent>
+                  <button type="button" class="btn-soft btn-circle p-1" v-tip="entry.item.pinned_at ? t('clip.unpinned') : t('clip.pinned')" @click="togglePin(entry.item)" @pointerdown.stop.prevent>
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
                     </svg>
                   </button>
-                  <button type="button" class="btn-soft btn-circle p-1.5 text-danger" v-tip="t('common.delete')" @click="requestDelete(entry.item)" @pointerdown.stop.prevent>
+                  <button type="button" class="btn-soft btn-circle p-1 text-danger" v-tip="t('common.delete')" @click="requestDelete(entry.item)" @pointerdown.stop.prevent>
                     <svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M10 11v6" /><path d="M14 11v6" /></svg>
                   </button>
                 </div>
