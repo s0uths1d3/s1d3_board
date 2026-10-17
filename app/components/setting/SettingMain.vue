@@ -76,6 +76,7 @@ import { isTauri } from '~/utils/env';
 import { configureVTip } from '~/utils/vTip';
 import { useTooltipEnabled } from '~/composables/useTooltipEnabled';
 import { useIslandEnabled, setIslandEnabled, useIslandTiming, ensureIslandTimingLoaded, setIslandDelayMs, setIslandDurationMs, notifyIsland, type IslandKind, ISLAND_DELAY_DEFAULT, ISLAND_DURATION_DEFAULT } from '~/composables/useCopyIsland';
+import { setFestivalEggEnabled, useFestivalEggEnabled } from '~/festival-eggs';
 import { useMaskBlur, ensureMaskBlurLoaded, setMaskBlur, MASK_BLUR_DEFAULT } from '~/composables/useMaskBlur';
 import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
 import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
@@ -165,6 +166,14 @@ const { islandEnabled } = useIslandEnabled();
 async function onIslandToggle(val: boolean) {
   await setIslandEnabled(val);
   showHint(val ? t('setting.general.island_on') : t('setting.general.island_off'));
+}
+
+/** 节日彩蛋总开关（festival-eggs 注入模块）：关闭后岛换装/徽章/主窗口点缀/台词全部消失；
+ *  s1d3 内容彩蛋不属于节日体系，不受本开关影响 */
+const { festivalEggEnabled } = useFestivalEggEnabled();
+async function onFestivalEggToggle(val: boolean) {
+  await setFestivalEggEnabled(val);
+  showHint(val ? t('setting.general.festival_egg_on') : t('setting.general.festival_egg_off'));
 }
 
 // ===== 灵动岛出现延迟 / 停留时长（自由输入毫秒值；未设置/非法输入回落默认，范围自动钳制） =====
@@ -2250,7 +2259,7 @@ onMounted(async () => {
                 <div class="flex items-center gap-2">
                   <button type="button" class="btn-soft px-2 py-0.5 text-xs"
                           @click="addingAiScheme = !addingAiScheme">{{ t('smart.ai_generate_scheme') }}</button>
-                  <button type="button" class="btn-soft btn-circle p-1.5"
+                  <button type="button" class="btn-soft btn-circle p-1"
                           v-tip="t('smart.add_scheme')"
                           @click="addScheme">
                     <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -2344,7 +2353,7 @@ onMounted(async () => {
                   <button type="button" class="btn-soft px-2 py-0.5 text-xs"
                           @click="restoreExtractors">{{ t('smart.extractors_restore') }}</button>
                   <!-- 新增入口收成一个 SVG 图标，点击展开新增面板（分隔符/正则/AI 指令三合一） -->
-                  <button type="button" class="btn-soft btn-circle p-1.5"
+                  <button type="button" class="btn-soft btn-circle p-1"
                           v-tip="t('smart.add_extractor')"
                           @click="addingExtractor = !addingExtractor">
                     <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -2739,6 +2748,14 @@ onMounted(async () => {
                       :tip-on="t('setting.general.island_tip_on')" :tip-off="t('setting.general.island_tip_off')"
                       :label="t('setting.general.island_hint')"
                       @change="onIslandToggle"
+                  />
+                  <!-- 节日彩蛋总开关：节日期间自动更换灵动岛限时主题与界面点缀（外观子组） -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.festival_egg'"
+                      :model-value="festivalEggEnabled"
+                      :tip-on="t('setting.general.festival_egg_tip_on')" :tip-off="t('setting.general.festival_egg_tip_off')"
+                      :label="t('setting.general.festival_egg')"
+                      @change="onFestivalEggToggle"
                   />
                   <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === 'setting.general.smart_reminder'"
@@ -3249,7 +3266,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- 导航栏设置：tab 顺序与显示开关（剪贴板/设置强制保留；统计受解锁门槛控制） -->
+          <!-- 导航栏设置：tab 顺序与显示开关（剪贴板/设置强制保留；设置固定最末不参与排序） -->
           <div v-else-if="displaySetting.type === 'nav'" class="flex flex-col gap-4">
             <div class="glass-card rounded-2xl shadow-soft" data-nav-config-list>
               <TransitionGroup name="reorder-list" tag="ul">
@@ -3282,7 +3299,7 @@ onMounted(async () => {
                     <div v-if="row.locked" class="text-xs text-ink-faint">{{ t('setting.shortcuts.builtin_locked') }}</div>
                   </div>
                 </div>
-                <!-- 右侧操作：内置项显示锁定图标；未解锁统计显示禁用开关；其余为可切换胶囊开关 -->
+                <!-- 右侧操作：内置项显示锁定图标；其余为可切换胶囊开关 -->
                 <svg
                     v-if="row.locked"
                     class="h-4 w-4 text-ink-faint/70"

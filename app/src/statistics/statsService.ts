@@ -5,6 +5,7 @@ import { toDateString } from "~/utils/datetime";
 import { appConnection } from "../core/db/appConnection";
 import type { SqlDatabase } from "../core/db/connection";
 import { createStatsRepository, type StatsRepository } from "../core/db/repositories/statsRepository";
+import { TAB_STAT_FIELDS, type TabStatField } from "../tabs/tabKeys";
 
 /**
  * 统计服务（单例）
@@ -25,15 +26,14 @@ import { createStatsRepository, type StatsRepository } from "../core/db/reposito
  * - §14.7 读取时合并 pending：查询把未落库累加器合并进结果，避免实时统计短暂不一致。
  */
 
-/** 统计维度字段（与 daily_stat 各列同名） */
+/** 统计维度字段（与 daily_stat 各列同名）；tab_* 由 Tab 键单点派生（~/src/tabs/tabKeys） */
 export type StatField =
   | 'clip_text' | 'clip_image' | 'clip_use' | 'clip_chars' | 'clip_cut'
   | 'ai_analysis'
   | 'todo_added' | 'todo_completed' | 'todo_deleted' | 'todo_chars' | 'todo_reminded'
   | 'note_added' | 'note_deleted' | 'favorite_toggle'
   | 'usage_seconds' | 'shortcut_count'
-  | 'tab_clip' | 'tab_todo' | 'tab_note' | 'tab_pinned'
-  | 'tab_setting' | 'tab_statistics' | 'tab_app_usage'
+  | TabStatField
   | 'active_dawn' | 'active_day' | 'active_evening' | 'active_night';
 
 /** pull_app_usage 返回结构：Rust 侧内存增量 + 本次会话提取的应用图标 */
@@ -56,13 +56,13 @@ export interface DailyStatRow {
 /** 趋势降采样阈值（§14.4）：区间超过约一季则按月聚合，避免上千个柱条常驻 DOM */
 export const TREND_DOWNSAMPLE_DAYS = 92;
 
-/** 区间聚合默认查询的字段（§14.3 查询裁剪：不含动态扩展列） */
+/** 区间聚合默认查询的字段（§14.3 查询裁剪：不含动态扩展列）；tab_* 段由 Tab 键单点派生 */
 const DEFAULT_RANGE_FIELDS: StatField[] = [
   'clip_text', 'clip_image', 'clip_use', 'clip_chars', 'clip_cut', 'ai_analysis',
   'todo_added', 'todo_completed', 'todo_deleted', 'todo_chars', 'todo_reminded',
   'note_added', 'note_deleted', 'favorite_toggle',
   'usage_seconds', 'shortcut_count',
-  'tab_clip', 'tab_todo', 'tab_note', 'tab_pinned', 'tab_setting', 'tab_statistics', 'tab_app_usage',
+  ...TAB_STAT_FIELDS,
   'active_dawn', 'active_day', 'active_evening', 'active_night',
 ];
 

@@ -29,7 +29,9 @@ import dbService from '~/src/db/dbService';
 import type { Todo } from '~/src/entities';
 import { isTodoOverdue } from '~/src/todo/overdue';
 import { activeTab } from '~/composables/useTabs';
+import { TAB_KEYS } from '~/src/tabs/tabKeys';
 import { filter, resetClips } from '~/src/commands/local/clipboardStore';
+import { FestivalQuoteBanner } from '~/festival-eggs';
 
 const { t, tName, locale } = useI18n();
 
@@ -342,14 +344,12 @@ const metricCards = computed(() => {
 /** Tab 访问分布（§7.4）；每行标签附 hover 说明 */
 const tabDist = computed(() => {
   const s = stats.value;
-  const items = [
-    { id: 'clip', name: t('titlebar.clip'), value: s.tab_clip ?? 0 },
-    { id: 'todo', name: t('titlebar.todo'), value: s.tab_todo ?? 0 },
-    { id: 'note', name: t('titlebar.note'), value: s.tab_note ?? 0 },
-    { id: 'pinned', name: t('titlebar.pinned'), value: s.tab_pinned ?? 0 },
-    { id: 'setting', name: t('titlebar.setting'), value: s.tab_setting ?? 0 },
-    { id: 'statistics', name: t('titlebar.statistics'), value: s.tab_statistics ?? 0 },
-  ].filter(i => i.value > 0);
+  // Tab 行由 TAB_KEYS 单点派生（~/src/tabs/tabKeys）：新增 Tab 自动进分布，无需改此列表
+  const items = TAB_KEYS.map(key => ({
+    id: key,
+    name: t(`titlebar.${key}`),
+    value: s[`tab_${key}`] ?? 0,
+  })).filter(i => i.value > 0);
   const total = items.reduce((sum, i) => sum + i.value, 0);
   return items.map(i => ({
     ...i,
@@ -716,6 +716,8 @@ function barTip(idx: number): string {
 
 <template>
   <div class="space-y-4 pb-8">
+    <!-- 节日引言横幅（festival-eggs 注入模块通用挂载点）：哪个节日说什么由模块注册表登记 -->
+    <FestivalQuoteBanner />
     <!-- ===== 范围切换栏（§7.2，与应用时长页共用 RangeBar）===== -->
     <RangeBar
       v-model="range"

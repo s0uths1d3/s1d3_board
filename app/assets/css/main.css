@@ -262,6 +262,17 @@ body::after {
   .btn-soft {
     @apply rounded-xl border border-accent px-4 py-2 text-sm font-medium text-ink-soft transition-all duration-300 ease-soft hover:bg-secondary hover:shadow-xs;
   }
+  /* 圆形操作钮（等尺寸 + 圆形 + 内容居中）：搜索行/列表行工具按钮的统一形态，
+     配合 btn-soft 提供配色与悬停态；24px 紧凑尺寸适配搜索行的多按钮排布，
+     调用方以 p-0 / p-1 决定内容留白（16px 图标 + p-1 恰好占满） */
+  .btn-circle {
+    @apply flex h-6 w-6 shrink-0 items-center justify-center rounded-full;
+  }
+  /* 幽灵图标钮（对齐顶部导航 nav-tab 的视觉语言：无边框纯图标 + rounded-lg，
+     激活态金色 / 非激活灰、hover 提亮；暂不引入 NavMotionIcon 分层动画） */
+  .icon-ghost {
+    @apply flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition-all duration-300 ease-soft;
+  }
   .btn-gold {
     @apply rounded-xl bg-gold px-4 py-2 text-sm font-medium text-on-gold transition-all duration-300 ease-soft hover:bg-gold-soft hover:shadow-float;
   }
@@ -306,6 +317,9 @@ body.note-drag-selecting * {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
+
+/* 节日彩蛋样式已迁至 app/festival-eggs/styles/festival.css（经 nuxt.config css 数组全局注入，
+   含 [data-festival] 皮肤变量组、.s1d3-tip[data-festival] 气泡换装、.fav-badge-qixi 点缀） */
 
 /* 深色代码块（GitHub Dark 高亮风格） */
 .code-block {
