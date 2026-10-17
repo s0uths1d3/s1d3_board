@@ -91,22 +91,11 @@ function applyHighlight(tokens: InlineToken[], highlight: string): InlineToken[]
     return out;
 }
 
-/** 字数：CJK 字符逐个计，连续拉丁字母/数字计为一个词；其余标点空白不计 */
+/** 字数 = 非空白字符逐个计数（中英文/数字/标点/emoji 同权），与「N 字」文案的字符直觉一致 */
 export function countNoteChars(content: string): number {
     let count = 0;
-    let inWord = false;
     for (const ch of content) {
-        if (/[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/.test(ch)) {
-            count += 1;
-            inWord = false;
-        } else if (/[A-Za-z0-9]/.test(ch)) {
-            if (!inWord) {
-                count += 1;
-                inWord = true;
-            }
-        } else {
-            inWord = false;
-        }
+        if (/\S/.test(ch)) count += 1;
     }
     return count;
 }

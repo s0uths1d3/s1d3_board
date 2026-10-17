@@ -71,7 +71,7 @@
           <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
         </button>
         <!-- AI 整理：摘要 / 提取待办（依赖设置页 AI 配置，父级校验与执行） -->
-        <UiDropdown align="end" :aria-label="t('note.ai_organize')" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
+        <UiDropdown align="center" :aria-label="t('note.ai_organize')" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
           <template #trigger>
             <div
                 v-tip="t('note.ai_organize')"
@@ -86,7 +86,7 @@
           </div>
         </UiDropdown>
         <!-- 配色（原逻辑保留：选择 + 管理配色独立窗口） -->
-        <UiDropdown align="end" :aria-label="t('common.change_color')" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
+        <UiDropdown align="center" :aria-label="t('common.change_color')" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
           <template #trigger>
             <div
                 v-tip="t('common.change_color')"
@@ -129,7 +129,7 @@
           </div>
         </UiDropdown>
         <!-- 更多操作：复制内容 / 转为待办（跨模块分发，父级执行与反馈） -->
-        <UiDropdown align="end" :aria-label="t('note.more_actions')" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
+        <UiDropdown align="center" :aria-label="t('note.more_actions')" panel-class="glass-card w-fit rounded-2xl p-1.5 shadow-float">
           <template #trigger>
             <div
                 v-tip="t('note.more_actions')"
@@ -314,7 +314,7 @@ const emit = defineEmits<{
   (e: 'color-change', id: string, color: string): void
   (e: 'request-edit'): void
   (e: 'finish-edit'): void
-  (e: 'select'): void
+  (e: 'select', event?: MouseEvent): void
   (e: 'toggle-pin', id: string): void
   (e: 'toggle-checklist', id: string, srcIndex: number): void
   (e: 'update-tags', id: string, tags: string[]): void
@@ -864,13 +864,13 @@ function onCardPointerDown(e: PointerEvent) {
   window.addEventListener('pointercancel', dragCancelHandler)
 }
 
-/** 卡片单击：拖动结束的合成 click 不当作选中 */
-function onCardClick() {
+/** 卡片单击：拖动结束的合成 click 不当作选中；修饰键（Ctrl/Shift 多选）与批量态分流统一交父级处理 */
+function onCardClick(e: MouseEvent) {
   if (dragClickSuppressed) {
     dragClickSuppressed = false
     return
   }
-  props.batchMode ? emit('toggle-batch-select') : emit('select')
+  emit('select', e)
 }
 
 onBeforeUnmount(() => {

@@ -62,7 +62,9 @@ describe('toggleChecklistLine：勾选写回', () => {
 
 describe('countNoteChars：字数', () => {
     it('CJK 逐字、拉丁连词、标点空白不计', () => {
-        expect(countNoteChars('你好 world 123，!')).toBe(5); // 你/好 + world + 123 + ，（全角标点计入）
+        expect(countNoteChars('你好 world 123，!')).toBe(12); // 非空白逐字：你好(2)+world(5)+123(3)+，(1)+!(1)
+        expect(countNoteChars('222222222222')).toBe(12); // 连续相同字符逐个计（词合并口径的历史 bug）
+        expect(countNoteChars('  \n ')).toBe(0); // 空白不计
         expect(countNoteChars('')).toBe(0);
     });
 });

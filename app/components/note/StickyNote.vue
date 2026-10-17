@@ -13,69 +13,64 @@
           </svg>
         </button>
 
-        <!-- 搜索栏：与新建按钮同一行且等高（h-10）；始终高亮匹配；右侧"当前/全部"切换搜索范围 -->
-        <div class="glass-card flex h-10 min-w-0 flex-1 items-center gap-2 rounded-2xl px-3 py-0 shadow-soft">
-          <svg class="h-5 w-5 shrink-0 text-ink-faint" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 104.5 4.5a7.5 7.5 0 0012.15 12.15z" />
-          </svg>
-          <input
+        <!-- 搜索栏：与新建按钮同一行且等高（h-10）；通用 SearchInputBar（与剪贴板/全局搜索同款按钮样式：
+             高级词法魔棒 + 大小写区分 Aa + 语法说明 ?），排序/回收站/批量等便签专属按钮经尾部 slot 注入 -->
+        <div class="flex h-10 min-w-0 flex-1 items-center">
+          <SearchInputBar
               ref="noteSearchInput"
               v-model="noteSearch"
-              type="text"
               :placeholder="t('note.search_placeholder')"
-              class="h-full min-w-0 flex-1 bg-transparent text-ink placeholder:text-ink-faint focus:outline-hidden"
-              @keydown.enter.prevent="jumpToFirstMatch"
-          />
-          <button
-              type="button"
-              class="btn-soft btn-circle flex h-8 w-8 items-center justify-center p-0"
-              v-tip="t('note.clear_search')"
-              @click="noteSearch = ''"
+              :advanced="noteAdvanced"
+              :case-sensitive="noteCaseSensitive"
+              :show-help="false"
+              :tip-clear="t('note.clear_search')"
+              class="glass-card h-full min-w-0 flex-1 rounded-2xl px-3 py-0 shadow-soft"
+              @update:advanced="noteAdvanced = $event"
+              @update:case-sensitive="noteCaseSensitive = $event"
+              @enter="jumpToFirstMatch"
+              @clear="noteSearch = ''"
           >
-            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-          <!-- 排序下拉：最近更新 / 创建时间 / 颜色（置顶区不受排序影响） -->
-          <UiDropdown align="end" :aria-label="t('note.sort')" panel-class="glass-card w-40 rounded-2xl p-1.5 shadow-float">
-            <template #trigger>
-              <div class="btn-soft btn-circle flex h-8 w-8 items-center justify-center p-0" v-tip="t('note.sort')">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13M3 12h9M3 18h5M18 10v9m0 0 3-3m-3 3-3-3" /></svg>
-              </div>
-            </template>
+            <!-- 排序下拉：最近更新 / 创建时间 / 颜色（置顶区不受排序影响） -->
+            <UiDropdown align="end" :aria-label="t('note.sort')" panel-class="glass-card w-40 rounded-2xl p-1.5 shadow-float">
+              <template #trigger>
+                <div class="icon-ghost text-ink-soft hover:bg-secondary hover:text-ink" v-tip="t('note.sort')">
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13M3 12h9M3 18h5M18 10v9m0 0 3-3m-3 3-3-3" /></svg>
+                </div>
+              </template>
+              <button
+                  v-for="opt in sortOptions"
+                  :key="opt.value"
+                  type="button"
+                  class="flex w-full items-center justify-between rounded-lg px-2 py-1 text-left text-xs transition-colors"
+                  :class="currentSort === opt.value ? 'bg-gold/15 text-gold' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
+                  @click="currentSort = opt.value as SortKey"
+              >
+                {{ opt.label }}
+                <svg v-if="currentSort === opt.value" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
+              </button>
+            </UiDropdown>
+            <!-- 回收站视图切换（再次点击返回） -->
             <button
-                v-for="opt in sortOptions"
-                :key="opt.value"
                 type="button"
-                class="flex w-full items-center justify-between rounded-lg px-2 py-1 text-left text-xs transition-colors"
-                :class="currentSort === opt.value ? 'bg-gold/15 text-gold' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
-                @click="currentSort = opt.value as SortKey"
+                class="icon-ghost"
+                :class="view === 'trash' ? 'text-gold hover:bg-gold/10' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
+                v-tip="t('note.trash')"
+                @click="toggleTrash"
             >
-              {{ opt.label }}
-              <svg v-if="currentSort === opt.value" class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>
             </button>
-          </UiDropdown>
-          <!-- 回收站视图切换（再次点击返回） -->
-          <button
-              type="button"
-              class="btn-soft btn-circle flex h-8 w-8 items-center justify-center p-0"
-              :class="view === 'trash' ? 'bg-gold/20 text-gold' : ''"
-              v-tip="t('note.trash')"
-              @click="toggleTrash"
-          >
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /></svg>
-          </button>
-          <!-- 批量管理（回收站视图不提供） -->
-          <button
-              v-if="view === 'list'"
-              type="button"
-              class="btn-soft btn-circle flex h-8 w-8 items-center justify-center p-0"
-              :class="batchMode ? 'bg-gold/20 text-gold' : ''"
-              v-tip="t('note.batch')"
-              @click="toggleBatchMode"
-          >
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8" /><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" /></svg>
-          </button>
+            <!-- 批量管理（回收站视图不提供） -->
+            <button
+                v-if="view === 'list'"
+                type="button"
+                class="icon-ghost"
+                :class="batchMode ? 'text-gold hover:bg-gold/10' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
+                v-tip="t('note.batch')"
+                @click="toggleBatchMode"
+            >
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8" /><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9" /></svg>
+            </button>
+          </SearchInputBar>
         </div>
       </div>
 
@@ -129,7 +124,7 @@
             @color-change="changeNoteColor"
             @request-edit="editingId = note.id"
             @finish-edit="editingId = null"
-            @select="selectedIndex = idx"
+            @select="onCardSelect(idx, $event)"
             @toggle-pin="togglePin"
             @toggle-checklist="toggleChecklist"
             @update-tags="updateTags"
@@ -139,7 +134,7 @@
             @ai-organize="onAiOrganize"
             @copy-content="copyNoteContent"
             @to-todo="noteToTodo"
-            @toggle-batch-select="toggleBatchSelect(note.id)"
+            @toggle-batch-select="toggleBatchSelect(note.id, idx)"
             @drag-move="onNoteDragMove"
             @drag-drop="onNoteDragDrop"
             @drag-cancel="onNoteDragCancel"
@@ -161,6 +156,8 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" :d="view === 'trash' ? 'M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6' : 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'"></path>
         </svg>
         <p class="text-lg text-ink-faint">{{ view === 'trash' ? t('note.trash_empty') : t('note.empty') }}</p>
+        <!-- 批量快捷键提示（仅列表视图；对齐剪贴板空态的 shortcut_hints 引导位） -->
+        <p v-if="view === 'list'" class="text-xs text-ink-faint/70">{{ t('note.batch_hints') }}</p>
       </div>
     </div>
 
@@ -181,7 +178,9 @@ import { useNoteColors, resolveNoteColor } from "~/composables/useNoteColors";
 import { writeText } from 'tauri-plugin-clipboard-api';
 import { clipToTodos } from '~/src/commands/local/dispatchClip';
 import DeleteConfirm from "~/components/common/DeleteConfirm.vue";
+import SearchInputBar from '~/components/common/SearchInputBar.vue';
 import clipboardService from '~/src/db/dbService'
+import { matchesSearch } from '~/src/core/db/sql'
 import { v4 as uuidv4 } from 'uuid'
 import type { Note } from "~/src/entities";
 import { bus, type GlobalSearchJumpDetail } from '~/src/core/events';
@@ -225,15 +224,19 @@ const gridEl = ref<{ $el: HTMLElement } | null>(null)
 const noteSearch = ref('')
 /** 搜索范围：current=在已加载便签中过滤；all=重新查库（涵盖未加载的全部） */
 const searchScope = ref<'current' | 'all'>('current')
-const noteSearchInput = ref<HTMLInputElement | null>(null)
+/** 高级词法 / 大小写区分开关（与剪贴板/全局搜索同套语义，纯前端内存态） */
+const noteAdvanced = ref(true)
+const noteCaseSensitive = ref(false)
+const noteSearchInput = ref<InstanceType<typeof SearchInputBar> | null>(null)
 /** 仅当输入非空时高亮匹配（搜索命中即高亮，常开） */
 const highlightActive = computed(() => noteSearch.value.trim() !== '')
 
-/** 展示列表：搜索态按关键词前端过滤（current=已加载范围；all=notes 已是全库搜索结果）；非搜索态=已加载全部 */
+/** 展示列表：搜索态按关键词前端过滤（current=已加载范围；all=notes 已是全库搜索结果）；非搜索态=已加载全部。
+ *  匹配走共享 matchesSearch（与 DB 词法同源：组内 OR/组间 AND/通配符/大小写语义） */
 const displayNotes = computed(() => {
-  const q = noteSearch.value.trim().toLowerCase()
+  const q = noteSearch.value.trim()
   if (q) {
-    return notes.value.filter(n => (n.content || '').toLowerCase().includes(q))
+    return notes.value.filter(n => matchesSearch(n.content || '', q, noteAdvanced.value, noteCaseSensitive.value))
   }
   return notes.value
 })
@@ -271,8 +274,8 @@ const pinnedNotes = computed(() =>
 /** 主网格渲染列表：列表视图 = 置顶区 + 其余（按排序）；回收站视图 = 回收站列表（搜索过滤同口径） */
 const gridNotes = computed(() => {
   if (view.value === 'trash') {
-    const q = noteSearch.value.trim().toLowerCase()
-    return trashNotes.value.filter(n => !q || (n.content || '').toLowerCase().includes(q))
+    const q = noteSearch.value.trim()
+    return trashNotes.value.filter(n => !q || matchesSearch(n.content || '', q, noteAdvanced.value, noteCaseSensitive.value))
   }
   const rest = displayNotes.value.filter(n => n.pinned !== 1).sort(compareNotes)
   return [...pinnedNotes.value, ...rest]
@@ -400,7 +403,7 @@ function onNoteDragCancel() {
 /** 搜索范围切换到"全部"时：重新查库，确保涵盖未加载的便签；清空搜索时恢复全量。
  *  加 300ms trailing 防抖：此前每个按键立即查库，连续输入 = 连续 SQL */
 let searchFetchTimer: ReturnType<typeof setTimeout> | null = null
-watch([searchScope, noteSearch], async ([scope, q]) => {
+watch([searchScope, noteSearch, noteAdvanced, noteCaseSensitive], async ([scope, q]) => {
   if (searchFetchTimer) clearTimeout(searchFetchTimer)
   if (q.trim() && scope === 'all') {
     // "全部"范围搜索：一次性查库全部匹配（涵盖未加载便签），300ms 防抖避免连续输入连续 SQL
@@ -414,10 +417,10 @@ watch([searchScope, noteSearch], async ([scope, q]) => {
   }
 })
 
-/** 按"全部"范围查库刷新搜索结果（一次性展示全部匹配，不再流式） */
+/** 按"全部"范围查库刷新搜索结果（一次性展示全部匹配，不再流式）；词法/大小写开关随搜索框状态透传 */
 async function fetchNotesByScope(q: string) {
   try {
-    const fetched = await clipboardService.fetchNotes({ value: { searchContent: q } })
+    const fetched = await clipboardService.fetchNotes({ value: { searchContent: q, advanced: noteAdvanced.value, caseSensitive: noteCaseSensitive.value } })
     replace(fetched)
     if (selectedIndex.value > fetched.length - 1) {
       selectedIndex.value = Math.max(0, fetched.length - 1)
@@ -514,14 +517,18 @@ const showHint = (msg: string, kind: IslandKind = 'success') => {
 const purgeConfirmTarget = ref<StickyNote | null>(null)
 
 const updateNote = async (id: string, content: string) => {
-  const note = notes.value.find(n => n.id === id)
-  if (note) {
-    note.content = content
-    note.updated_at = String(Date.now())
+  const idx = notes.value.findIndex(n => n.id === id)
+  if (idx >= 0) {
+    // 整条替换（splice 数组级响应）：不依赖列表元素深层代理的属性修改，
+    // 保证编辑保存后卡片内容必然即时刷新
+    const next: StickyNote = { ...notes.value[idx]!, content, updated_at: String(Date.now()) }
+    notes.value.splice(idx, 1, next)
     try {
-      await clipboardService.updateNote(note)
+      await clipboardService.updateNote(next)
       // 保存成功灵动岛提示：Ctrl+Enter / 失焦 / 快捷键系统三条保存路径都汇聚于此，单点覆盖
       showHint(t('note.saved'))
+      // 立即回读权威数据：不依赖 3s 轮询与签名比对的时序巧合（busy 互斥跳过时由轮询兜底）
+      await refreshLoaded()
     } catch (e) {
       console.error('保存便签失败:', e)
       showHint(t('note.save_failed'), 'error')
@@ -664,21 +671,67 @@ const changeNoteColor = async (id: string, color: string) => {
 // ===== 批量操作（便签 §7）：多选 + 批量改色（选色即应用）/ 批量删除（进回收站） =====
 const batchMode = ref(false)
 const batchSelectedIds = ref(new Set<string>())
+// Shift 范围选锚点：最后一次勾选的行下标（非响应式，仅点击交互内部使用，语义对齐剪贴板）
+let batchAnchorIndex = -1
 const allSelected = computed(() => gridNotes.value.length > 0 && gridNotes.value.every(n => batchSelectedIds.value.has(n.id)))
 
 const toggleBatchMode = () => {
   batchMode.value = !batchMode.value
   if (!batchMode.value) batchSelectedIds.value = new Set()
+  batchAnchorIndex = -1
 }
 const exitBatch = () => {
   batchMode.value = false
   batchSelectedIds.value = new Set()
+  batchAnchorIndex = -1
 }
-const toggleBatchSelect = (id: string) => {
+const toggleBatchSelect = (id: string, index?: number) => {
   const next = new Set(batchSelectedIds.value)
   if (next.has(id)) next.delete(id)
   else next.add(id)
   batchSelectedIds.value = next
+  // 锚点跟随最后勾选行（Ctrl+点击/勾选圈/空格），供 Shift 范围选为起点；无选中时清锚
+  batchAnchorIndex = next.size > 0 && index !== undefined ? index : -1
+  if (index !== undefined) selectedIndex.value = index
+}
+/** Shift+点击：从锚点到当前行范围全选（追加不清空已有勾选；无锚点时以当前选中行为锚） */
+const selectBatchRange = (index: number) => {
+  if (batchAnchorIndex < 0) batchAnchorIndex = selectedIndex.value
+  const lo = Math.min(batchAnchorIndex, index)
+  const hi = Math.max(batchAnchorIndex, index)
+  const next = new Set(batchSelectedIds.value)
+  for (let i = lo; i <= hi; i++) {
+    const n = gridNotes.value[i]
+    if (n) next.add(n.id)
+  }
+  batchSelectedIds.value = next
+  selectedIndex.value = index
+}
+
+/** 卡片点击分流（语义对齐剪贴板列表）：Ctrl/Meta+点击 加选（未开批量自动开启）、
+ *  Shift+点击 范围选、批量态普通点击切换勾选、普通态单选；回收站无批量语义只做单选 */
+function onCardSelect(idx: number, e?: MouseEvent) {
+  const note = gridNotes.value[idx]
+  if (!note) return
+  if (view.value !== 'list') {
+    selectedIndex.value = idx
+    return
+  }
+  if (e?.shiftKey) {
+    if (!batchMode.value) toggleBatchMode()
+    selectBatchRange(idx)
+    return
+  }
+  if (e?.ctrlKey || e?.metaKey) {
+    if (!batchMode.value) toggleBatchMode()
+    toggleBatchSelect(note.id, idx)
+    return
+  }
+  if (batchMode.value) {
+    toggleBatchSelect(note.id, idx)
+    return
+  }
+  selectedIndex.value = idx
 }
 const toggleSelectAll = () => {
   batchSelectedIds.value = allSelected.value ? new Set() : new Set(gridNotes.value.map(n => n.id))
@@ -828,8 +881,19 @@ async function onKeydown(e: KeyboardEvent) {
     return
   }
 
-  // 正在编辑文本时，其余按键交给输入框处理
+  // 正在编辑文本时，其余按键交给输入框处理（编辑态保留原生 Ctrl+A 全选文本，故须在其之前拦截批量多选）
   if (isEditingField) return
+
+  // Ctrl+A：批量多选——未开批量先开启并全选，已开则全选/全不选切换；
+  // 仅列表视图提供（回收站无批量操作栏），必须在下方 Ctrl/Meta/Alt 早退之前处理
+  if (e.ctrlKey && e.key.toLowerCase() === 'a' && view.value === 'list' && gridNotes.value.length > 0) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!batchMode.value) toggleBatchMode()
+    toggleSelectAll()
+    return
+  }
+
   // 其它 Ctrl/Meta/Alt 组合（如 Ctrl+←/→ 切换标签）不在此处理
   if (e.ctrlKey || e.metaKey || e.altKey) return
 
@@ -858,12 +922,30 @@ async function onKeydown(e: KeyboardEvent) {
       }
       break
     }
+    // 批量模式：空格切换当前选中卡片的勾选（普通模式无此语义，放行给页面滚动）
+    case ' ':
+      if (batchMode.value && gridNotes.value[selectedIndex.value]) {
+        toggleBatchSelect(gridNotes.value[selectedIndex.value]!.id, selectedIndex.value)
+      } else {
+        handled = false
+      }
+      break
     case 'Delete':
     case 'Backspace': {
+      // 批量模式且有勾选：批量删除（软删进回收站）；否则单删当前选中项
+      if (batchMode.value && batchSelectedIds.value.size > 0) {
+        void batchDelete()
+        break
+      }
       const note = gridNotes.value[selectedIndex.value]
       if (note) onRequestDelete(note)
       break
     }
+    case 'Escape':
+      // 批量模式：Esc 退出批量并清除勾选；非批量态无此语义（放行给全局处理）
+      if (batchMode.value) exitBatch()
+      else handled = false
+      break
     default:
       handled = false
   }
