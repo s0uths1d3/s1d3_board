@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSearchTokens, likePatternFromToken } from '../sql';
+import { parseSearchTokens, likePatternFromToken, buildLikeGroups, matchesSearch } from '../sql';
 
 /**
  * 搜索输入解析（引号 / 通配符 / OR 语法）纯函数测试：
@@ -82,5 +82,42 @@ describe('likePatternFromToken', () => {
         expect(likePatternFromToken('50%')).toBe('50\\%');
         expect(likePatternFromToken('a_b')).toBe('a\\_b');
         expect(likePatternFromToken('a\\b')).toBe('a\\\\b');
+    });
+});
+
+/** 大小写区分（GLOB 词法）与前端统一匹配 */
+describe('case-sensitive search', () => {
+    it('buildLikeGroups：caseSensitive 切 GLOB 算子（*x* 包裹，无 ESCAPE 子句）', () => {
+        const { sql, params } = buildLikeGroups('会议', 'title', true, true);
+        expect(sql).toBe('title GLOB $1');
+        expect(params).toEqual(['*会议*']);
+    });
+
+    it('buildLikeGroups：caseSensitive + advanced 词法——* ? 保留为 GLOB 通配符，[ 按字面转义', () => {
+        const { sql, params } = buildLikeGroups('"*曲 [a]"', 'title', true, true);
+        expect(sql).toBe('title GLOB $1');
+        // 前缀 * 与包裹 * 叠加为 **（同 LIKE 的 %%x% 形态，语义仍为前缀通配）
+        expect(params).toEqual(['**曲 [[]a]*']);
+    });
+
+    it('buildLikeGroups：caseSensitive + 关闭高级搜索——整串字面（* ? [ 均转义）', () => {
+        const { params } = buildLikeGroups('a*b', 'title', false, true);
+        expect(params).toEqual(['*a[*]b*']);
+    });
+
+    it('matchesSearch：与 SQL 词法同源（组内 OR、组间 AND、* ? 通配）', () => {
+        expect(matchesSearch('会议记录', '会议 记录')).toBe(true);
+        expect(matchesSearch('会议记录', '会议 纪要')).toBe(false);
+        expect(matchesSearch('小曲', '小曲 | 空城')).toBe(true);
+        expect(matchesSearch('空城计', '小曲 | 空城')).toBe(true);
+        expect(matchesSearch('第3章', '第?章')).toBe(true);
+        expect(matchesSearch('第33章', '第?章')).toBe(false);
+        expect(matchesSearch('空城计の小曲', '*小曲')).toBe(true);
+    });
+
+    it('matchesSearch：caseSensitive 按字面大小写，默认忽略', () => {
+        expect(matchesSearch('Hello World', 'hello')).toBe(true);
+        expect(matchesSearch('Hello World', 'hello', true, true)).toBe(false);
+        expect(matchesSearch('Hello World', 'Hello', true, true)).toBe(true);
     });
 });

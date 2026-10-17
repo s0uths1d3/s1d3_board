@@ -39,24 +39,99 @@ export function likePatternFromToken(token: string): string {
 }
 
 /**
- * 搜索输入 → SQL LIKE 条件与参数（待办/便签搜索共用，剪贴板为跨列 OR 自行拼接）：
- * 组内 OR、组间 AND（与 parseSearchTokens 分组语义对应）。advanced=false 时整串
- * 字面单词元（同剪贴板「关闭高级搜索」语义）。field 为 LIKE 左侧列名，
- * 占位符按拼接顺序从 $1 编号——调用方的其他条件须拼在其后（withPage 追加分页参数亦然）。
+ * GLOB 字面转义：GLOB 元字符 * ? [ 包成 [x] 字符类以按字面匹配（GLOB 无 ESCAPE 子句）。
+ * `]` 在类外是字面量，无需转义；`*`/`?`/`[` 三个元字符必须转义。
  */
-export function buildLikeGroups(input: string, field: string, advanced = true): { sql: string; params: string[] } {
+export function globLiteral(input: string): string {
+    return input.replace(/[[*?]/g, (ch) => `[${ch}]`);
+}
+
+/**
+ * 高级搜索词元 → GLOB 模式（大小写区分模式专用）：`*` `?` 保留为 GLOB 原生通配符
+ * （语义与 LIKE 的 % _ 一致：任意串 / 单字符），`[` 转义为字符类字面量，其余字符原样。
+ */
+export function globPatternFromToken(token: string): string {
+    return token.replace(/\[/g, '[[]');
+}
+
+/**
+ * 搜索词元 → 匹配模式（大小写语义的单一出口）：
+ * - 不区分（默认）：LIKE 词法（% _ 通配 + ESCAPE 转义）
+ * - 区分：GLOB 词法（* ? 通配 + [x] 字面转义，天然区分大小写）
+ * 剪贴板仓储的跨列自行拼接与 buildLikeGroups 共用，保证三模块词法逐字一致。
+ */
+export function searchPattern(token: string, advanced: boolean, caseSensitive: boolean): string {
+    if (!advanced) return caseSensitive ? globLiteral(token) : escapeLike(token);
+    return caseSensitive ? globPatternFromToken(token) : likePatternFromToken(token);
+}
+
+/** SQL 比较算子包（按大小写语义选择）：op + 后缀子句 + 包裹函数（%x% / *x*）由各仓储拼接复用 */
+export interface SearchMatcher {
+    op: 'LIKE' | 'GLOB';
+    /** LIKE 的 ESCAPE 子句（GLOB 无）；拼接形如 `${field} ${op} $${n}${suffix}` */
+    suffix: string;
+    /** 模式包裹：两侧通配（包含匹配） */
+    wrap: (pattern: string) => string;
+}
+
+export function createSearchMatcher(caseSensitive: boolean): SearchMatcher {
+    return caseSensitive
+        ? { op: 'GLOB', suffix: '', wrap: (pattern) => `*${pattern}*` }
+        : { op: 'LIKE', suffix: " ESCAPE '\\'", wrap: (pattern) => `%${pattern}%` };
+}
+
+/**
+ * 搜索输入 → SQL 匹配条件与参数（待办/便签搜索共用，剪贴板为跨列 OR 自行拼接）：
+ * 组内 OR、组间 AND（与 parseSearchTokens 分组语义对应）。advanced=false 时整串
+ * 字面单词元（同剪贴板「关闭高级搜索」语义）。field 为比较左侧列名，
+ * 占位符按拼接顺序从 $1 编号——调用方的其他条件须拼在其后（withPage 追加分页参数亦然）。
+ * caseSensitive=true 时切 GLOB 算子（天然区分大小写，* ? 通配语义不变）。
+ */
+export function buildLikeGroups(input: string, field: string, advanced = true, caseSensitive = false): { sql: string; params: string[] } {
+    const matcher = createSearchMatcher(caseSensitive);
     const groups = parseSearchTokens(input, advanced).map((group) =>
-        group.map((kw) => (advanced ? likePatternFromToken(kw) : escapeLike(kw))),
+        group.map((kw) => searchPattern(kw, advanced, caseSensitive)),
     );
     const params: string[] = [];
     const conds = groups.map((group) => {
         const parts = group.map((pattern) => {
-            params.push(`%${pattern}%`);
-            return `${field} LIKE $${params.length} ESCAPE '\\'`;
+            params.push(matcher.wrap(pattern));
+            return `${field} ${matcher.op} $${params.length}${matcher.suffix}`;
         });
         return parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`;
     });
     return { sql: conds.join(' AND '), params };
+}
+
+// ===== 前端统一匹配（与 SQL 词法同源） =====
+
+/** 正则元字符转义（前端匹配用） */
+function escapeRegExp(input: string): string {
+    return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 搜索词元 → 正则源（advanced 时 * → .*、? → .，其余转义；\0/\1 占位防被误转义） */
+function tokenToRegExpSource(token: string, advanced: boolean): string {
+    if (!advanced) return escapeRegExp(token);
+    const STAR = '\u0000';
+    const QMARK = '\u0001';
+    return escapeRegExp(token.split('*').join(STAR).split('?').join(QMARK))
+        .split(STAR).join('.*')
+        .split(QMARK).join('.');
+}
+
+/**
+ * 前端文本匹配（便签「当前范围」过滤等纯前端搜索复用）：与 parseSearchTokens/buildLikeGroups
+ * 同一套解析与通配语义，保证"搜什么就匹配什么"（组内 OR、组间 AND、* ? 通配、引号整句）。
+ * caseSensitive=true 时按字面大小写匹配（与 SQL GLOB 行为一致）。
+ */
+export function matchesSearch(text: string, input: string, advanced = true, caseSensitive = false): boolean {
+    const groups = parseSearchTokens(input, advanced);
+    if (groups.length === 0) return true;
+    const flags = caseSensitive ? '' : 'i';
+    return groups.every((group) =>
+        group.some((token) => new RegExp(tokenToRegExpSource(token, advanced), flags).test(text ?? '')),
+    );
 }
 
 /**

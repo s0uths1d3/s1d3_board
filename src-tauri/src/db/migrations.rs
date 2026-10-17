@@ -485,6 +485,15 @@ CREATE INDEX IF NOT EXISTS idx_note_deleted ON note (deleted_at);
 -- 存量便签统一 0，首次进入手动排序时按当前可视顺序整列回填。
 ALTER TABLE note ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
                             "#
+                        },
+                        Migration {
+                            version: 22,
+                            description: "Add calendar tab stat column to daily_stat",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 新导航 Tab「日历」的访问统计列（与 v15 的 tab_app_usage 同模式）
+ALTER TABLE daily_stat ADD COLUMN tab_calendar INTEGER NOT NULL DEFAULT 0;
+                            "#
                         }
     ]
 }
