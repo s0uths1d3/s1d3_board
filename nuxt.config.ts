@@ -10,8 +10,10 @@ export default defineNuxtConfig({
   telemetry: false,
   // 开发端口 12321 由 dev script 显式指定（nuxt dev --port 12321，见 package.json），
   // Nuxt 4 新 CLI 的端口由命令行层管理；此处与 tauri.conf.json 的 devUrl 必须一致。
-  // Tailwind v4：CSS-first 配置（@theme 见 app/assets/css/main.css），经 Vite 插件接入
-  css: ['~/assets/css/main.css'],
+  // Tailwind v4：CSS-first 配置（@theme 见 app/assets/css/main.css），经 Vite 插件接入。
+  // festival-eggs 样式（节日皮肤变量组/岛装饰/点缀）独立目录全局注入，须排在 main.css
+  // 之后保持级联顺序（.s1d3-tip[data-festival] 覆盖基础气泡样式的先后关系）
+  css: ['~/assets/css/main.css', '~/festival-eggs/styles/festival.css'],
   vite: {
     plugins: [tailwindcss()],
     // Better support for Tauri CLI output
