@@ -9,7 +9,7 @@ import { useI18n } from "~/composables/useI18n";
 import { notifyIsland, toggleIslandHistoryWindow } from "~/composables/useCopyIsland";
 import { clipToNote, clipToTodos, CLIP_SOURCE_LINK_TITLE } from "~/src/commands/local/dispatchClip";
 
-/** 标题栏导航项：仅渲染当前可见的 tab（统计 Tab 受解锁门槛控制，§7.9，解锁后动态出现） */
+/** 标题栏导航项：仅渲染当前可见的 tab（显隐由设置页「导航栏设置」控制） */
 const visibleTabs = computed(() => getVisibleTabItems());
 import { useAlwaysOnTop } from "~/composables/useAlwaysOnTop";
 

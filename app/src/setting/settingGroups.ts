@@ -126,6 +126,7 @@ export const settings: SettingGroup[] = [
           { label: 'setting.general.color_scheme', value: '', type: 'select' },
           { label: 'setting.general.locale', value: '', type: 'select' },
           { label: 'setting.general.mask_blur', value: '', type: 'input' },
+          { label: 'setting.general.festival_egg', value: '', type: 'checkbox' },
         ],
       },
       {

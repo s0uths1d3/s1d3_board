@@ -4,9 +4,9 @@ import { activeTab, setActiveTab, getVisibleTabItems } from '~/composables/useTa
 /**
  * Ctrl+← / Ctrl+→ 切换顶层 Tab 命令（循环）
  *
- * 基于 getVisibleTabItems()（统计 Tab 未解锁时自动跳过，§7.9），
- * 例：clip → todo → note → pinned → setting → clip（未解锁）
- *     … → setting → statistics → clip（已解锁）
+ * 基于 getVisibleTabItems()（设置页「导航栏设置」中隐藏的 tab 自动跳过），
+ * 例：clip → todo → calendar → note → pinned → setting（默认导航）
+ *     … → statistics → app_usage → clip（用户在设置页开启后加入循环）
  */
 export class SwitchTabCommand implements Command {
     constructor(private direction: 1 | -1) {}

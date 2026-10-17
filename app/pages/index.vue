@@ -9,7 +9,7 @@ import {
 import {
   data, filter, dataLength, hasMore, loadingMore,
   fetchData, getSelectedItem, moveSelection, loadMoreClips, resetClips,
-  restoreAdvancedSearch, setAdvancedSearch,
+  restoreAdvancedSearch, setAdvancedSearch, restoreCaseSensitive, setCaseSensitive,
   batchSelectedIds, toggleBatchSelect, selectBatchRange, clearBatchSelection,
   sequenceActive, sequenceQueueIds, setSequenceQueue, exitSequence,
 } from '~/src/commands/local/clipboardStore';
@@ -40,9 +40,12 @@ import { isTooltipWrapEnabled } from "~/composables/useTooltipWrap";
 import { useI18n } from "~/composables/useI18n";
 import { notifyIsland, type IslandKind } from "~/composables/useCopyIsland";
 import { clipFilesPreview } from "~/composables/useCopyIsland";
+import { useFestivalEggClass } from "~/festival-eggs";
 // 统计页懒加载（§14.5）：统计 Tab 非首屏，异步加载降低主窗口初始包体与内存
 import { defineAsyncComponent } from "vue";
 const StatsPage = defineAsyncComponent(() => import("~/components/statistics/StatsPage.vue"));
+// 日历页懒加载：独立顶级 Tab，与统计页同款异步加载策略
+const TodoCalendarPage = defineAsyncComponent(() => import("~/components/todo/TodoCalendarPage.vue"));
 import AppUsagePage from "~/components/appusage/AppUsagePage.vue";
 
 const listElement = ref<HTMLElement | null>(null);
@@ -73,6 +76,8 @@ watch(data, (items) => {
 });
 const { t } = useI18n();
 const formatDateLocalized = useFormatDate();
+/** 收藏徽标节日点缀（festival-eggs 注入模块）：点缀位声明为 fav-badge，哪个节日挂什么类在模块注册表内 */
+const favBadgeClass = useFestivalEggClass('fav-badge');
 const searchInput = ref<InstanceType<typeof SearchInputBar> | null>(null);
 
 /** 剪贴板写库事件的去抖合并计时器（连续复制时避免频繁查库） */
@@ -106,7 +111,7 @@ watch(() => filter.value.searchContent, () => {
   if (searchResetTimer) clearTimeout(searchResetTimer);
   searchResetTimer = setTimeout(() => void resetClips(), 300);
 });
-watch(() => [filter.value.favorite, filter.value.types, filter.value.advanced, filter.value.sourceApp], () => {
+watch(() => [filter.value.favorite, filter.value.types, filter.value.advanced, filter.value.caseSensitive, filter.value.sourceApp], () => {
   void resetClips();
 });
 
@@ -520,6 +525,11 @@ function setAllTypes() {
 function handleAdvancedSearch() {
   void setAdvancedSearch(!filter.value.advanced);
 }
+
+/** 切换大小写区分（关键词按字面大小写匹配 ⇄ 忽略大小写），开关状态持久化到 settings */
+function handleCaseSensitive() {
+  void setCaseSensitive(!filter.value.caseSensitive);
+}
 // 高级搜索语法说明（? 按钮 + 面板）抽为共享组件 SearchHelpPanel，全局搜索面板同款复用
 
 /** 应用筛选下拉：每次打开都重新拉取来源应用清单（数据始终新鲜），
@@ -568,7 +578,7 @@ const activeFilterLabels = computed(() => {
 });
 
 /** 鼠标侧键导航：后退键(XButton1, button=3)=上一个标签，前进键(XButton2, button=4)=下一个标签。
- *  复用 SwitchTabCommand 的循环切换（与 Ctrl+←/→ 一致，统计页未解锁自动跳过）。
+ *  复用 SwitchTabCommand 的循环切换（与 Ctrl+←/→ 一致，设置页隐藏的 tab 自动跳过）。
  *  mousedown 阶段即响应（跟手）并 preventDefault，阻止 WebView2 把侧键当浏览器历史导航；
  *  仅主窗口挂载（气泡/历史窗口无标签页概念） */
 function onMouseSideButton(e: MouseEvent) {
@@ -589,6 +599,7 @@ onMounted(async () => {
   bus.on('clipboard:changed', onClipboardChanged);
   // 恢复高级搜索开关（上次使用状态；DB 未就绪等失败保持默认开启）
   void restoreAdvancedSearch();
+  void restoreCaseSensitive();
   if (searchInput.value) {
     searchInput.value.focus();
   }
@@ -855,6 +866,10 @@ const batchDeleteConfirmVisible = ref(false);
 async function confirmBatchDelete() {
   const ids = [...batchSelectedIds.value];
   batchDeleteConfirmVisible.value = false;
+  // 滚动锚点先改到被删区起点：删除后该索引处恰好是删除区后第一个未删条目（"当前删除处"）。
+  // 不调整的话 refocusList 会滚到旧选中索引——往往是被删区末尾的旧序列位置，视口跳到无关区域
+  const delMinIdx = data.value.findIndex((it) => ids.includes(it.id));
+  if (delMinIdx >= 0) selectedRowIndex.value = delMinIdx;
   clearBatchSelection();
   try {
     for (const id of ids) await clipboardService.deleteClipboardData(id);
@@ -1266,14 +1281,16 @@ async function openImageViewer(item: ClipboardData) {
 </script>
 
 <template>
-  <div class="min-h-full flex flex-col">
+  <!-- 日历 Tab 需要整页装进主窗口（不出现页面级滚动）：仅在该 Tab 下把根链高度收紧为 h-full，
+       让卡片内部弹性分配；其余 Tab 保持 min-h-full 自然撑开 + 页面滚动的既有形态 -->
+  <div class="min-h-full flex flex-col" :class="activeTab === 'calendar' ? 'h-full' : ''">
     <!-- page-pad：左右内边距与滚动条槽位联动，见 main.css -->
-    <main class="flex-1 page-pad pb-12 pt-4">
-      <div class="mx-auto max-w-6xl">
+    <main class="flex-1 page-pad pt-4" :class="activeTab === 'calendar' ? 'pb-4' : 'pb-12'">
+      <div class="mx-auto max-w-6xl" :class="activeTab === 'calendar' ? 'flex h-full min-h-0 flex-col' : ''">
         <Transition name="page-curtain" mode="out-in">
           <!-- data-tab-key：供 ScrollIndicator 判断当前挂载的是哪个 Tab 的内容
                （切换过渡的退场阶段 DOM 里还是旧 Tab，其高度不代表新 Tab 是否需要滚动条） -->
-          <div :key="activeTab" :data-tab-key="activeTab">
+          <div :key="activeTab" :data-tab-key="activeTab" :class="activeTab === 'calendar' ? 'flex min-h-0 flex-1 flex-col' : ''">
             <!-- 剪贴板 -->
             <div v-if="activeTab === 'clip'" class="space-y-4">
               <!-- 常驻搜索框：始终悬浮在列表最上方（通用 SearchInputBar，列表专属开关经 slot 注入） -->
@@ -1283,33 +1300,35 @@ async function openImageViewer(item: ClipboardData) {
                     v-model="highlightContent"
                     :placeholder="t('clip.search_placeholder')"
                     :advanced="filter.advanced"
+                    :case-sensitive="filter.caseSensitive"
                     :tip-clear="t('clip.clear_search')"
                     class="glass-card rounded-2xl px-3 py-2 text-ink"
                     @update:advanced="handleAdvancedSearch"
+                    @update:case-sensitive="handleCaseSensitive"
                     @clear="highlightContent = ''"
                 >
                   <template #prepend>
                     <button
                         type="button"
-                        class="btn-soft btn-circle p-0 ml-1"
-                        :class="filter.favorite === 1 ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+                        class="icon-ghost"
+                        :class="filter.favorite === 1 ? 'text-gold hover:bg-gold/10' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
                         v-tip="t(filter.favorite === 1 ? 'clip.favorite_off' : 'clip.favorite_on')"
                         @click="handleFilter"
                     >
-                      <svg class="h-4 w-4" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
                         <path d="M253.488042 1024c-16.9 0-33.2875-5.1125-47.6125-15.3625-26.625-18.425-39.425-49.6625-34.3125-81.925l40.9625-251.9c1.5375-10.2375-1.5375-20.475-8.7-27.65L28.213042 466.4375c-22.0125-22.525-29.1875-55.3-19.45-84.9875 9.725-29.7 35.325-51.2 66.05-55.8125l237.575-36.35c10.75-1.5375 19.4625-8.1875 24.0625-17.925L441.388042 48.125c13.825-29.7 42.5-48.125 75.2625-48.125s61.4375 18.4375 75.2625 48.125l104.45 223.2375c4.6125 9.725 13.825 16.375 24.0625 17.925L958.000542 325.625a82.355 82.355 0 0 1 66.05 55.8125c10.2375 29.7 2.5625 62.4625-19.45 84.9875l-175.625 180.7375c-7.1625 7.175-10.2375 17.925-8.7 27.65l40.9625 251.9c5.125 31.75-8.1875 63.4875-34.3 81.925-26.1125 18.4375-59.9 20.4875-88.0625 4.6125l-206.85-114.6875c-9.725-5.1125-20.9875-5.1125-30.7125 0l-207.3625 115.2c-12.8125 6.65-26.6375 10.2375-40.4625 10.2375zM516.650542 51.2c-12.8 0-23.55 7.1625-29.1875 18.4375L383.525542 292.875c-11.775 25.0875-35.325 43.0125-62.975 47.1l-237.575 36.35c-12.2875 2.05-21.5 9.7375-25.6 21.5-4.1 11.775-1.025 24.0625 7.665 32.775L240.688042 611.325c18.4375 18.95 26.625 45.5625 22.525 71.675L222.250542 934.9125c-2.05 12.8 3.075 24.575 13.3125 31.7775 10.2375 7.175 23.0375 7.6875 33.7875 1.5375l207.3625-115.2c25.0875-13.825 55.3-13.825 80.3875 0l207.3625 115.2c10.75 6.1375 23.55 5.625 33.8-1.5375 10.2375-7.1625 15.3625-18.95 13.3125-31.7375L770.625542 683.0125c-4.1-26.1125 4.1-52.7375 22.525-71.675l175.625-180.7375c8.7-8.7 11.2625-20.9875 7.675-32.775-4.0875-11.775-13.3125-19.9625-25.6-21.5l-237.5625-36.35c-27.65-4.0875-51.2-22.0125-62.975-47.1L545.838042 69.6375c-5.625-11.2625-16.375-18.4375-29.1875-18.4375z m0 0" fill="currentColor"></path>
                       </svg>
                     </button>
                     <button
                         type="button"
                         ref="typeFilterBtnRef"
-                        class="btn-soft btn-circle p-0 ml-1"
-                        :class="filter.types.length > 0 ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+                        class="icon-ghost"
+                        :class="filter.types.length > 0 ? 'text-gold hover:bg-gold/10' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
                         v-tip="t('clip.filter_type')"
                         @click="showTypeFilter = !showTypeFilter"
                     >
                       <!-- 类型筛选（分层图标）：全部/文本/图片/文件，取代原"仅图片"单按钮 -->
-                      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <polygon points="12 2 2 7 12 12 22 7 12 2" />
                         <polyline points="2 12 12 17 22 12" />
                         <polyline points="2 17 12 22 22 17" />
@@ -1320,12 +1339,12 @@ async function openImageViewer(item: ClipboardData) {
                   <button
                       type="button"
                       ref="appFilterBtnRef"
-                      class="btn-soft btn-circle p-0 ml-1"
-                      :class="filter.sourceApp ? 'text-gold bg-gold/15 border-gold/60' : 'text-ink-faint'"
+                      class="icon-ghost"
+                      :class="filter.sourceApp ? 'text-gold hover:bg-gold/10' : 'text-ink-soft hover:bg-secondary hover:text-ink'"
                       v-tip="t('clip.filter_app')"
                       @click="toggleAppFilter"
                   >
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                       <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
                     </svg>
                   </button>
@@ -1501,7 +1520,8 @@ async function openImageViewer(item: ClipboardData) {
                   <!-- 收藏标识：卡片左缘金色竖条，与未收藏项一眼区分（选中样式优先级更高） -->
                   <div
                     v-if="item.is_favorite === 1"
-                    class="absolute left-1 top-3 bottom-3 w-1 rounded-full bg-gold"
+                    class="fav-badge absolute left-1 top-3 bottom-3 w-1 rounded-full bg-gold"
+                    :class="favBadgeClass"
                     aria-hidden="true"
                   ></div>
                   <div class="text-4xl font-thin tabular-nums" :class="item.is_favorite === 1 ? 'text-gold/70' : 'opacity-30'">{{ index + 1 }}</div>
@@ -1572,7 +1592,8 @@ async function openImageViewer(item: ClipboardData) {
                       </span>
                       <span
                         v-if="item.is_favorite === 1"
-                        class="inline-flex items-center gap-1 rounded-full bg-gold/15 px-1.5 py-px text-gold"
+                        class="fav-badge inline-flex items-center gap-1 rounded-full bg-gold/15 px-1.5 py-px text-gold"
+                        :class="favBadgeClass"
                       >
                         <svg class="h-3 w-3" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                           <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" fill="currentColor"></path>
@@ -1596,7 +1617,7 @@ async function openImageViewer(item: ClipboardData) {
                       <span class="opacity-60">{{ t('clip.last_used_at') }}{{ formatDateLocalized(parseInt(item.updated_at)) }}</span>
                     </div>
                   </div>
-                  <button class="btn-soft btn-circle p-2" :class="item.is_favorite === 1 ? 'bg-gold/25 text-gold' : 'hover:text-gold'" @click="favorite(item.id,item.is_favorite)">
+                  <button class="btn-soft btn-circle p-1" :class="item.is_favorite === 1 ? 'bg-gold/25 text-gold' : 'hover:text-gold'" @click="favorite(item.id,item.is_favorite)">
                     <svg v-if="item.is_favorite===0" class="size-[1.2em]" viewBox="0 0 1059 1024" xmlns="http://www.w3.org/2000/svg">
                       <path d="M253.488042 1024c-16.9 0-33.2875-5.1125-47.6125-15.3625-26.625-18.425-39.425-49.6625-34.3125-81.925l40.9625-251.9c1.5375-10.2375-1.5375-20.475-8.7-27.65L28.213042 466.4375c-22.0125-22.525-29.1875-55.3-19.45-84.9875 9.725-29.7 35.325-51.2 66.05-55.8125l237.575-36.35c10.75-1.5375 19.4625-8.1875 24.0625-17.925L441.388042 48.125c13.825-29.7 42.5-48.125 75.2625-48.125s61.4375 18.4375 75.2625 48.125l104.45 223.2375c4.6125 9.725 13.825 16.375 24.0625 17.925L958.000542 325.625a82.355 82.355 0 0 1 66.05 55.8125c10.2375 29.7 2.5625 62.4625-19.45 84.9875l-175.625 180.7375c-7.1625 7.175-10.2375 17.925-8.7 27.65l40.9625 251.9c5.125 31.75-8.1875 63.4875-34.3 81.925-26.1125 18.4375-59.9 20.4875-88.0625 4.6125l-206.85-114.6875c-9.725-5.1125-20.9875-5.1125-30.7125 0l-207.3625 115.2c-12.8125 6.65-26.6375 10.2375-40.4625 10.2375zM516.650542 51.2c-12.8 0-23.55 7.1625-29.1875 18.4375L383.525542 292.875c-11.775 25.0875-35.325 43.0125-62.975 47.1l-237.575 36.35c-12.2875 2.05-21.5 9.7375-25.6 21.5-4.1 11.775-1.025 24.0625 7.665 32.775L240.688042 611.325c18.4375 18.95 26.625 45.5625 22.525 71.675L222.250542 934.9125c-2.05 12.8 3.075 24.575 13.3125 31.7775 10.2375 7.175 23.0375 7.6875 33.7875 1.5375l207.3625-115.2c25.0875-13.825 55.3-13.825 80.3875 0l207.3625 115.2c10.75 6.1375 23.55 5.625 33.8-1.5375 10.2375-7.1625 15.3625-18.95 13.3125-31.7375L770.625542 683.0125c-4.1-26.1125 4.1-52.7375 22.525-71.675l175.625-180.7375c8.7-8.7 11.2625-20.9875 7.675-32.775-4.0875-11.775-13.3125-19.9625-25.6-21.5l-237.5625-36.35c-27.65-4.0875-51.2-22.0125-62.975-47.1L545.838042 69.6375c-5.625-11.2625-16.375-18.4375-29.1875-18.4375z m0 0" fill="currentColor"></path>
                     </svg>
@@ -1604,7 +1625,7 @@ async function openImageViewer(item: ClipboardData) {
                       <path d="M985.6 1022.976c-14.848 0-31.744-4.096-47.104-12.288L716.288 899.584l-223.744 111.104c-14.336 7.68-30.208 11.776-47.104 11.776-21.504 0-42.496-6.656-59.392-19.456-31.232-23.552-47.104-64-39.936-101.376l45.568-237.056-175.616-163.328c-27.136-27.648-37.376-67.072-27.136-104.448l0.512-1.024c12.8-38.4 44.544-65.024 82.944-70.144l243.712-44.544L625.152 58.88C642.56 23.552 678.4 1.024 716.288 1.024c39.424 0 76.288 23.552 91.648 58.368l109.056 221.696 243.712 42.496c38.4 5.632 70.656 33.28 81.408 71.168 12.288 36.864 2.048 77.312-25.6 104.96l-0.512 0.512-174.592 164.864 44.032 237.568c7.168 37.888-8.192 76.288-39.424 100.352-17.92 12.8-38.912 19.968-60.416 19.968z" fill="currentColor"></path>
                     </svg>
                   </button>
-                  <button class="btn-soft btn-circle p-2 text-danger" @click="handleDelete(item)">
+                  <button class="btn-soft btn-circle p-1 text-danger" @click="handleDelete(item)">
                     <svg class="size-[1.2em]" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" p-id="4580">
                       <path d="M254.398526 804.702412l-0.030699-4.787026C254.367827 801.546535 254.380106 803.13573 254.398526 804.702412zM614.190939 259.036661c-22.116717 0-40.047088 17.910928-40.047088 40.047088l0.37146 502.160911c0 22.097274 17.930371 40.048111 40.047088 40.048111s40.048111-17.950837 40.048111-40.048111l-0.350994-502.160911C654.259516 276.948613 636.328122 259.036661 614.190939 259.036661zM893.234259 140.105968l-318.891887 0.148379-0.178055-41.407062c0-22.13616-17.933441-40.048111-40.067554-40.048111-7.294127 0-14.126742 1.958608-20.017916 5.364171-5.894244-3.405563-12.729929-5.364171-20.031219-5.364171-22.115694 0-40.047088 17.911952-40.047088 40.048111l0.188288 41.463344-230.115981 0.106424c-3.228531-0.839111-6.613628-1.287319-10.104125-1.287319-3.502777 0-6.89913 0.452301-10.136871 1.296529l-73.067132 0.033769c-22.115694 0-40.048111 17.950837-40.048111 40.047088 0 22.13616 17.931395 40.048111 40.048111 40.048111l43.176358-0.020466 0.292666 617.902982 0.059352 0 0 42.551118c0 44.233434 35.862789 80.095199 80.095199 80.095199l40.048111 0 0 0.302899 440.523085-0.25685 0-0.046049 40.048111 0c43.663452 0 79.146595-34.95 80.054267-78.395488l-0.329505-583.369468c0-22.135136-17.930371-40.047088-40.048111-40.047088-22.115694 0-40.047088 17.911952-40.047088 40.047088l0.287549 509.324054c-1.407046 60.314691-18.594497 71.367421-79.993892 71.367421l41.575908 1.022283-454.442096 0.26606 52.398394-1.288343c-62.715367 0-79.305207-11.522428-80.0645-75.308173l0.493234 76.611865-0.543376 0-0.313132-660.818397 236.82273-0.109494c1.173732 0.103354 2.360767 0.166799 3.561106 0.166799 1.215688 0 2.416026-0.063445 3.604084-0.169869l32.639375-0.01535c1.25355 0.118704 2.521426 0.185218 3.805676 0.185218 1.299599 0 2.582825-0.067538 3.851725-0.188288l354.913289-0.163729c22.115694 0 40.050158-17.911952 40.050158-40.047088C933.283394 158.01792 915.349953 140.105968 893.234259 140.105968zM774.928806 815.294654l0.036839 65.715701-0.459464 0L774.928806 815.294654zM413.953452 259.036661c-22.116717 0-40.048111 17.910928-40.048111 40.047088l0.37146 502.160911c0 22.097274 17.931395 40.048111 40.049135 40.048111 22.115694 0 40.047088-17.950837 40.047088-40.048111l-0.37146-502.160911C454.00054 276.948613 436.069145 259.036661 413.953452 259.036661z" fill="currentColor" p-id="4581"></path>
                     </svg>
@@ -1646,6 +1667,9 @@ async function openImageViewer(item: ClipboardData) {
 
             <!-- 待办 -->
             <TodoList v-else-if="activeTab === 'todo'" />
+
+            <!-- 日历（独立顶级 Tab，懒加载） -->
+            <TodoCalendarPage v-else-if="activeTab === 'calendar'" />
 
             <!-- 便签 -->
             <StickyNote v-else-if="activeTab === 'note'" />
