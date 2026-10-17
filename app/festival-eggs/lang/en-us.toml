@@ -1,0 +1,27 @@
+# Festival egg copy (top-level [festival] table, merged into the message tree by
+# i18n/messages.ts at startup; add keys here for new festivals — business language
+# packs contain no festival knowledge)
+
+[festival]
+# Island badge v-tip
+tip_newyear = "New Year's Day · Limited Theme"
+tip_fools = "April Fools' Day · Limited Theme"
+tip_programmer = "Programmers' Day · Limited Theme"
+tip_halloween = "Halloween · Limited Theme"
+tip_christmas = "Christmas · Limited Theme"
+tip_qixi = "Qixi Festival · Limited Theme"
+tip_midautumn = "Mid-Autumn Festival · Limited Theme"
+tip_chuxi = "New Year's Eve · Limited Theme"
+tip_chunjie = "Chinese New Year · Limited Theme"
+tip_yuanxiao = "Lantern Festival · Limited Theme"
+tip_duanwu = "Dragon Boat Festival · Limited Theme"
+# Island-show taglines (referenced by ISLAND_QUIRKS)
+midautumn_quote = "May we all be blessed with longevity"
+chunjie_greeting = "Happy New Year, may all go well with you"
+chuxi_greeting = "Peace and joy, year after year"
+# Stats page quote (referenced by QUOTE_BANNERS)
+qixi_quote = "When golden wind meets jade dew, lovers reunite"
+chunjie_quote = "Amid the burst of firecrackers a year has passed"
+chuxi_quote = "Thinking of home tonight, a thousand miles away"
+yuanxiao_quote = "Moon above the willow tips, lovers meet at dusk"
+duanwu_quote = "The road ahead is long, I shall search high and low"

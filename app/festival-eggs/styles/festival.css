@@ -1,0 +1,583 @@
+/* =====================================================================
+   节日彩蛋样式（app/festival-eggs 自有，经 nuxt.config css 数组全局注入，
+   排在 main.css 之后保持级联顺序）。本文件与业务样式解耦：
+   新增节日 = 追加一组 [data-festival='<id>'] 变量组 + 需要的装饰规则。
+   结构总览：
+     §1 v-tip 气泡换装钩子
+     §2 皮肤变量组（12 token × 10 节日）
+     §3 主窗口点缀（收藏徽标等）
+     §4 岛专属：胶囊光晕 / 辉光呼吸 / 骑缘徽章 / 边框动效 / 面板装饰
+   ===================================================================== */
+
+/* ===== §1 节日限时皮肤变量组（全局，festival-eggs/core.ts 判定 → data-festival）=====
+   供两处消费者共用一份定义：灵动岛 .island-wrap[data-festival]（整岛换装，见 §4）
+   与 v-tip 气泡 .s1d3-tip[data-festival]（气泡挂窗口 body 下不经过 island-wrap，无法靠 DOM
+   继承，由 vTip 指令把触发元素就近的 data-festival 复制到气泡上触发换装）。
+   每套皮肤自成完整体系（底色/描边/强调/文字层次全套覆盖），与 data-scheme 解耦 ===== */
+.s1d3-tip[data-festival] {
+  /* 气泡换装：底色/文字改走节日皮肤 token（覆盖默认 --tip-bg/--tip-text），边框金线随 --c-gold 变色 */
+  background: rgb(var(--c-surface));
+  color: rgb(var(--c-ink));
+}
+
+/* ===== §2 皮肤变量组（12 token × 10 节日；新节日按同公式追加一组） ===== */
+[data-festival='fools'] {
+  /* 愚人节：明快绿岛（green-400 强调 + 深绿底，白绿字保证对比） */
+  --c-primary: 16 47 30;
+  --c-secondary: 24 62 40;
+  --c-accent: 32 78 50;
+  --c-surface: 16 47 30;
+  --c-surface-field: 22 58 37;
+  --c-line: 45 118 74;
+  --c-gold: 74 222 128;
+  --c-gold-soft: 134 239 172;
+  --c-on-gold: 6 34 19;
+  --c-ink: 236 253 245;
+  --c-ink-soft: 163 210 185;
+  --c-ink-faint: 108 158 134;
+  --c-shadow: 0 0 0;
+}
+[data-festival='halloween'] {
+  /* 万圣节：南瓜夜（夜紫黑底 + 南瓜橙强调，暗橙描边收边） */
+  --c-primary: 33 23 30;
+  --c-secondary: 45 32 41;
+  --c-accent: 58 42 52;
+  --c-surface: 33 23 30;
+  --c-surface-field: 40 29 36;
+  --c-line: 148 74 28;
+  --c-gold: 251 146 60;
+  --c-gold-soft: 253 186 116;
+  --c-on-gold: 46 20 4;
+  --c-ink: 255 241 229;
+  --c-ink-soft: 216 178 152;
+  --c-ink-faint: 158 122 100;
+  --c-shadow: 0 0 0;
+}
+[data-festival='programmer'] {
+  /* 程序员节（10.24 = 2^10）：终端黑绿（比愚人节更暗更"屏显"，emerald-400 强调） */
+  --c-primary: 10 24 18;
+  --c-secondary: 17 36 27;
+  --c-accent: 23 48 36;
+  --c-surface: 10 24 18;
+  --c-surface-field: 14 30 22;
+  --c-line: 26 96 62;
+  --c-gold: 52 211 153;
+  --c-gold-soft: 110 231 183;
+  --c-on-gold: 4 32 21;
+  --c-ink: 209 250 229;
+  --c-ink-soft: 148 200 174;
+  --c-ink-faint: 96 140 118;
+  --c-shadow: 0 0 0;
+}
+[data-festival='christmas'] {
+  /* 圣诞（平安夜+圣诞）：酒红夜（深酒红底 + 圣诞红强调） */
+  --c-primary: 47 17 20;
+  --c-secondary: 62 24 28;
+  --c-accent: 80 32 36;
+  --c-surface: 47 17 20;
+  --c-surface-field: 56 21 24;
+  --c-line: 130 42 46;
+  --c-gold: 248 113 113;
+  --c-gold-soft: 252 165 165;
+  --c-on-gold: 52 10 10;
+  --c-ink: 254 236 236;
+  --c-ink-soft: 214 170 172;
+  --c-ink-faint: 158 116 118;
+  --c-shadow: 0 0 0;
+}
+[data-festival='newyear'] {
+  /* 元旦：除夕夜空（深夜蓝底 + 香槟金强调） */
+  --c-primary: 20 32 58;
+  --c-secondary: 30 46 80;
+  --c-accent: 38 56 96;
+  --c-surface: 20 32 58;
+  --c-surface-field: 27 41 70;
+  --c-line: 112 118 68;
+  --c-gold: 250 204 21;
+  --c-gold-soft: 253 224 71;
+  --c-on-gold: 50 40 4;
+  --c-ink: 254 249 231;
+  --c-ink-soft: 214 202 160;
+  --c-ink-faint: 158 148 116;
+  --c-shadow: 0 0 0;
+}
+[data-festival='qixi'] {
+  /* 七夕（农历七月初七）：银河夜（深夜蓝紫底 + 喜鹊蓝强调，银白字） */
+  --c-primary: 26 26 46;
+  --c-secondary: 36 37 62;
+  --c-accent: 46 48 78;
+  --c-surface: 26 26 46;
+  --c-surface-field: 32 33 55;
+  --c-line: 63 82 125;
+  --c-gold: 56 189 248;
+  --c-gold-soft: 125 211 252;
+  --c-on-gold: 8 32 48;
+  --c-ink: 237 242 255;
+  --c-ink-soft: 172 187 216;
+  --c-ink-faint: 122 136 168;
+  --c-shadow: 0 0 0;
+}
+[data-festival='midautumn'] {
+  /* 中秋（农历八月十五）：月夜（墨蓝夜空底 + 月光金强调，月白字） */
+  --c-primary: 22 30 50;
+  --c-secondary: 32 42 66;
+  --c-accent: 42 54 82;
+  --c-surface: 22 30 50;
+  --c-surface-field: 28 37 59;
+  --c-line: 122 108 74;
+  --c-gold: 253 230 138;
+  --c-gold-soft: 254 240 190;
+  --c-on-gold: 56 42 8;
+  --c-ink: 245 243 230;
+  --c-ink-soft: 205 202 180;
+  --c-ink-faint: 150 146 124;
+  --c-shadow: 0 0 0;
+}
+[data-festival='chuxi'] {
+  /* 除夕（岁末最后一夜）：守岁炭夜（炭黑暖底 + 炉火橙强调，烛光守岁） */
+  --c-primary: 30 22 20;
+  --c-secondary: 44 32 28;
+  --c-accent: 58 42 36;
+  --c-surface: 30 22 20;
+  --c-surface-field: 38 28 25;
+  --c-line: 122 70 38;
+  --c-gold: 244 138 56;
+  --c-gold-soft: 252 186 118;
+  --c-on-gold: 48 20 4;
+  --c-ink: 255 238 226;
+  --c-ink-soft: 214 178 158;
+  --c-ink-faint: 158 124 104;
+  --c-shadow: 0 0 0;
+}
+[data-festival='chunjie'] {
+  /* 春节（农历正月初一）：绛红鎏金夜（深绛红底 + 鎏金强调，暖白字） */
+  --c-primary: 59 16 20;
+  --c-secondary: 78 22 26;
+  --c-accent: 96 30 34;
+  --c-surface: 59 16 20;
+  --c-surface-field: 70 20 24;
+  --c-line: 148 52 44;
+  --c-gold: 251 191 36;
+  --c-gold-soft: 253 224 130;
+  --c-on-gold: 58 26 4;
+  --c-ink: 255 244 230;
+  --c-ink-soft: 219 185 160;
+  --c-ink-faint: 165 128 108;
+  --c-shadow: 0 0 0;
+}
+[data-festival='yuanxiao'] {
+  /* 元宵（农历正月十五）：花灯暖夜（暖褐夜底 + 灯笼橘强调） */
+  --c-primary: 43 28 20;
+  --c-secondary: 58 38 27;
+  --c-accent: 72 48 34;
+  --c-surface: 43 28 20;
+  --c-surface-field: 52 35 25;
+  --c-line: 146 88 44;
+  --c-gold: 249 168 68;
+  --c-gold-soft: 253 208 130;
+  --c-on-gold: 52 28 6;
+  --c-ink: 255 240 224;
+  --c-ink-soft: 216 184 156;
+  --c-ink-faint: 160 130 106;
+  --c-shadow: 0 0 0;
+}
+[data-festival='duanwu'] {
+  /* 端午（农历五月初五）：艾草青夜（深青绿底 + 艾草绿强调，粽叶清气） */
+  --c-primary: 12 40 36;
+  --c-secondary: 20 54 48;
+  --c-accent: 27 68 60;
+  --c-surface: 12 40 36;
+  --c-surface-field: 17 48 42;
+  --c-line: 52 118 96;
+  --c-gold: 163 216 108;
+  --c-gold-soft: 190 233 150;
+  --c-on-gold: 20 40 8;
+  --c-ink: 240 253 244;
+  --c-ink-soft: 178 214 190;
+  --c-ink-faint: 124 158 138;
+  --c-shadow: 0 0 0;
+}
+
+/* ===== §3 主窗口点缀（业务组件经 useFestivalEggClass(kind) 挂显式类，主窗口不整窗换装） ===== */
+/* 七夕限定：收藏徽标染喜鹊蓝（index.vue 收藏竖条/★ 徽标；两类连写特异性 (0,2,0) 压过 Tailwind
+   工具类，保证覆盖 bg-gold/text-gold；新点缀在 points.ts POINT_CLASSES 登记 + 此处加规则） */
+.fav-badge.fav-badge-qixi {
+  color: rgb(56 189 248);
+  background: rgb(56 189 248 / 0.14);
+}
+/* 春节限定：收藏徽标染鎏金（同 qixi 公式） */
+.fav-badge.fav-badge-chunjie {
+  color: rgb(251 191 36);
+  background: rgb(251 191 36 / 0.14);
+}
+
+/* ===== §4 岛专属视觉（挂载点 island/FestivalIslandDecor.vue + bubble.vue 的
+   .island-wrap[data-festival] 属性绑定；样式全局化使跨组件选择器
+   .island-pill.island-pill-new .fest-badge 等正常命中） ===== */
+/* 胶囊节日光晕：光晕提供"变身"的整体感知，脉冲环动画只依赖 --c-gold 伪元素，与光晕互不干扰。
+   光晕双层结构：近层小 blur 高 alpha + 远层大 blur 低 alpha，边缘梯度平滑无硬环
+   （单层 blur 26/-6 时光晕在胶囊缘外亮度突降，形成可见亮边） */
+.island-wrap[data-festival='fools'] .island-pill {
+  box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.4), 0 0 12px -2px rgb(74 222 128 / 0.22), 0 0 52px -8px rgb(74 222 128 / 0.1);
+}
+.island-wrap[data-festival='halloween'] .island-pill {
+  box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(251 146 60 / 0.24), 0 0 52px -8px rgb(251 146 60 / 0.11);
+}
+.island-wrap[data-festival='programmer'] .island-pill {
+  box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(52 211 153 / 0.22), 0 0 52px -8px rgb(52 211 153 / 0.1);
+}
+.island-wrap[data-festival='christmas'] .island-pill {
+  box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(248 113 113 / 0.24), 0 0 52px -8px rgb(248 113 113 / 0.11);
+}
+.island-wrap[data-festival='newyear'] .island-pill {
+  box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(250 204 21 / 0.24), 0 0 52px -8px rgb(250 204 21 / 0.11);
+}
+/* 辉光呼吸（halloween/newyear/midautumn）：box-shadow 两态动画叠加在节日静态光晕上，无 DOM；
+   新节日呼吸按同公式追加（双层：近层 12/-2、远层 52/-8，峰值 14/-2 / 56/-10） */
+.island-wrap[data-festival='halloween'] .island-pill {
+  animation: fest-glow-halloween 3.2s ease-in-out infinite;
+}
+@keyframes fest-glow-halloween {
+  0%, 100% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(251 146 60 / 0.14), 0 0 52px -8px rgb(251 146 60 / 0.07); }
+  50% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 14px -2px rgb(251 146 60 / 0.28), 0 0 56px -10px rgb(251 146 60 / 0.16); }
+}
+.island-wrap[data-festival='newyear'] .island-pill {
+  animation: fest-glow-newyear 3.6s ease-in-out infinite;
+}
+@keyframes fest-glow-newyear {
+  0%, 100% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(250 204 21 / 0.14), 0 0 52px -8px rgb(250 204 21 / 0.07); }
+  50% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 14px -2px rgb(250 204 21 / 0.28), 0 0 56px -10px rgb(250 204 21 / 0.16); }
+}
+.island-wrap[data-festival='midautumn'] .island-pill {
+  animation: fest-glow-midautumn 4.4s ease-in-out infinite;
+}
+@keyframes fest-glow-midautumn {
+  0%, 100% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(253 230 138 / 0.14), 0 0 52px -8px rgb(253 230 138 / 0.07); }
+  50% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 14px -2px rgb(253 230 138 / 0.3), 0 0 56px -10px rgb(253 230 138 / 0.17); }
+}
+.island-wrap[data-festival='chuxi'] .island-pill {
+  animation: fest-glow-chuxi 3.6s ease-in-out infinite;
+}
+@keyframes fest-glow-chuxi {
+  0%, 100% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(244 138 56 / 0.14), 0 0 52px -8px rgb(244 138 56 / 0.07); }
+  50% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 14px -2px rgb(244 138 56 / 0.3), 0 0 56px -10px rgb(244 138 56 / 0.17); }
+}
+.island-wrap[data-festival='chunjie'] .island-pill {
+  animation: fest-glow-chunjie 3.4s ease-in-out infinite;
+}
+@keyframes fest-glow-chunjie {
+  0%, 100% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(251 191 36 / 0.16), 0 0 52px -8px rgb(251 191 36 / 0.09); }
+  50% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 14px -2px rgb(251 191 36 / 0.34), 0 0 56px -10px rgb(251 191 36 / 0.2); }
+}
+.island-wrap[data-festival='yuanxiao'] .island-pill {
+  animation: fest-glow-yuanxiao 3.8s ease-in-out infinite;
+}
+@keyframes fest-glow-yuanxiao {
+  0%, 100% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(249 168 68 / 0.15), 0 0 52px -8px rgb(249 168 68 / 0.08); }
+  50% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 14px -2px rgb(249 168 68 / 0.3), 0 0 56px -10px rgb(249 168 68 / 0.17); }
+}
+.island-wrap[data-festival='duanwu'] .island-pill {
+  animation: fest-glow-duanwu 4s ease-in-out infinite;
+}
+@keyframes fest-glow-duanwu {
+  0%, 100% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 12px -2px rgb(163 216 108 / 0.14), 0 0 52px -8px rgb(163 216 108 / 0.07); }
+  50% { box-shadow: 0 10px 34px -10px rgb(0 0 0 / 0.45), 0 0 14px -2px rgb(163 216 108 / 0.28), 0 0 56px -10px rgb(163 216 108 / 0.16); }
+}
+
+/* —— 骑缘底座徽章。底座与胶囊同底色（--c-surface）同描边（--c-line），
+   圆心压在胶囊边框线上形成"长在边框上"的融合观感；符号实心填充（currentColor 继承节日强调色），
+   镂空细节用胶囊底色，动效跑在符号内部 g 上（fill-box 原点），不影响底座定位 —— */
+.fest-badge {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  background: rgb(var(--c-surface));
+  border: 1.5px solid rgb(var(--c-line));
+  box-shadow: 0 2px 8px -2px rgb(var(--c-shadow) / 0.55);
+  z-index: 2; /* 骑在胶囊边框之上，压住缘线 */
+  pointer-events: auto; /* 需接收 hover 弹 v-tip 节日名；徽章只占边缘空隙，不与胶囊内容交互区重叠 */
+}
+.fest-badge svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+/* —— 确定性散点方位（胶囊 344×40，top+22 ≤ 40 保证不越顶/底缘；新徽章在此登记一个类）—— */
+.fest-b-ghost { left: -11px; top: 9px; }   /* 万圣节·幽灵：左缘中段（圆心 y50%） */
+.fest-b-pumpkin { right: -11px; top: 2px; }  /* 万圣节·南瓜：右缘上段（32%） */
+.fest-b-hat { right: -11px; top: 13px; }   /* 圣诞·帽：右缘中下段（60%） */
+.fest-b-snow { left: -11px; top: 3px; }    /* 圣诞·雪花：左缘上段（35%） */
+.fest-b-bars { right: -11px; top: 17px; }  /* 程序员节·条码：右缘下段（70%） */
+.fest-b-term { left: -11px; top: 6px; }    /* 程序员节·终端：左缘中段（42%） */
+.fest-b-party { left: -11px; top: 4px; }   /* 愚人节·派对帽：左缘上段（37%） */
+.fest-b-smile { right: -11px; top: 15px; } /* 愚人节·笑脸：右缘下段（65%） */
+.fest-b-star-a { right: -11px; top: 12px; }  /* 元旦·大星：右缘中段（57%） */
+.fest-b-star-b { left: -11px; top: 3px; }  /* 元旦·小星：左缘上段（35%） */
+.fest-b-qixi-a { left: -11px; top: 2px; }  /* 七夕·织女星：左缘上段（32%） */
+.fest-b-qixi-b { right: -11px; top: 14px; } /* 七夕·牛郎星：右缘中下段（62%） */
+.fest-b-moon { left: -11px; top: 5px; }    /* 中秋·满月：左缘中段（40%） */
+.fest-b-firecracker { left: -11px; top: 3px; } /* 除夕·爆竹：左缘上段（35%） */
+.fest-b-candle { right: -11px; top: 12px; }   /* 除夕·守岁烛：右缘中下段（57%） */
+.fest-b-lant-a { left: -11px; top: 2px; }  /* 春节·灯笼甲：左缘上段（32%） */
+.fest-b-lant-b { right: -11px; top: 13px; } /* 春节·灯笼乙：右缘中下段（62%） */
+.fest-b-tang { left: -11px; top: 6px; }    /* 元宵·汤圆碗：左缘中段（44%） */
+.fest-b-zong { right: -11px; top: 4px; }   /* 端午·粽子：右缘上段（37%） */
+/* 中秋·月晕：满月徽章外圈静态双层柔光（呼吸由胶囊辉光统一承担，避免与脉冲 pop 动画互相覆盖） */
+.fest-b-moon {
+  box-shadow: 0 0 7px 2px rgb(var(--c-gold) / 0.3), 0 0 16px 5px rgb(var(--c-gold) / 0.12);
+}
+/* —— 徽章波纹：与胶囊脉冲同节奏同配色的双层涟漪（.island-pill-new 同帧触发 → 全岛同步呼吸）。
+   关键帧比例复刻 island-new-ring/ripple（先点亮确认再扩散离去），scale 终值按徽章尺寸放大
+   （小元素需更大扩散比才可感知）；伪元素常驻待命（opacity 0），仅脉冲时挂动画 —— */
+.fest-badge::after,
+.fest-badge::before {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  border-radius: 9999px;
+  border: 1.5px solid rgb(var(--c-gold));
+  opacity: 0;
+  pointer-events: none;
+}
+.island-pill.island-pill-new .fest-badge::after {
+  animation: fest-badge-ring 0.6s ease-out forwards;
+}
+@keyframes fest-badge-ring {
+  0% { opacity: 0; transform: scale(1); }
+  18% { opacity: 1; transform: scale(1.02); }
+  100% { opacity: 0; transform: scale(1.45); }
+}
+.island-pill.island-pill-new .fest-badge::before {
+  animation: fest-badge-ripple 0.75s ease-out 0.12s forwards;
+}
+@keyframes fest-badge-ripple {
+  0% { opacity: 0; transform: scale(1); }
+  25% { opacity: 1; transform: scale(1.04); }
+  100% { opacity: 0; transform: scale(1.62); }
+}
+/* 徽章弹跳：与胶囊图标弹跳同帧同 spring 曲线，强化"整岛一起回应新内容"的一体感 */
+.island-pill.island-pill-new .fest-badge {
+  animation: fest-badge-pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes fest-badge-pop {
+  0% { transform: scale(0.86); }
+  55% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+/* —— 边框动效层：与胶囊边框本身结合的节日特效 —— */
+.fest-border {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  pointer-events: none;
+  z-index: 0; /* 内容与徽章之下：只作背景氛围 */
+}
+/* 圣诞·积雪檐：贴胶囊顶缘的弧形雪层（两端收进 12px 避开圆角弧；ink 随皮肤为雪白） */
+.fest-snow-cap {
+  position: absolute;
+  top: 0.5px;
+  left: 12px;
+  right: 12px;
+  width: calc(100% - 24px);
+  height: 10px;
+}
+/* 圣诞·循环飘雪：从檐上落入胶囊视野，错峰不同速；起终透明避免生硬出现/消失 */
+.fest-flake {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  top: -8px;
+  animation: fest-fall linear infinite;
+  opacity: 0;
+}
+.fest-flake-a { left: 22%; animation-duration: 5.2s; }
+.fest-flake-b { right: 18%; animation-duration: 6.8s; animation-delay: 2.6s; }
+@keyframes fest-fall {
+  0% { transform: translateY(0) rotate(0deg); opacity: 0; }
+  12% { opacity: 0.95; }
+  80% { opacity: 0.55; }
+  100% { transform: translateY(52px) translateX(9px) rotate(180deg); opacity: 0; }
+}
+/* 流光环（愚人节彩带 / 程序员节扫描光 / 七夕星河共用结构）：
+   conic-gradient 起始角动画 + mask 只留边框厚度的圆环，亮段沿边框巡游。
+   动画用 @property 插值 --fest-angle（WebView2/Chromium 支持）——不能 rotate div 本身：
+   矩形 div 旋转时四角会甩出圆环范围（表现为斜线扫出胶囊外） */
+@property --fest-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+.fest-ring {
+  position: absolute;
+  inset: -2px;
+  border-radius: 9999px;
+  padding: 1.5px;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  animation: fest-ring-spin 3.8s linear infinite;
+}
+@keyframes fest-ring-spin {
+  to { --fest-angle: 360deg; }
+}
+.fest-ring-fools {
+  /* 三色彩带：三段亮色 + 间隙，绕环流动像撒彩带 */
+  background: conic-gradient(
+    from var(--fest-angle),
+    rgb(var(--c-gold)) 0deg 40deg,
+    transparent 40deg 120deg,
+    rgb(var(--c-gold-soft)) 120deg 160deg,
+    transparent 160deg 240deg,
+    rgb(var(--c-line)) 240deg 280deg,
+    transparent 280deg 360deg
+  );
+}
+.fest-ring-programmer {
+  /* 终端扫描：单段亮绿拖尾，慢速巡游更像光标扫描 */
+  background: conic-gradient(
+    from var(--fest-angle),
+    transparent 0deg 250deg,
+    rgb(var(--c-gold) / 0.15) 250deg,
+    rgb(var(--c-gold)) 330deg,
+    transparent 360deg
+  );
+  animation-duration: 5.4s;
+}
+.fest-ring-qixi {
+  /* 银河横渡：喜鹊蓝双段亮带错落，绕环缓行（比彩带更悠缓） */
+  background: conic-gradient(
+    from var(--fest-angle),
+    transparent 0deg 100deg,
+    rgb(var(--c-gold) / 0.1) 100deg,
+    rgb(var(--c-gold)) 170deg,
+    transparent 240deg 290deg,
+    rgb(var(--c-gold-soft) / 0.65) 290deg,
+    transparent 360deg
+  );
+  animation-duration: 6.5s;
+}
+/* —— 面板装饰层：hover 展开面板的节日点缀（低透明度水印/顶部挂饰，不遮文本） —— */
+.fest-panel-deco {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  overflow: hidden;
+}
+.fest-panel-badge {
+  position: absolute;
+  right: 10px;
+  top: 8px;
+  width: 13px;
+  height: 13px;
+  opacity: 0.6;
+}
+/* 圣诞·彩灯串：面板顶部一行灯珠，三色（gold/gold-soft/line）错峰呼吸 */
+.fest-lights {
+  position: absolute;
+  top: 3px;
+  left: 16px;
+  right: 30px;
+  display: flex;
+  justify-content: space-between;
+}
+.fest-light {
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  animation: fest-light-pulse 2.4s ease-in-out infinite;
+}
+.fest-light-1 { background: rgb(var(--c-gold)); }
+.fest-light-2 { background: rgb(var(--c-gold-soft)); }
+.fest-light-3 { background: rgb(var(--c-line)); }
+@keyframes fest-light-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+/* 程序员节·终端网格：面板背景 16px 格线（line 色 8% 透明度） */
+.fest-panel-grid::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(0deg, rgb(var(--c-line) / 0.08) 0 1px, transparent 1px 16px),
+    repeating-linear-gradient(90deg, rgb(var(--c-line) / 0.08) 0 1px, transparent 1px 16px);
+}
+/* 愚人节·三角彩旗串：沿面板顶缘横贯，随风轻摆（sway 复用符号摇摆动画） */
+.fest-bunting {
+  position: absolute;
+  top: 0;
+  left: 8px;
+  right: 8px;
+  width: calc(100% - 16px);
+  height: 12px;
+  transform-origin: top center;
+}
+.fest-bunting .fest-sway {
+  animation-duration: 3.4s;
+  transform-box: view-box;
+  transform-origin: top center;
+}
+/* 慢呼吸（南瓜眨眼/帽绒球）：比光标硬切更柔的 3s 缓慢明暗 */
+.fest-blink-slow {
+  animation: fest-blink-slow 3s ease-in-out infinite;
+}
+@keyframes fest-blink-slow {
+  0%, 82%, 100% { opacity: 1; }
+  88%, 94% { opacity: 0.15; }
+}
+/* —— 差异化微动效语言：幽灵浮 / 雪花转 / 光标闪 / 帽摇摆 / 星芒闪烁（新装饰优先复用）—— */
+/* 万圣节：小幽灵上下飘浮（悬停感） */
+.fest-float {
+  animation: fest-float 2.2s ease-in-out infinite;
+}
+@keyframes fest-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.6px); }
+}
+/* 圣诞：雪花缓慢旋转（慢速更"静雪"；fill-box 以符号自身包围盒取中心，与摆放位置解耦） */
+.fest-spin {
+  animation: fest-spin 9s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes fest-spin {
+  to { transform: rotate(360deg); }
+}
+/* 程序员节：终端光标硬切闪烁（steps 模拟 CRT 扫描节奏，不用淡入淡出） */
+.fest-blink {
+  animation: fest-blink 1.1s steps(1) infinite;
+}
+@keyframes fest-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+/* 愚人节：派对帽左右摇摆（fill-box 取符号自身底缘为轴，像被风吹动） */
+.fest-sway {
+  animation: fest-sway 1.6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+@keyframes fest-sway {
+  0%, 100% { transform: rotate(-7deg); }
+  50% { transform: rotate(7deg); }
+}
+/* 春节：灯笼悬垂慢摆（复用 sway 语言、转速放缓似挂檐下随夜风；特异性 (0,2,0) 压过基类 1.6s） */
+.fest-badge .fest-sway-lantern {
+  animation-duration: 2.8s;
+}
+/* 元旦：烟花与星芒错峰闪烁（透明度+缩放呼吸） */
+.fest-twinkle {
+  animation: fest-twinkle 1.8s ease-in-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+@keyframes fest-twinkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.86); }
+}

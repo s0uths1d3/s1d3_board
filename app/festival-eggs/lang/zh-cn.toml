@@ -1,0 +1,26 @@
+# 节日彩蛋自有文案（顶层 [festival] 表，启动时由 i18n/messages.ts 通用合并进消息树；
+# 新增节日在此追加键即可，业务语言包不含任何节日知识）
+
+[festival]
+# 岛骑缘徽章 v-tip
+tip_newyear = "元旦 · 限时主题"
+tip_fools = "愚人节 · 限时主题"
+tip_programmer = "程序员节 · 限时主题"
+tip_halloween = "万圣节 · 限时主题"
+tip_christmas = "圣诞节 · 限时主题"
+tip_qixi = "七夕 · 限时主题"
+tip_midautumn = "中秋 · 限时主题"
+tip_chuxi = "除夕 · 限时主题"
+tip_chunjie = "春节 · 限时主题"
+tip_yuanxiao = "元宵 · 限时主题"
+tip_duanwu = "端午 · 限时主题"
+# 弹岛行为台词（ISLAND_QUIRKS 配置引用）
+midautumn_quote = "但愿人长久"
+chunjie_greeting = "新年快乐，万事顺遂"
+chuxi_greeting = "岁岁平安"
+# 统计页引言（QUOTE_BANNERS 配置引用）
+qixi_quote = "金风玉露一相逢"
+chunjie_quote = "爆竹声中一岁除"
+chuxi_quote = "故乡今夜思千里"
+yuanxiao_quote = "月上柳梢头"
+duanwu_quote = "路漫漫其修远兮"
