@@ -251,10 +251,11 @@ export function createTodoRepository({ conn, recordStats }: { conn: DatabaseConn
             const db = await conn.ready();
 
             const content: string = filter.value.searchContent;
-            // 高级搜索：与剪贴板同一套词法（buildLikeGroups 收编 parseSearchTokens + likePatternFromToken）——
+            // 高级搜索：与剪贴板同一套词法（buildLikeGroups 收编 parseSearchTokens + searchPattern）——
             // 空格拆词 AND、双引号整句、* ? 通配符、| 组内 OR；开关随 filter.advanced（缺省视为开启，同剪贴板）。
-            // 空搜索词无 LIKE 条件（全量），提醒调度 sync 行为不变
-            const { sql: likeSql, params } = buildLikeGroups(content, 'title', filter.value.advanced !== false);
+            // 大小写区分开关随 filter.caseSensitive（缺省不区分）：区分时切 GLOB 算子，词法语义不变。
+            // 空搜索词无匹配条件（全量），提醒调度 sync 行为不变
+            const { sql: likeSql, params } = buildLikeGroups(content, 'title', filter.value.advanced !== false, filter.value.caseSensitive === true);
             const baseSql = `SELECT * FROM todo WHERE deleted_at IS NULL${likeSql ? ` AND ${likeSql}` : ''} ORDER BY updated_at DESC, id DESC`;
 
             let rows: Todo[];

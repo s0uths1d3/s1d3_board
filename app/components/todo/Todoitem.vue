@@ -3,10 +3,12 @@
       class="glass-card todo-item group rounded-2xl p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
       :class="[
         selected ? '!border-gold ring-2 ring-gold/60 bg-gold/10 shadow-[0_0_22px_-2px_rgba(196,167,125,0.6)]' : '',
+        // 回收站多选勾选态（Ctrl+点击 加选 / Shift+点击 范围选）：金色描边，与便签批量态同视觉语言
+        batchSelected ? '!border-gold ring-2 ring-gold/50' : '',
         // 手动排序拖拽落点指示：before/after 高亮卡片，child（变子任务）金色描边
         dropPos ? '!border-gold ring-2 ring-gold/60' : '',
       ]"
-      @click="$emit('select')"
+      @click="$emit('select', $event)"
       @dragover="onCardDragOver"
       @dragleave="dropPos = ''"
       @drop="onCardDrop"
@@ -82,8 +84,9 @@
               {{ priorityName(pLevel) }}
             </span>
 
-            <!-- 分类徽章：点击直接弹出分类选择（回收站/批量模式只读） -->
+            <!-- 分类徽章：点击直接弹出分类选择（回收站/批量模式只读）；未设分类（空串）不渲染，避免空胶囊 -->
             <span
+                v-if="todo.category"
                 class="rounded-full border border-accent px-2 py-0.5 text-xs text-ink-soft"
                 :class="badgeClickable ? 'cursor-pointer transition-opacity hover:opacity-75' : ''"
                 v-tip="badgeClickable ? t('todo.click_to_edit') : ''"
@@ -612,6 +615,8 @@ const props = defineProps<{
   children?: Todo[]
   /** 回收站模式：操作区切换为 恢复 / 彻底删除 */
   trash?: boolean
+  /** 回收站多选勾选态：金色描边高亮（Ctrl+点击 加选 / Shift+点击 范围选） */
+  batchSelected?: boolean
   /** 手动排序模式：启用拖拽手柄（重排 / 拖到卡片中间变子任务） */
   dragEnabled?: boolean
 }>()
@@ -624,7 +629,7 @@ const emit = defineEmits<{
   (e: 'category-change', id: string, category: string): void
   (e: 'reminder-change', id: string, mode: Todo['remindMode'], rules?: ReminderRule[]): void
   (e: 'category-delete', name: string, rect?: DOMRect): void
-  (e: 'select'): void
+  (e: 'select', ev?: MouseEvent): void
   (e: 'restore', id: string): void
   (e: 'purge', id: string, rect?: DOMRect): void
   (e: 'promote', id: string): void
@@ -732,12 +737,18 @@ const childDueText = (child: Todo): string => {
   })
 }
 
-/** 回收站：删除时间（MM-DD HH:mm），非法日期串原样展示 */
+/** 回收站：删除时间（复用截止时间的 due_display 模板，两处格式永远一致），非法日期串原样展示 */
 const formatDeletedAt = computed(() => {
   if (!props.todo.deletedAt) return ''
-  const d = new Date(props.todo.deletedAt)
+  // deletedAt 以字符串毫秒存库：new Date(字符串数字) 是 Invalid Date，必须先转数值
+  const d = new Date(Number(props.todo.deletedAt))
   if (isNaN(d.getTime())) return props.todo.deletedAt
-  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  return t('todo.due_display', {
+    m: d.getMonth() + 1,
+    d: d.getDate(),
+    hh: pad2(d.getHours()),
+    mm: pad2(d.getMinutes()),
+  })
 })
 
 /** 彻底删除（回收站）：附按钮位置供确认框就近定位 */
