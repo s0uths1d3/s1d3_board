@@ -22,7 +22,10 @@ const LOCALE_EVENT = 'locale:changed';
 export type LocaleMode = 'system' | 'zh-cn' | 'en-us';
 
 const localeMode = ref<LocaleMode>('system');
-let inited = false;
+/** 初始化单例 promise：init.ts 的模块级预热调用与 i18n 插件的 await 共享同一次初始化，
+ *  保证插件真正等到 KV 读取落定——否则 inited 布尔会让第二个调用方立即返回，
+ *  应用带着「跟随系统」的临时语言首帧渲染（子窗口读库成功/失败时序不同 → 各窗口语言不一致） */
+let initPromise: Promise<void> | null = null;
 
 /** 按系统语言探测（仅 system 模式使用） */
 function detectSystemLocale(): AppLocale {
@@ -58,27 +61,43 @@ function resolve(m: Record<string, unknown>, path: string, params?: Record<strin
   return cur.replace(/\{(\w+)\}/g, (_, k: string) => String(params[k] ?? `{${k}}`));
 }
 
-/** 初始化：读持久化语言模式；无记录时默认 system（跟随系统）。每个窗口启动时调用一次 */
-export async function initI18n(): Promise<void> {
-  if (inited) return;
-  inited = true;
-  applyLocale(locale.value);
-  try {
-    const v = await dbService.getKeyValue(LOCALE_KEY);
-    if (isLocaleMode(v)) localeMode.value = v;
-    else await dbService.setKeyValue(LOCALE_KEY, 'system').catch(() => {}); // 首次落库
-  } catch {
-    /* 读不到则保持跟随系统 */
-  }
-  applyLocale(locale.value);
-  if (isTauri()) {
-    listen<LocaleMode>(LOCALE_EVENT, (ev) => {
-      if (isLocaleMode(ev.payload)) {
-        localeMode.value = ev.payload;
-        applyLocale(locale.value);
+/** 读持久化语言模式；失败短暂重试（启动瞬间的锁竞争不该永久降级为跟随系统），
+ *  最终失败保持 system 并告警——静默吞掉会让「主窗口跟随系统、子窗口读到旧值」的
+ *  跨窗口语言不一致难以排查 */
+async function loadLocaleMode(): Promise<void> {
+  const attempts = isTauri() ? 3 : 1;
+  for (let i = 0; ; i++) {
+    try {
+      const v = await dbService.getKeyValue(LOCALE_KEY);
+      if (isLocaleMode(v)) localeMode.value = v;
+      else await dbService.setKeyValue(LOCALE_KEY, 'system').catch(() => {}); // 首次落库
+      return;
+    } catch (e) {
+      if (i >= attempts - 1) {
+        console.warn('[i18n] 语言模式读取失败，本次保持跟随系统:', e);
+        return;
       }
-    }).catch(() => { /* 监听失败仅影响跨窗口同步 */ });
+      await new Promise(r => setTimeout(r, 300));
+    }
   }
+}
+
+/** 初始化：读持久化语言模式；无记录时默认 system（跟随系统）。每个窗口启动时调用一次（幂等） */
+export function initI18n(): Promise<void> {
+  initPromise ??= (async () => {
+    applyLocale(locale.value);
+    await loadLocaleMode();
+    applyLocale(locale.value);
+    if (isTauri()) {
+      listen<LocaleMode>(LOCALE_EVENT, (ev) => {
+        if (isLocaleMode(ev.payload)) {
+          localeMode.value = ev.payload;
+          applyLocale(locale.value);
+        }
+      }).catch(() => { /* 监听失败仅影响跨窗口同步 */ });
+    }
+  })();
+  return initPromise;
 }
 
 /**
@@ -91,9 +110,17 @@ export async function initI18n(): Promise<void> {
 export async function setLocaleMode(m: LocaleMode): Promise<void> {
   localeMode.value = m;
   applyLocale(locale.value);
-  try {
-    await dbService.setKeyValue(LOCALE_KEY, m);
-  } catch { /* 写入失败不影响本次会话 */ }
+  // 写库失败重试一次（瞬时的 database is locked）：静默失败 + 无条件 reload 的组合
+  // 会把用户刚选的语言悄悄回退成旧值，且各窗口内存态与 KV 分叉（跨窗口语言不一致的根源）
+  for (let i = 0; ; i++) {
+    try {
+      await dbService.setKeyValue(LOCALE_KEY, m);
+      break;
+    } catch (e) {
+      if (i >= 1) throw e; // 交给调用方给出可见失败反馈；不 reload——reload 会读回旧值
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
   if (isTauri()) {
     emit(LOCALE_EVENT, m).catch(() => {});
   }
