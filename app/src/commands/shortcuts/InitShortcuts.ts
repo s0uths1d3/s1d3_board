@@ -19,6 +19,7 @@ import {FocusSearchCommand} from "~/src/commands/local/FocusSearchCommand"
 import {GlobalSearchCommand} from "~/src/commands/local/GlobalSearchCommand"
 import {CycleColorSchemeCommand} from "~/src/commands/local/CycleColorSchemeCommand"
 import {BubbleToggleCommand} from "~/src/commands/local/BubbleToggleCommand"
+import {ScreenshotCommand} from "~/src/commands/global/ScreenshotCommand"
 import dbService from "~/src/db/dbService";
 import { normalizeShortcutKey } from "~/utils/shortcutFormat";
 import { notifyIsland } from "~/composables/useCopyIsland";
@@ -43,6 +44,8 @@ const focusSearchCommand = new FocusSearchCommand()
 // Ctrl+P：全局搜索命令面板
 const globalSearchCommand = new GlobalSearchCommand()
 const cycleColorSchemeCommand = new CycleColorSchemeCommand()
+// Ctrl+Alt+A：全局截图（snipManager 会话）
+const screenshotCommand = new ScreenshotCommand()
 const pinnedClipCommands = Array.from({ length: 10 }, (_, i) => new PinnedClipPasteCommand(i + 1))
 
 const clipboardSlotCommands = Array.from({ length: 10 }, (_, i) => new ClipboardSlotPasteCommand(i + 1))
@@ -222,7 +225,17 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         command: clipboardSlotCommands[i]!,
         title: 'shortcut.slot_paste',
         enabled: true
-    }))
+    })),
+    // Ctrl+Alt+A：截图（global，任意应用唤起；总开关关闭时弹岛提示）
+    {
+        id: 'screenshot',
+        key: 'Control+Alt+A',
+        defaultKey: 'Control+Alt+A',
+        scope: 'global',
+        command: screenshotCommand,
+        title: 'shortcut.screenshot',
+        enabled: true
+    },
 ];
 
 /** 响应式快捷键列表（自定义后实时反映到设置页与注册表） */

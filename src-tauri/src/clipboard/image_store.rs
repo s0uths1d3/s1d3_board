@@ -25,8 +25,9 @@ use crate::core::traits::{ImageStore, ImageStoreHandle, ImageFileEntry};
 /// 缩略图可见，粘贴回落系统剪贴板现内容）。
 pub const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
-/// images 目录：%APPDATA%/S1d3Board/images（与其他数据同根，备份/迁移随目录整体走）
-fn images_dir(app: &AppHandle) -> Option<PathBuf> {
+/// images 目录：%APPDATA%/S1d3Board/images（与其他数据同根，备份/迁移随目录整体走）。
+/// pub(crate)：snip 域（截图捕获/裁剪）复用同一落盘目录。
+pub(crate) fn images_dir(app: &AppHandle) -> Option<PathBuf> {
     let dir = app.path().app_data_dir().ok()?.join("images");
     if !dir.exists() {
         fs::create_dir_all(&dir).ok()?;
@@ -166,6 +167,15 @@ pub(crate) fn read_image_ref(app: &AppHandle, file_ref: &str) -> Option<String> 
         return None;
     }
     images_dir(app).and_then(|dir| read_from_dir(&dir, name))
+}
+
+/// imgfile: 引用 → 原图 PNG 原始字节（snip 裁剪/导出用；非法引用/文件缺失返回 None）。
+pub(crate) fn read_png_bytes(app: &AppHandle, file_ref: &str) -> Option<Vec<u8>> {
+    let name = file_ref.strip_prefix("imgfile:")?;
+    if !valid_image_path(Path::new(name)) {
+        return None;
+    }
+    images_dir(app).and_then(|dir| std::fs::read(dir.join(name)).ok())
 }
 
 /// 删除核心：文件不存在视为已删除（幂等 true）；删除失败返回 false（不致命，调用方仅记日志）。

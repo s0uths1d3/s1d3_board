@@ -189,6 +189,8 @@ async function ensureFeatureColumns(db: SqlDatabase) {
         // 智能剪贴板统计：AI 分析成功次数 / 剪切（Ctrl+X）成功次数
         { table: 'daily_stat', column: 'ai_analysis', ddl: 'ALTER TABLE daily_stat ADD COLUMN ai_analysis INTEGER NOT NULL DEFAULT 0' },
         { table: 'daily_stat', column: 'clip_cut', ddl: 'ALTER TABLE daily_stat ADD COLUMN clip_cut INTEGER NOT NULL DEFAULT 0' },
+        // 截图（snip）成功次数（Rust 迁移 v23 对应的前端 wanted 兜底）
+        { table: 'daily_stat', column: 'clip_screenshot', ddl: 'ALTER TABLE daily_stat ADD COLUMN clip_screenshot INTEGER NOT NULL DEFAULT 0' },
         { table: 'app_usage', column: 'active_seconds', ddl: 'ALTER TABLE app_usage ADD COLUMN active_seconds INTEGER NOT NULL DEFAULT 0' },
         // 智能剪贴板「方案」（原模板）：独立标题/描述 + 成员提取器 id 列表（JSON）
         { table: 'clip_templates', column: 'title', ddl: 'ALTER TABLE clip_templates ADD COLUMN title TEXT' },

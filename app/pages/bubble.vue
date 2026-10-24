@@ -106,7 +106,7 @@ const islandExpanded = ref(false);        // 下拉面板展开中
 const islandPanelMaxH = ref(ISLAND_PANEL_MAX_H);
 /** kind → 默认标签 i18n 键（copy-image 与 copy 同标签；loading=解析过程提示；title 自定义标签优先） */
 const ISLAND_LABEL_KEYS: Record<IslandKind, string> = {
-  copy: 'copied', 'copy-image': 'copied', cut: 'cut', paste: 'pasted', info: 'info', success: 'success', error: 'error', loading: 'parsing',
+  copy: 'copied', 'copy-image': 'copied', cut: 'cut', paste: 'pasted', screenshot: 'screenshot', info: 'info', success: 'success', error: 'error', loading: 'parsing',
 };
 const islandLabel = computed(() => islandTitle.value || t(`island.${ISLAND_LABEL_KEYS[islandKind.value]}`));
 
@@ -572,6 +572,14 @@ onBeforeUnmount(() => {
           <rect x="8" y="2" width="8" height="4" rx="1" />
           <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
           <path d="m9 14 2 2 4-4" />
+        </svg>
+        <!-- 截图=带选框的取景器（虚线框四角 + 内圈点，与剪贴板打勾区分） -->
+        <svg v-else-if="islandKind === 'screenshot'" class="island-icon text-ink-soft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+          <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+          <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+          <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+          <circle cx="12" cy="12" r="3" />
         </svg>
         <svg v-else-if="islandKind === 'success'" class="island-icon text-success" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10" />

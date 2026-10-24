@@ -57,6 +57,27 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { DEFAULT_IMAGE_CACHE_MB, DEFAULT_MAX_SAVE_COUNT, type ImageFileInfo } from '~/src/core/db/repositories/clipboardRepository';
 import type { DataBundle } from '~/src/core/db/repositories/dataTransferRepository';
 import { listAutoBackups, readAutoBackup } from '~/src/backup/autoBackup';
+import {
+  SNIP_MASK_OPACITY_DEFAULT,
+  ensureSnipSettingsLoaded,
+  setSnipAutoCopy,
+  setSnipAutoHistory,
+  setSnipCaptureCursor,
+  setSnipDelaySec,
+  setSnipEnabled,
+  setSnipFormat,
+  setSnipMaskOpacity,
+  setSnipSaveDir,
+  useSnipAutoCopy,
+  useSnipAutoHistory,
+  useSnipCaptureCursor,
+  useSnipDelaySec,
+  useSnipEnabled,
+  useSnipFormat,
+  useSnipJpegQuality,
+  useSnipMaskOpacity,
+  useSnipSaveDir,
+} from '~/src/snip/snipSettings';
 import type { ClipExtractor, ClipScheme } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
 import { updateSmartClipConfig } from '~/src/smart-clip/smartClip';
@@ -144,7 +165,13 @@ async function selectLocale(value: LocaleMode) {
   if (localeMode.value === value) return;
   // 切语言走整页 reload：先把未落库的防抖输入写库，避免最后编辑的设置项被 reload 丢弃
   flushPendingWrites();
-  await setLocaleMode(value);
+  try {
+    await setLocaleMode(value);
+  } catch {
+    // 写库失败（重试后仍失败）：不 reload（会读回旧值静默回退），给出可见失败反馈
+    showHint(t('setting.general.locale_save_failed'), 'error');
+    return;
+  }
   showHint(t('setting.general.locale_changed', { name: localeOptions.value.find(o => o.value === value)?.label ?? '' }));
 }
 /** 开机自启状态（系统级设置，使用 tauri autostart 插件，不存数据库） */
@@ -428,6 +455,68 @@ const pasteRestoreEnabled = ref(false);
 async function onPasteRestoreToggle(val: boolean) {
   await dbService.setKeyValue('paste_restore_clipboard', val ? '1' : '0');
   showHint(val ? t('setting.general.paste_restore_on') : t('setting.general.paste_restore_off'));
+}
+// ===== 截图（snip）：开关 / 自动复制 / 自动入历史 / 保存格式 / 遮罩暗度 / 默认目录 =====
+const snipEnabled = useSnipEnabled();
+const snipAutoCopy = useSnipAutoCopy();
+const snipAutoHistory = useSnipAutoHistory();
+const snipFormat = useSnipFormat();
+const snipSaveDir = useSnipSaveDir();
+const snipCaptureCursor = useSnipCaptureCursor();
+const snipDelayInput = ref('');
+const snipMaskOpacityInput = ref('');
+const snipSaveDirInput = ref('');
+const snipFormatOptions = [
+  { value: 'png', label: 'PNG' },
+  { value: 'jpeg', label: 'JPEG' },
+];
+const snipFormatLabel = computed(() =>
+  snipFormatOptions.find((o) => o.value === snipFormat.value)?.label ?? '',
+);
+async function onSnipEnabledToggle(val: boolean) {
+  await setSnipEnabled(val);
+  showHint(val ? t('setting.general.snip_enabled_on') : t('setting.general.snip_enabled_off'));
+}
+async function onSnipAutoCopyToggle(val: boolean) {
+  await setSnipAutoCopy(val);
+  showHint(val ? t('setting.general.snip_auto_copy_on') : t('setting.general.snip_auto_copy_off'));
+}
+async function onSnipAutoHistoryToggle(val: boolean) {
+  await setSnipAutoHistory(val);
+  showHint(val ? t('setting.general.snip_auto_history_on') : t('setting.general.snip_auto_history_off'));
+}
+async function onSnipCaptureCursorToggle(val: boolean) {
+  await setSnipCaptureCursor(val);
+  showHint(val ? t('setting.general.snip_capture_cursor_on') : t('setting.general.snip_capture_cursor_off'));
+}
+async function saveSnipDelay() {
+  const n = Number(snipDelayInput.value);
+  await setSnipDelaySec(Number.isFinite(n) ? n : 0);
+  snipDelayInput.value = String(useSnipDelaySec().value);
+  showHint(t('setting.general.snip_delay_saved'));
+}
+async function selectSnipFormat(value: string) {
+  if (value === snipFormat.value) return;
+  await setSnipFormat(value === 'jpeg' ? 'jpeg' : 'png');
+  showHint(t('setting.general.snip_format_saved', { name: snipFormatLabel.value }));
+}
+async function saveSnipMaskOpacity() {
+  const n = Number(snipMaskOpacityInput.value);
+  await setSnipMaskOpacity(Number.isFinite(n) ? n : SNIP_MASK_OPACITY_DEFAULT);
+  snipMaskOpacityInput.value = String(useSnipMaskOpacity().value);
+  showHint(t('setting.general.snip_mask_opacity_saved'));
+}
+async function saveSnipSaveDir() {
+  await setSnipSaveDir(snipSaveDirInput.value.trim());
+  showHint(t('setting.general.snip_save_dir_saved'));
+}
+/** 浏览选择默认保存目录（dialog 目录选择；取消不动现值） */
+async function pickSnipSaveDir() {
+  const dir = await open({ directory: true }).catch(() => null);
+  if (!dir || typeof dir !== 'string') return;
+  snipSaveDirInput.value = dir;
+  await setSnipSaveDir(dir);
+  showHint(t('setting.general.snip_save_dir_saved'));
 }
 // 剪贴板预览（tooltip）换行开关：默认关闭（不折行，超宽横向滚动），共享 composable 单例状态
 const { tooltipWrapEnabled } = useTooltipWrap();
@@ -1921,6 +2010,11 @@ onMounted(async () => {
   clipRetentionDays.value = (await dbService.getKeyValue('clip_retention_days')) || '';
   // 粘贴后恢复原剪贴板开关（默认关闭）
   pasteRestoreEnabled.value = (await dbService.getKeyValue('paste_restore_clipboard')) === '1';
+  // 截图（snip）：设置一次性加载（遮罩暗度/目录/延时的输入框需同步字符串快照）
+  await ensureSnipSettingsLoaded();
+  snipMaskOpacityInput.value = String(useSnipMaskOpacity().value);
+  snipSaveDirInput.value = useSnipSaveDir().value;
+  snipDelayInput.value = String(useSnipDelaySec().value);
   // 图片缓存磁盘占用查询（失败显示统计中占位，不阻塞其余设置恢复）
   void refreshImageCacheUsage();
   // API Key 加密存储：先把旧明文 KV 迁移进系统凭据库（失败保留明文），再从凭据库读取
@@ -2904,6 +2998,100 @@ onMounted(async () => {
                       :label="t('setting.general.paste_restore_clipboard')"
                       @change="onPasteRestoreToggle"
                   />
+                  <!-- 截图总开关：Ctrl+Alt+A 全局唤起（关闭后快捷键弹岛提示） -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.snip_enabled'"
+                      :model-value="snipEnabled"
+                      :tip-on="t('setting.general.snip_enabled_tip_on')" :tip-off="t('setting.general.snip_enabled_tip_off')"
+                      :label="t('setting.general.snip_enabled')"
+                      @change="onSnipEnabledToggle"
+                  />
+                  <!-- 截图后自动复制：确认后写系统剪贴板，任意应用可直接粘贴 -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.snip_auto_copy'"
+                      :model-value="snipAutoCopy"
+                      :tip-on="t('setting.general.snip_auto_copy_tip_on')" :tip-off="t('setting.general.snip_auto_copy_tip_off')"
+                      :label="t('setting.general.snip_auto_copy')"
+                      @change="onSnipAutoCopyToggle"
+                  />
+                  <!-- 截图自动入历史：作为图片条目进剪贴板历史（可搜索/收藏/转待办） -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.snip_auto_history'"
+                      :model-value="snipAutoHistory"
+                      :tip-on="t('setting.general.snip_auto_history_tip_on')" :tip-off="t('setting.general.snip_auto_history_tip_off')"
+                      :label="t('setting.general.snip_auto_history')"
+                      @change="onSnipAutoHistoryToggle"
+                  />
+                  <!-- 延时截图：按键后倒计时再进入框选（0~5 秒） -->
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.snip_delay'"
+                      v-model="snipDelayInput"
+                      :placeholder="'0'"
+                      @save="saveSnipDelay"
+                  />
+                  <!-- 捕获鼠标光标：截图画面包含系统光标（默认关） -->
+                  <UiToggleSwitch
+                      v-else-if="item.type === 'checkbox' && item.label === 'setting.general.snip_capture_cursor'"
+                      :model-value="snipCaptureCursor"
+                      :tip-on="t('setting.general.snip_capture_cursor_tip_on')" :tip-off="t('setting.general.snip_capture_cursor_tip_off')"
+                      :label="t('setting.general.snip_capture_cursor')"
+                      @change="onSnipCaptureCursorToggle"
+                  />
+                  <!-- 保存格式：保存到文件时使用 PNG / JPEG -->
+                  <UiDropdown
+                      v-else-if="item.type === 'select' && item.label === 'setting.general.snip_format'"
+                      class="w-full"
+                      align="end"
+                      match-trigger-width
+                      :aria-label="t('setting.general.snip_format')"
+                      panel-class="glass-card menu w-full rounded-2xl p-2"
+                  >
+                    <template #trigger="{ open: ddOpen }">
+                      <button type="button" tabindex="-1" class="btn-soft flex w-full items-center justify-between rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink">
+                        <span>{{ snipFormatLabel }}</span>
+                        <svg class="h-4 w-4 opacity-60 transition-transform duration-200" :class="ddOpen ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+                    </template>
+                    <ul class="menu p-2">
+                      <li v-for="opt in snipFormatOptions" :key="opt.value">
+                        <button
+                            type="button"
+                            class="flex w-full items-center justify-between rounded-xl"
+                            :class="snipFormat === opt.value ? 'text-gold' : ''"
+                            @click="selectSnipFormat(opt.value)"
+                        >
+                          <span>{{ opt.label }}</span>
+                          <svg v-if="snipFormat === opt.value" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        </button>
+                      </li>
+                    </ul>
+                  </UiDropdown>
+                  <!-- 遮罩不透明度：框选时选区外的暗化程度（10~80 百分比） -->
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.snip_mask_opacity'"
+                      v-model="snipMaskOpacityInput"
+                      :placeholder="String(SNIP_MASK_OPACITY_DEFAULT)"
+                      @save="saveSnipMaskOpacity"
+                  />
+                  <!-- 默认保存目录：空 = 每次保存时询问；右侧浏览按钮选目录 -->
+                  <div
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.snip_save_dir'"
+                      class="flex w-full items-center gap-1.5"
+                  >
+                    <SettingInput
+                        v-model="snipSaveDirInput"
+                        class="min-w-0 flex-1"
+                        :placeholder="t('setting.general.snip_save_dir_placeholder')"
+                        @save="saveSnipSaveDir"
+                    />
+                    <button type="button" class="btn-soft shrink-0 px-2 py-1.5 text-xs" @click="pickSnipSaveDir">
+                      {{ t('setting.general.snip_save_dir_browse') }}
+                    </button>
+                  </div>
                   <!-- 剪贴板预览换行：默认关闭（每行保持原始单行，超宽内容横向滚动） -->
                   <UiToggleSwitch
                       v-else-if="item.type === 'checkbox' && item.label === 'setting.general.tooltip_wrap'"

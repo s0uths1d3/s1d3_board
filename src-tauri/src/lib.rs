@@ -9,6 +9,7 @@ mod commands;
 mod core;
 mod db;
 mod island;
+mod snip;
 
 use std::sync::Arc;
 use tauri::Manager;
@@ -27,6 +28,7 @@ pub use clipboard::image_store;
 pub use island::webhook;
 pub use db::migrations;
 pub use ai::engine;
+pub use snip::capture;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -129,6 +131,11 @@ pub fn run() {
             island::api::island_history_result,
             island::webhook::island_webhook_apply,
             island::webhook::island_webhook_test,
+            snip::capture::snip_capture_screen,
+            snip::capture::snip_crop_region,
+            snip::capture::snip_write_clipboard_dib,
+            snip::capture::snip_windows_at_point,
+            snip::capture::snip_export_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

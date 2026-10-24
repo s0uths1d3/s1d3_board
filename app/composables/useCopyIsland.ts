@@ -103,7 +103,7 @@ export async function setIslandDurationMs(v: number): Promise<void> {
   try { await dbService.setKeyValue(ISLAND_DURATION_KEY, String(islandDurationMs.value)); } catch { /* 写入失败不影响本次会话 */ }
 }
 
-export type IslandKind = 'copy' | 'copy-image' | 'cut' | 'paste' | 'info' | 'success' | 'error' | 'loading';
+export type IslandKind = 'copy' | 'copy-image' | 'cut' | 'paste' | 'screenshot' | 'info' | 'success' | 'error' | 'loading';
 
 /** 弹岛载荷：kind 图标与默认标签 / title 自定义标签（API 调用） / durationMs 单次停留时长覆盖 /
  *  sticky 驻留（过程提示：不按时长收回，直到下一条岛替换；页面侧有兜底超时防残留） /
@@ -254,6 +254,18 @@ export function notifyIslandPaste(content: string, type: 'text' | 'image' | 'htm
  */
 export function notifyIsland(payload: IslandShowPayload): void {
   void showIsland(payload);
+}
+
+/** 截图完成弹岛（snip 确认流程专用）：kind=screenshot「已截图」+ 裁剪图缩略图直显。
+ *  与 island:copy 分流——截图不走"已复制"语义（调用方已把回捕弹岛抑制），岛历史
+ *  条目类型亦为 screenshot（缩略图落库走 emitIslandShow 既有 56px 降档管线）。 */
+export function notifySnipIsland(payload: { thumb?: string; qrText?: string; imageRef: string }): void {
+  void showIsland({
+    kind: 'screenshot',
+    text: payload.qrText ?? undefined,
+    thumb: payload.thumb ?? undefined,
+    imageRef: payload.imageRef,
+  });
 }
 
 // ===== 全局粘贴感知（Rust 全局 Ctrl+V 钩子 → island:paste-detected）=====
@@ -593,7 +605,7 @@ export function initCopyIsland(): void {
   void listen<{ text?: string; kind?: string; title?: string; duration?: number }>('island-api:show', (ev) => {
     const p = ev.payload;
     if (!p || typeof p.text !== 'string' || !p.text) return;
-    const kinds: IslandKind[] = ['copy', 'paste', 'info', 'success', 'error'];
+    const kinds: IslandKind[] = ['copy', 'paste', 'screenshot', 'info', 'success', 'error'];
     void showIsland({
       kind: kinds.includes(p.kind as IslandKind) ? (p.kind as IslandKind) : 'info',
       text: p.text.slice(0, PREVIEW_MAX),

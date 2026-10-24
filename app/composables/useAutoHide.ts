@@ -139,6 +139,8 @@ export async function tryHideMainWindow() {
         // 桌面上钉着的便签也一并消失，违背「钉住常驻」语义）；随自身关闭按钮 /
         // 便签被删除的自动收尾机制退出
         if (w.label.startsWith('note-pin-')) continue;
+        // 截图贴图常驻置顶：与桌签同语义（随自身把手关闭/双击收尾）
+        if (w.label.startsWith('snip-pin-')) continue;
         if (await w.isVisible()) await w.close();
       } catch { /* 忽略单窗关闭失败 */ }
     }

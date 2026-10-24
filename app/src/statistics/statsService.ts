@@ -28,7 +28,7 @@ import { TAB_STAT_FIELDS, type TabStatField } from "../tabs/tabKeys";
 
 /** 统计维度字段（与 daily_stat 各列同名）；tab_* 由 Tab 键单点派生（~/src/tabs/tabKeys） */
 export type StatField =
-  | 'clip_text' | 'clip_image' | 'clip_use' | 'clip_chars' | 'clip_cut'
+  | 'clip_text' | 'clip_image' | 'clip_use' | 'clip_chars' | 'clip_cut' | 'clip_screenshot'
   | 'ai_analysis'
   | 'todo_added' | 'todo_completed' | 'todo_deleted' | 'todo_chars' | 'todo_reminded'
   | 'note_added' | 'note_deleted' | 'favorite_toggle'
@@ -58,7 +58,7 @@ export const TREND_DOWNSAMPLE_DAYS = 92;
 
 /** 区间聚合默认查询的字段（§14.3 查询裁剪：不含动态扩展列）；tab_* 段由 Tab 键单点派生 */
 const DEFAULT_RANGE_FIELDS: StatField[] = [
-  'clip_text', 'clip_image', 'clip_use', 'clip_chars', 'clip_cut', 'ai_analysis',
+  'clip_text', 'clip_image', 'clip_use', 'clip_chars', 'clip_cut', 'clip_screenshot', 'ai_analysis',
   'todo_added', 'todo_completed', 'todo_deleted', 'todo_chars', 'todo_reminded',
   'note_added', 'note_deleted', 'favorite_toggle',
   'usage_seconds', 'shortcut_count',

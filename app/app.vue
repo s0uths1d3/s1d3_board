@@ -119,6 +119,8 @@ onMounted(async () => {
               if (w.label === 'tray-menu') continue;
               // 桌面便签常驻置顶：主窗口收起到托盘不影响已钉桌签（随自身关闭按钮/便签删除收尾）
               if (w.label.startsWith('note-pin-')) continue;
+              // 截图贴图常驻置顶：与桌签同语义（随自身把手关闭/双击收尾）
+              if (w.label.startsWith('snip-pin-')) continue;
               if (await w.isVisible()) await w.close();
             } catch { /* 忽略单窗关闭失败 */ }
           }

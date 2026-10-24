@@ -48,12 +48,13 @@ const kindMeta: Record<IslandKind, { dot: string; labelKey: string }> = {
   'copy-image': { dot: 'bg-gold', labelKey: 'island_history.type_copy_image' },
   cut: { dot: 'bg-gold', labelKey: 'island_history.type_cut' },
   paste: { dot: 'bg-blue', labelKey: 'island_history.type_paste' },
+  screenshot: { dot: 'bg-blue', labelKey: 'island_history.type_screenshot' },
   info: { dot: 'bg-ink-soft', labelKey: 'island_history.type_info' },
   success: { dot: 'bg-green', labelKey: 'island_history.type_success' },
   error: { dot: 'bg-danger', labelKey: 'island_history.type_error' },
   loading: { dot: 'bg-gold', labelKey: 'island_history.type_info' },
 };
-const KIND_ORDER: IslandKind[] = ['copy', 'copy-image', 'cut', 'paste', 'info', 'success', 'error'];
+const KIND_ORDER: IslandKind[] = ['copy', 'copy-image', 'cut', 'paste', 'screenshot', 'info', 'success', 'error'];
 
 // ===== 类型筛选：单选即时过滤，下拉面板附各类型计数 =====
 type FilterKind = IslandKind | 'all';
@@ -247,9 +248,9 @@ const filterLabel = computed(() =>
   filter.value === 'all' ? t('island_history.type_all') : t(kindMeta[filter.value].labelKey),
 );
 
-/** 列表内容渲染：图片类条目（复制/粘贴/剪切图片，DB 存的是降采样缩略图 data URL）→ <img> 渲染；
+/** 列表内容渲染：图片类条目（复制/粘贴/剪切/截图图片，DB 存的是降采样缩略图 data URL）→ <img> 渲染；
  * 其他条目显示文本。缩略图生成失败回退空串 → 显示「[图片]」占位；其他空内容条目回退类型标签 */
-const IMAGE_KINDS: ReadonlySet<IslandKind> = new Set<IslandKind>(['copy-image', 'paste', 'cut']);
+const IMAGE_KINDS: ReadonlySet<IslandKind> = new Set<IslandKind>(['copy-image', 'paste', 'cut', 'screenshot']);
 function isThumb(item: IslandHistoryItem): boolean {
   return IMAGE_KINDS.has(item.kind) && item.text.startsWith('data:');
 }

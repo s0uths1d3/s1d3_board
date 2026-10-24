@@ -41,6 +41,20 @@ export function suppressUseCountBump(ms?: number): void {
 }
 
 /**
+ * 截图直录入库（snip 确认流程用）：截图不依赖系统剪贴板 watcher 回捕（回捕的
+ * source_app 是前台应用而非截图标记，且时序不可控），直接以 imgfile: 引用落库。
+ * 必须走本管道的仓储实例——suppressUseCountBump 抑制窗口存活在其闭包内（见上），
+ * 换实例会让"写剪贴板触发的回捕 upsert"绕过抑制而双计。来源固定 's1d3-board'
+ * 供列表来源展示与统计识别；岛提示由调用方 notifySnipIsland 负责（不走 island:copy，
+ * 避免"已复制 + 已截图"双弹）。隐私模式由调用方把关（保留"仅写剪贴板不入库"组合）。
+ */
+export async function saveSnipToHistory(fileRef: string, qrText: string | null): Promise<void> {
+    prewarmImageCacheByRef(fileRef);
+    await repo.saveClipboard(fileRef, 'image', 's1d3-board', qrText ?? '', fileRef);
+    bus.emit('clipboard:changed');
+}
+
+/**
  * 复制瞬间的来源应用：查询当前前台进程名（复制不切换焦点，监听回调触发时前台仍是复制方）。
  * 查询失败不阻断入库（来源留空，UI 不显示）。模块级：快速通道捕获（tryCaptureClipboardImage）共用。
  */
@@ -138,12 +152,22 @@ export async function startClipboardListener(): Promise<void> {
 // capturing 互斥：两源并发只捕获一次，捕获失败自动释放由下一轮轮询/事件重试。
 let capturingImage = false;
 
+/** 截图写入剪贴板的抑制窗口：snip 确认流程写系统剪贴板后，watcher/快速通道会在
+ *  ~200ms 内把同一张图再捕获入库一遍——直存（saveSnipToHistory）已覆盖历史，
+ *  回捕只会造成重复条目与 auto_history=off 时违背用户设置。窗口内图片捕获整体跳过。 */
+let snipCaptureSuppressUntil = 0;
+export function suppressSnipCapture(ms = 1500): void {
+    snipCaptureSuppressUntil = Date.now() + ms;
+}
+
 /** 捕获当前剪贴板图片：快速通道单命令落盘（原图不过前端 IPC），派发岛事件 + 入库。
  *  隐私暂停 / 来源应用被忽略时静默跳过。返回是否进入了捕获流程。 */
 export async function tryCaptureClipboardImage(): Promise<boolean> {
     if (capturingImage) return false;
     // 隐私模式：暂停一切记录（快速通道捕获也不做，应用对剪贴板「失明」）
     if (isPrivacyPaused()) return false;
+    // 截图写剪贴板抑制窗口（见 suppressSnipCapture）
+    if (Date.now() < snipCaptureSuppressUntil) return false;
     capturingImage = true;
     try {
         // 来源应用忽略名单：命中应用复制的图片不落盘、不落库、不弹岛

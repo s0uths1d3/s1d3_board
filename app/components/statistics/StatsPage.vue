@@ -329,6 +329,7 @@ const metricCards = computed(() => {
   return [
     { name: t('statistics.metric_clip_total'), value: (s.clip_text ?? 0) + (s.clip_image ?? 0), hint: t('statistics.metric_clip_total_hint'), icon: 'clip' },
     { name: t('statistics.metric_image'), value: s.clip_image ?? 0, hint: t('statistics.metric_image_hint'), icon: 'image' },
+    { name: t('statistics.metric_screenshot'), value: s.clip_screenshot ?? 0, hint: t('statistics.metric_screenshot_hint'), icon: 'image' },
     { name: t('statistics.metric_paste'), value: s.clip_use ?? 0, hint: t('statistics.metric_paste_hint'), icon: 'paste' },
     { name: t('statistics.metric_ai_analysis'), value: s.ai_analysis ?? 0, hint: t('statistics.metric_ai_analysis_hint'), icon: 'ai' },
     { name: t('statistics.metric_cut'), value: s.clip_cut ?? 0, hint: t('statistics.metric_cut_hint'), icon: 'cut' },

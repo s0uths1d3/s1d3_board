@@ -494,6 +494,15 @@ ALTER TABLE note ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
 -- 新导航 Tab「日历」的访问统计列（与 v15 的 tab_app_usage 同模式）
 ALTER TABLE daily_stat ADD COLUMN tab_calendar INTEGER NOT NULL DEFAULT 0;
                             "#
+                        },
+                        Migration {
+                            version: 23,
+                            description: "Add screenshot stat column to daily_stat",
+                            kind: MigrationKind::Up,
+                            sql: r#"
+-- 截图（snip）成功次数：独立于 clip_image 的截图动作计数（.docs/screenshot-spec.md P1-T5）
+ALTER TABLE daily_stat ADD COLUMN clip_screenshot INTEGER NOT NULL DEFAULT 0;
+                            "#
                         }
     ]
 }

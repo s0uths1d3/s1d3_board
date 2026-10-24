@@ -68,6 +68,20 @@ export const settings: SettingGroup[] = [
           { label: 'setting.general.ignored_apps', value: '', type: 'action' },
         ],
       },
+      {
+        // 截图（snip）：开关 / 自动复制 / 自动入历史 / 保存格式 / 遮罩暗度 / 默认目录 / 延时 / 捕获光标
+        title: 'setting.subgroups.clipboard_snip',
+        items: [
+          { label: 'setting.general.snip_enabled', value: '', type: 'checkbox' },
+          { label: 'setting.general.snip_auto_copy', value: '', type: 'checkbox' },
+          { label: 'setting.general.snip_auto_history', value: '', type: 'checkbox' },
+          { label: 'setting.general.snip_delay', value: '', type: 'input' },
+          { label: 'setting.general.snip_capture_cursor', value: '', type: 'checkbox' },
+          { label: 'setting.general.snip_format', value: '', type: 'select' },
+          { label: 'setting.general.snip_mask_opacity', value: '', type: 'input' },
+          { label: 'setting.general.snip_save_dir', value: '', type: 'input' },
+        ],
+      },
     ],
   },
   {

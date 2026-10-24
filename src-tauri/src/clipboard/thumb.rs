@@ -313,7 +313,9 @@ pub fn parse_dib(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 /// 仅岛显示缩略图链路使用（384px 小图，Default 压缩毫秒级）；原图落盘/data URL
 /// 已由 image_store::encode_rgba_png（Fast 档）单次编码承担，此处不再参与。
 #[cfg(target_os = "windows")]
-fn thumb_png(w: u32, h: u32, rgba: &[u8], max_h: u32) -> Option<String> {
+/// RGBA → 缩略图 PNG data URL（高度超 max_h 时 Triangle 缩放）。pub(crate)：
+/// snip 裁剪结果复用同款缩略图（岛显示 384px 档）。
+pub(crate) fn thumb_png(w: u32, h: u32, rgba: &[u8], max_h: u32) -> Option<String> {
     use base64::Engine;
     use std::io::Cursor;
     let img = image::RgbaImage::from_raw(w, h, rgba.to_vec())?;
