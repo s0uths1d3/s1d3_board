@@ -15,15 +15,35 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useHead } from '#imports';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { emit } from '@tauri-apps/api/event';
+import { emit, listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { writeText } from 'tauri-plugin-clipboard-api';
+import { readText, writeText } from 'tauri-plugin-clipboard-api';
 import { useI18n } from '~/composables/useI18n';
 import { useTransparentWindow } from '~/composables/useTransparentWindow';
 import { notifyIsland, suppressIslandCopy } from '~/composables/useCopyIsland';
 import UiColorPicker from '~/components/ui/UiColorPicker.vue';
-import { ensureSnipAnnoLoaded, snipAnno } from '~/src/snip/snipSettings';
-import { ensureSnipSettingsLoaded, useSnipMaskOpacity } from '~/src/snip/snipSettings';
+import { open } from '@tauri-apps/plugin-dialog';
+import { join, pictureDir } from '@tauri-apps/api/path';
+import {
+  ensureSnipAnnoLoaded, snipAnno,
+  ensureSnipSettingsLoaded, setSnipFormat, setSnipJpegQuality, setSnipSaveDir, setSnipLastRegion,
+  useSnipFormat, useSnipJpegQuality, useSnipMaskOpacity, useSnipOcrLang, useSnipSaveDir, useSnipUploadUrl,
+} from '~/src/snip/snipSettings';
+import { aiVision, loadAiConfig } from '~/src/smart-clip/aiClient';
+import { resolveImageContent } from '~/src/core/db/imageRef';
+import {
+  boundsOf as annoBoundsOf,
+  cloneAnno,
+  defaultMeasureText,
+  hitBoundsOf,
+  nextStepLabel,
+  renumberSteps,
+  resizeAnnoByHandle,
+  stepRadius,
+  type AnnoTool,
+  type Annotation,
+  type MeasureText,
+} from '~/src/snip/annotations';
 import {
   hitTestHandle,
   isValidSelection,
@@ -81,34 +101,13 @@ const guideW = computed(() => Math.max(1, Math.round(uiScale.value)));
 const magnifier = reactive({ visible: false, hex: '', rgb: '' });
 
 let unlisteners: Array<() => void> = [];
+/** 原生对话框打开计数（>0 时失焦不触发兜底取消，见 onFocusChanged 护盾注释） */
+let nativeDialogOpen = 0;
 let probeTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ===== 标注系统（P1-T1）：对象数组 + 快照栈，页面逻辑坐标，烘焙时乘 scale =====
-type AnnoTool = 'move' | 'rect' | 'ellipse' | 'arrow' | 'pen' | 'text' | 'mosaic';
-interface Annotation {
-  id: number;
-  tool: AnnoTool;
-  color: string;
-  size: number;
-  /** rect/ellipse/arrow/mosaic：拖拽对角；text：落点 */
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  /** pen：采点折线（逻辑坐标） */
-  points?: Array<{ x: number; y: number }>;
-  /** text：文本内容（\n 分行） */
-  text?: string;
-  /** text：白底衬块（提交时取当期开关，默认关） */
-  bg?: boolean;
-  /** mosaic：块大小（逻辑 px 4~60，创建时随标注记录；渲染时即时重采样。
-   *  马赛克=像素块尺寸，模糊=强度，同一数值双语义） */
-  block?: number;
-  /** mosaic：遮挡样式（创建时随标注记录；mosaic=像素块，blur=平滑模糊） */
-  style?: 'mosaic' | 'blur';
-  /** rect：圆角半径（逻辑 px，创建时随标注记录；渲染再钳到 min(w,h)/2） */
-  radius?: number;
-}
+/** 工具 = 标注工具 + 移动/选择工具 */
+type Tool = AnnoTool | 'move';
 const SNIP_PALETTE = ['#f0b429', '#ef4444', '#3b82f6', '#22c55e', '#111111', '#ffffff'];
 const SNIP_SIZE_MIN = 1;
 const SNIP_SIZE_MAX = 80;
@@ -125,7 +124,7 @@ const mosaicStyle = computed({
   get: () => snipAnno.mosaicStyle,
   set: (v: 'mosaic' | 'blur') => { snipAnno.mosaicStyle = v; },
 });
-const annoTool = ref<AnnoTool | null>(null);
+const annoTool = ref<Tool | null>(null);
 const annoColor = computed({
   get: () => snipAnno.color,
   set: (v: string) => { snipAnno.color = v; },
@@ -134,9 +133,10 @@ const annoColor = computed({
  *  方框/椭圆描边过粗视觉不可用，单独钳制到 20；马赛克笔刷上限 100 */
 const DEFAULT_ANNO_SIZE = 5;
 const TOOL_SIZE_MAX: Partial<Record<AnnoTool, number>> = { rect: 20, ellipse: 20 };
-const currentSizeMax = computed(() =>
-  (annoTool.value && TOOL_SIZE_MAX[annoTool.value]) ?? SNIP_SIZE_MAX,
-);
+const currentSizeMax = computed(() => {
+  const t = annoTool.value;
+  return (t && t !== 'move' ? TOOL_SIZE_MAX[t] : undefined) ?? SNIP_SIZE_MAX;
+});
 const currentSize = computed({
   get: () => {
     const t = annoTool.value;
@@ -167,8 +167,15 @@ const redoStack = ref<Annotation[][]>([]);
 /** 进行中的标注（拖拽中） */
 const activeAnno = ref<Annotation | null>(null);
 let annoDragging = false;
-/** 移动工具拖拽状态（目标标注 id + 上一步光标） */
-const moveState = reactive({ active: false, id: 0, lastX: 0, lastY: 0 });
+/** 移动工具拖拽状态（目标标注 id + 上一步光标）；moved 用于延迟入撤销栈
+ *  （单纯点选不应产生撤销记录） */
+const moveState = reactive({ active: false, id: 0, lastX: 0, lastY: 0, moved: false });
+/** 长截图中止标记（Esc 或会话取消时置位，抓帧循环尽快退出） */
+let longAbort = false;
+/** 对象级编辑：当前选中标注 id（move 工具下可缩放/删除/复制） */
+const annoSelectedId = ref(0);
+/** 标注缩放手柄拖拽状态 */
+const annoResize = reactive({ active: false, handle: 'se' as Handle, id: 0 });
 /** 文字工具：浮动输入框位置与内容 */
 const textDraft = reactive({ visible: false, x: 0, y: 0, value: '', bg: false });
 const textInputEl = ref<HTMLTextAreaElement | null>(null);
@@ -193,6 +200,42 @@ function redoAnno(): void {
   redrawAnnos();
 }
 
+/** 删除选中标注（恢复快照可撤销；序号随之重排保持连续） */
+function deleteSelectedAnno(): void {
+  const id = annoSelectedId.value;
+  if (!id) return;
+  const idx = annotations.value.findIndex((a) => a.id === id);
+  if (idx < 0) { annoSelectedId.value = 0; return; }
+  snapshotForUndo();
+  const next = annotations.value.slice();
+  next.splice(idx, 1);
+  annotations.value = renumberSteps(next);
+  annoSelectedId.value = 0;
+  redrawAnnos();
+}
+
+/** 复制选中标注（偏移 16px；副本成为新的选中项；序号重排） */
+function duplicateSelectedAnno(): void {
+  const a = selectedAnno();
+  if (!a) return;
+  snapshotForUndo();
+  const copy = cloneAnno(a, ++annoSeq, 16, 16);
+  annotations.value = renumberSteps([...annotations.value, copy]);
+  annoSelectedId.value = copy.id;
+  redrawAnnos();
+}
+
+/** 近白色判定（序号数字反色：浅色圆底用深色数字） */
+function isNearWhite(hex: string): boolean {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return false;
+  const n = parseInt(m[1]!, 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 200;
+}
+
 // ===== 生命周期 =====
 onMounted(async () => {
   useTransparentWindow();
@@ -202,16 +245,43 @@ onMounted(async () => {
 
   const win = getCurrentWebviewWindow();
   // 窗口级监听（禁止全局 listen：多窗口串扰，见 bubble.vue ring 模式注释）
-  unlisteners.push(await win.listen<{ dataUrl: string; scale: number; originX: number; originY: number; width: number; height: number }>('snip:data', (ev) => {
+  unlisteners.push(await win.listen<{
+    dataUrl: string; scale: number; originX: number; originY: number; width: number; height: number;
+    preselect?: { x: number; y: number; w: number; h: number } | null;
+  }>('snip:data', (ev) => {
     void startSession(ev.payload);
   }));
+  // OCR 能力检测：系统未安装识别语言时隐藏动作（非 Windows 恒空）
+  void invoke<string[]>('snip_ocr_languages')
+    .then((langs) => { ocrLangs.value = Array.isArray(langs) ? langs : []; })
+    .catch(() => { ocrLangs.value = []; });
+  // AI 识图能力：已配置 Key 且提供商支持图片输入才显示按钮
+  void loadAiConfig()
+    .then((cfg) => { aiReady.value = Boolean(cfg.apiKey) && cfg.provider !== 'custom'; })
+    .catch(() => { aiReady.value = false; });
+  // 全分辨率引用转发（管理器 full-ready 后 emitTo）：保存自闭环的裁剪源 +
+  // 全分辨率标注烘焙 / 放大镜采样源（4K 屏不再用预览放大）
+  unlisteners.push(await win.listen<{ fileRef: string }>('snip:full-ref', (ev) => {
+    fullFileRef.value = ev.payload.fileRef;
+    void loadFullSource(ev.payload.fileRef);
+  }));
+  // 原生对话框护盾：目录/文件选择等系统对话框打开期间覆盖窗必然失焦——
+  // 不护盾会被「失焦兜底取消」误杀（点浏览界面直接消失，用户实测）。
+  // 计数制：页面自身 browse +1，管理器保存对话框经 snip:dialog-guard 事件 ±1
+  unlisteners.push(await listen<number>('snip:dialog-guard', (ev) => {
+    nativeDialogOpen += Number(ev.payload) || 0;
+  }));
   unlisteners.push(await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-    // 覆盖窗失焦 = 被系统/其他应用抢焦点：兜底取消（正常路径是 Esc/右键 snip:cancel）
-    if (!focused && mode.value !== 'loading') void emit('snip:cancel');
+    // 覆盖窗失焦 = 被系统/其他应用抢焦点：兜底取消（正常路径是 Esc/右键 snip:cancel）；
+    // 原生对话框打开期间的失焦不算（对话框关闭后焦点自然回流）
+    if (!focused && mode.value !== 'loading' && nativeDialogOpen === 0) void emit('snip:cancel');
   }));
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('contextmenu', onContextMenu);
   window.addEventListener('dblclick', onDblClick);
+  // 页面级异常入 HUD（覆盖窗 devtools 打不开，错误原文需要屏上可见）
+  window.addEventListener('error', (e) => trace(`页面错误：${e.message}`));
+  window.addEventListener('unhandledrejection', (e) => trace(`未处理拒绝：${String(e.reason)}`));
   await emit('snip:ready', getCurrentWindow().label);
 });
 
@@ -229,7 +299,10 @@ onBeforeUnmount(() => {
  *  无底图的框选等于盲选）。常驻窗复用：每次会话完整重置上一轮状态。
  *  视口尺寸用载荷值而非 window.innerWidth——隐藏窗刚 setSize 时 viewport 存在
  *  尚未同步的竞态（可能仍是预热的 1×1） */
-async function startSession(p: { dataUrl: string; scale: number; originX: number; originY: number; width: number; height: number }): Promise<void> {
+async function startSession(p: {
+  dataUrl: string; scale: number; originX: number; originY: number; width: number; height: number;
+  preselect?: { x: number; y: number; w: number; h: number } | null;
+}): Promise<void> {
   scale.value = p.scale;
   monitorOrigin.x = p.originX;
   monitorOrigin.y = p.originY;
@@ -240,10 +313,18 @@ async function startSession(p: { dataUrl: string; scale: number; originX: number
   activeAnno.value = null;
   annoDragging = false;
   annoTool.value = null;
+  annoSelectedId.value = 0;
+  annoResize.active = false;
   textDraft.visible = false;
   hoveredWindow.value = null;
   magnifier.visible = false;
   colorOpen.value = false;
+  savePanelOpen.value = false;
+  fullFileRef.value = null;
+  fullSourceImg = null;
+  fullSourceCanvas.value = null;
+  bakeSourceImg = null;
+  saveTrace.value = [];
   toolbarManual.value = null; // 新会话：工具条恢复自动定位
   viewW.value = p.width;
   viewH.value = p.height;
@@ -251,12 +332,18 @@ async function startSession(p: { dataUrl: string; scale: number; originX: number
   // 冻结画面 = 管理器随事件直达的预览图（≤2K 原图 / 4K 缩小，热路径快编产物）：
   // 无读盘、无二次 IPC，mask 与底图同帧就位。全分辨率原图仅确认裁剪时由 Rust 用
   if (!p.dataUrl.startsWith('data:')) {
-    notifyIsland({ kind: 'error', text: t('snip.capture_failed') });
+    snipNotify({ kind: 'error', text: t('snip.capture_failed') });
     void emit('snip:cancel');
     return;
   }
   bgDataUrl.value = p.dataUrl;
-  mode.value = 'idle';
+  // 多入口预选（全屏 / 窗口 / 上次区域）：直接进入 selected 态，用户可微调或确认
+  if (p.preselect && p.preselect.w >= 2 && p.preselect.h >= 2) {
+    selection.value = { ...p.preselect };
+    mode.value = 'selected';
+  } else {
+    mode.value = 'idle';
+  }
   redrawAnnos(); // 清空上一轮标注层（画布尺寸随视口重置）
 }
 
@@ -278,8 +365,9 @@ const press = reactive({ active: false, x: 0, y: 0, moved: false });
 
 function onPointerDown(e: PointerEvent) {
   if (mode.value !== 'idle' && mode.value !== 'selected') return;
-  // 画布区域按下：收起取色面板、提交未落定的文字草稿（工具条自身 pointerdown.stop，不经过此处）
+  // 画布区域按下：收起取色/保存面板、提交未落定的文字草稿（工具条自身 pointerdown.stop，不经过此处）
   colorOpen.value = false;
+  savePanelOpen.value = false;
   if (textDraft.visible) void commitTextDraft();
   const el = e.currentTarget as HTMLElement;
   el.setPointerCapture(e.pointerId);
@@ -308,26 +396,62 @@ function onPointerDown(e: PointerEvent) {
       openTextDraft(e.clientX, e.clientY);
       return;
     }
-    // 移动工具：拾取最上层标注（无命中不动作），快照后进入拖拽平移
+    // 移动工具：先判选中对象的手柄（缩放），再拾取最上层标注（点选/平移）
     if (annoTool.value === 'move') {
+      const sel = selectedAnno();
+      if (sel) {
+        const b = annoBounds(sel);
+        const h = b ? hitTestHandle(b, e.clientX, e.clientY, handleSize.value) : null;
+        if (h) {
+          snapshotForUndo();
+          annoResize.active = true;
+          annoResize.handle = h;
+          annoResize.id = sel.id;
+          return;
+        }
+      }
       const target = topmostAnnoAt(e.clientX, e.clientY);
-      if (!target) return;
-      snapshotForUndo();
+      if (!target) {
+        // 点空白：取消选中（不产生标注变更）
+        if (annoSelectedId.value) {
+          annoSelectedId.value = 0;
+          redrawAnnos();
+        }
+        return;
+      }
+      annoSelectedId.value = target.id;
       moveState.active = true;
       moveState.id = target.id;
       moveState.lastX = e.clientX;
       moveState.lastY = e.clientY;
+      moveState.moved = false;
+      redrawAnnos();
+      return;
+    }
+    // 序号工具：单击落点（不进拖拽状态机），编号按现有最大值 +1
+    if (annoTool.value === 'step') {
+      snapshotForUndo();
+      annotations.value.push({
+        id: ++annoSeq,
+        tool: 'step',
+        color: annoColor.value,
+        size: currentSize.value,
+        x1: e.clientX, y1: e.clientY, x2: e.clientX, y2: e.clientY,
+        label: nextStepLabel(annotations.value),
+      });
+      redrawAnnos();
       return;
     }
     snapshotForUndo();
     annoDragging = true;
+    const freehand = annoTool.value === 'pen' || annoTool.value === 'highlighter';
     activeAnno.value = {
       id: ++annoSeq,
       tool: annoTool.value,
       color: annoColor.value,
       size: currentSize.value,
       x1: e.clientX, y1: e.clientY, x2: e.clientX, y2: e.clientY,
-      points: annoTool.value === 'pen' ? [{ x: e.clientX, y: e.clientY }] : undefined,
+      points: freehand ? [{ x: e.clientX, y: e.clientY }] : undefined,
       block: annoTool.value === 'mosaic' ? mosaicBlock.value : undefined,
       style: annoTool.value === 'mosaic' ? mosaicStyle.value : undefined,
       radius: annoTool.value === 'rect' ? rectRadius.value : undefined,
@@ -375,10 +499,24 @@ function onPointerMove(e: PointerEvent) {
     selection.value = rectFromDrag(dragStart.x, dragStart.y, e.clientX, e.clientY, viewW.value, viewH.value);
     return;
   }
-  // 移动工具：目标标注实时平移（选区钳制），光标位置推进
+  // 标注对象缩放手柄拖拽：按手柄映射几何（跨轴翻转由纯函数处理）
+  if (annoResize.active) {
+    const idx = annotations.value.findIndex((a) => a.id === annoResize.id);
+    if (idx < 0) { annoResize.active = false; return; }
+    annotations.value[idx] = resizeAnnoByHandle(
+      annotations.value[idx]!, annoResize.handle, e.clientX, e.clientY, measureTextReal,
+    );
+    redrawAnnos();
+    return;
+  }
+  // 移动工具：目标标注实时平移（选区钳制），首次真实位移才入撤销栈
   if (moveState.active) {
     const target = annotations.value.find((a) => a.id === moveState.id);
     if (!target) { moveState.active = false; return; }
+    if (!moveState.moved) {
+      snapshotForUndo();
+      moveState.moved = true;
+    }
     translateAnnoClamped(target, e.clientX - moveState.lastX, e.clientY - moveState.lastY, selection.value!);
     moveState.lastX = e.clientX;
     moveState.lastY = e.clientY;
@@ -391,7 +529,7 @@ function onPointerMove(e: PointerEvent) {
     const sel = selection.value!;
     let cx = Math.min(Math.max(e.clientX, sel.x), sel.x + sel.w);
     let cy = Math.min(Math.max(e.clientY, sel.y), sel.y + sel.h);
-    if (a.tool === 'pen') a.points!.push({ x: cx, y: cy });
+    if (a.tool === 'pen' || a.tool === 'highlighter') a.points!.push({ x: cx, y: cy });
     else if (a.tool === 'rect' || a.tool === 'ellipse') {
       // Shift：方框→正方形、椭圆→正圆（取较长边，方向跟随拖拽象限）
       if (e.shiftKey) {
@@ -426,11 +564,14 @@ async function onPointerUp(e: PointerEvent) {
   const pressMoved = press.moved;
   press.active = false;
   if (moveState.active) { moveState.active = false; return; }
+  if (annoResize.active) { annoResize.active = false; return; }
   if (annoDragging && activeAnno.value) {
     annoDragging = false;
     const a = activeAnno.value;
-    // 过小（单点矩形/两点箭头）丢弃并回退快照
-    const tiny = a.tool !== 'pen' && Math.abs(a.x2 - a.x1) < 3 && Math.abs(a.y2 - a.y1) < 3;
+    // 过小（单点矩形/两点箭头）丢弃并回退快照；笔迹类至少 2 点
+    const tiny = a.tool === 'pen' || a.tool === 'highlighter'
+      ? (a.points?.length ?? 0) < 2
+      : Math.abs(a.x2 - a.x1) < 3 && Math.abs(a.y2 - a.y1) < 3;
     if (tiny) {
       undoStack.value.pop();
       activeAnno.value = null;
@@ -464,7 +605,7 @@ async function onPointerUp(e: PointerEvent) {
       suppressIslandCopy();
       try {
         await writeText(magnifier.hex);
-        notifyIsland({ kind: 'success', text: t('snip.color_copied', { hex: magnifier.hex }) });
+        snipNotify({ kind: 'success', text: t('snip.color_copied', { hex: magnifier.hex }) });
       } catch { /* 写剪贴板失败：静默 */ }
     }
   }
@@ -519,9 +660,9 @@ const magCanvas = ref<HTMLCanvasElement | null>(null);
 const bgImgRef = ref<HTMLImageElement | null>(null);
 
 function updateMagnifier(): void {
-  const img = bgImgRef.value;
+  const preview = bgImgRef.value;
   const canvas = magCanvas.value;
-  if (!img || !img.naturalWidth || !canvas) {
+  if (!preview || !preview.naturalWidth || !canvas) {
     magnifier.visible = false;
     return;
   }
@@ -529,12 +670,18 @@ function updateMagnifier(): void {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return;
   ctx.imageSmoothingEnabled = false;
+  // 优先全分辨率原图：4K 屏预览长边仅 2560，用预览采样等于放大模糊块；
+  // full-ref 到达后改用原图（12 物理像素 → 96px 放大，取色精确到物理像素）
+  const src: CanvasImageSource = fullSourceImg ?? preview;
+  const srcW = fullSourceImg ? fullSourceImg.naturalWidth : preview.naturalWidth;
+  const srcH = fullSourceImg ? fullSourceImg.naturalHeight : preview.naturalHeight;
+  if (srcW < 12 || srcH < 12) { magnifier.visible = false; return; }
   // 源区域钳制在图内（光标贴边时区域随之收进），保证画布中心恒为光标像素
-  const sx = Math.min(Math.max(0, Math.floor(cursor.x * scale.value) - 6), img.naturalWidth - 12);
-  const sy = Math.min(Math.max(0, Math.floor(cursor.y * scale.value) - 6), img.naturalHeight - 12);
+  const sx = Math.min(Math.max(0, Math.floor(cursor.x * scale.value) - 6), srcW - 12);
+  const sy = Math.min(Math.max(0, Math.floor(cursor.y * scale.value) - 6), srcH - 12);
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, 96, 96);
-  ctx.drawImage(img, sx, sy, 12, 12, 0, 0, 96, 96);
+  ctx.drawImage(src, sx, sy, 12, 12, 0, 0, 96, 96);
   const data = ctx.getImageData(48, 48, 1, 1).data;
   const [r = 0, g = 0, b = 0] = data;
   const hex = `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
@@ -548,8 +695,10 @@ function scheduleWindowProbe(cx: number, cy: number): void {
   probeTimer = setTimeout(() => {
     probeTimer = null;
     void invoke<{ x: number; y: number; w: number; h: number } | null>('snip_windows_at_point', {
-      x: Math.round(cx * scale.value),
-      y: Math.round(cy * scale.value),
+      // 全局物理坐标 = 页面逻辑坐标 × scale + 覆盖窗（虚拟桌面）原点。
+      // 漏加原点会让副屏/负坐标屏的窗口探测落到主屏，吸附框错位
+      x: Math.round(cx * scale.value + monitorOrigin.x),
+      y: Math.round(cy * scale.value + monitorOrigin.y),
     }).then((r) => {
       if (!r || r.w <= 0 || r.h <= 0) { hoveredWindow.value = null; return; }
       // 全局物理坐标 → 页面内逻辑坐标：减显示器原点后除 scale
@@ -569,9 +718,29 @@ function inRect(r: Rect, px: number, py: number): boolean {
 
 // ===== 键盘（页内自治，overlay 持焦时主窗口 local 快捷键收不到） =====
 function onKeydown(e: KeyboardEvent) {
+  // 长截图进行中：仅接受 Esc 中止（其余按键属于目标应用）
+  if (longMode.value) {
+    if (e.key === 'Escape') longAbort = true;
+    return;
+  }
+  // OCR 结果确认框：Esc 取消、Ctrl/Cmd+Enter 确认复制；其余按键交给文本框
+  if (ocrResult.visible) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      ocrResult.visible = false;
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      void confirmOcrCopy();
+      return;
+    }
+    return;
+  }
   if (e.key === 'Escape') {
     e.preventDefault();
-    // Esc 阶梯（逐层退出，不一键全关）：草稿 → 取色面板 → 工具模式 → 选中态 → 关闭截图
+    // Esc 阶梯（逐层退出，不一键全关）：保存面板 → 草稿 → 取色面板 → 工具模式 → 选中态 → 关闭截图
+    if (savePanelOpen.value) { savePanelOpen.value = false; return; }
     if (textDraft.visible) { textDraft.visible = false; undoStack.value.pop(); return; }
     if (colorOpen.value) { colorOpen.value = false; return; }
     if (annoTool.value) { annoTool.value = null; return; }
@@ -585,6 +754,8 @@ function onKeydown(e: KeyboardEvent) {
       press.active = false;
       press.moved = false;
       annoDragging = false;
+      annoResize.active = false;
+      annoSelectedId.value = 0;
       activeAnno.value = null;
       redrawAnnos();
       mode.value = 'idle';
@@ -610,15 +781,33 @@ function onKeydown(e: KeyboardEvent) {
     redoAnno();
     return;
   }
+  // Ctrl+S：快捷保存（跳过保存面板，按当前目录/格式/质量直接落盘）
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    if (mode.value === 'selected' && selection.value) void doSave();
+    return;
+  }
   if (e.key === 'Enter' && mode.value === 'selected' && !annoTool.value) {
     e.preventDefault();
     confirmSelection('copy');
     return;
   }
-  // 数字 1~7 切换标注工具（selected 态；7 = 移动，与工具条 tooltip 编号一致）
-  if (mode.value === 'selected' && ['1', '2', '3', '4', '5', '6', '7'].includes(e.key)) {
+  // 对象级编辑：Delete/Backspace 删除选中标注；Ctrl+D 原地复制
+  if (mode.value === 'selected' && annoSelectedId.value && (e.key === 'Delete' || e.key === 'Backspace')) {
     e.preventDefault();
-    toggleTool((['rect', 'ellipse', 'arrow', 'pen', 'text', 'mosaic', 'move'] as AnnoTool[])[Number(e.key) - 1]!);
+    deleteSelectedAnno();
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && mode.value === 'selected' && annoSelectedId.value) {
+    e.preventDefault();
+    duplicateSelectedAnno();
+    return;
+  }
+  // 数字 1~9 切换标注工具，0 = 移动（selected 态；与工具条 tooltip 编号一致）
+  if (mode.value === 'selected' && /^[0-9]$/.test(e.key)) {
+    e.preventDefault();
+    const tools: Tool[] = ['rect', 'ellipse', 'arrow', 'line', 'pen', 'highlighter', 'text', 'mosaic', 'step', 'move'];
+    toggleTool(tools[e.key === '0' ? 9 : Number(e.key) - 1]!);
     return;
   }
   // G：切换参考辅助线（三分线 + 中心线）
@@ -645,6 +834,28 @@ function onContextMenu(e: MouseEvent): void {
 // ===== 标注渲染（annoCanvas：物理分辨率，ctx 按逻辑坐标绘制） =====
 const annoCanvas = ref<HTMLCanvasElement | null>(null);
 let bgSourceCanvas: HTMLCanvasElement | null = null;
+/** 全分辨率原图（full-ref 读盘解码）：放大镜采样与标注烘焙优先使用，4K 无损 */
+let fullSourceImg: HTMLImageElement | null = null;
+const fullSourceCanvas = ref<HTMLCanvasElement | null>(null);
+/** 烘焙期间的马赛克采样源（临时指向全分辨率原图；null = 预览图） */
+let bakeSourceImg: HTMLImageElement | null = null;
+
+/** 读入全分辨率原图（后台，不阻塞交互）：解码成功才替换引用，失败保留预览源 */
+async function loadFullSource(fileRef: string): Promise<void> {
+  const data = await resolveImageContent(fileRef).catch(() => '');
+  if (!data || !data.startsWith('data:')) return;
+  const img = new Image();
+  img.onload = () => {
+    if (!img.naturalWidth) return;
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    c.getContext('2d')?.drawImage(img, 0, 0);
+    fullSourceImg = img;
+    fullSourceCanvas.value = c;
+  };
+  img.src = data;
+}
 
 function annoCtx(): CanvasRenderingContext2D | null {
   const c = annoCanvas.value;
@@ -689,6 +900,12 @@ function strokeAnno(ctx: CanvasRenderingContext2D, a: Annotation): void {
       ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
       ctx.stroke();
       break;
+    case 'line':
+      ctx.beginPath();
+      ctx.moveTo(a.x1, a.y1);
+      ctx.lineTo(a.x2, a.y2);
+      ctx.stroke();
+      break;
     case 'arrow': {
       ctx.beginPath();
       ctx.moveTo(a.x1, a.y1);
@@ -713,6 +930,35 @@ function strokeAnno(ctx: CanvasRenderingContext2D, a: Annotation): void {
         ctx.stroke();
       }
       break;
+    case 'highlighter':
+      // 荧光笔：半透明粗笔触（覆盖底图而不遮挡），方头线帽更像记号笔
+      if (a.points && a.points.length > 1) {
+        ctx.save();
+        ctx.globalAlpha = 0.35;
+        ctx.lineWidth = Math.max(8, a.size * 3);
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(a.points[0]!.x, a.points[0]!.y);
+        for (const p of a.points.slice(1)) ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+      break;
+    case 'step': {
+      // 序号：实心圆 + 反白数字（近白圆底用深色数字保证可读）
+      const r = stepRadius(a.size);
+      ctx.beginPath();
+      ctx.arc(a.x1, a.y1, r, 0, Math.PI * 2);
+      ctx.fillStyle = a.color;
+      ctx.fill();
+      ctx.fillStyle = isNearWhite(a.color) ? '#111111' : '#ffffff';
+      ctx.font = `bold ${Math.max(10, Math.round(r * 1.15))}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(a.label ?? 1), a.x1, a.y1 + r * 0.04);
+      break;
+    }
     case 'text': {
       const fontSize = a.size * 4;
       ctx.font = `${fontSize}px ui-sans-serif, system-ui, sans-serif`;
@@ -748,7 +994,7 @@ function strokeAnno(ctx: CanvasRenderingContext2D, a: Annotation): void {
       // 每次渲染即时重采样（两次 drawImage，开销可忽略）：无缓存即无陈旧内容，
       // 移动工具挪动后对新位置下的冻结画面打码（Snipaste/PixPin 同款语义）。
       // 导出烘焙复用本分支（同一 ctx 变换链），所见即所得。
-      const img = bgImgRef.value;
+      const img = bakeSourceImg ?? bgImgRef.value;
       if (img && img.naturalWidth > 0 && w >= 2 && h >= 2) {
         const dw = img.clientWidth || viewW.value;
         const dh = img.clientHeight || viewH.value;
@@ -810,7 +1056,40 @@ function redrawAnnos(): void {
   if (!sel || !isValidSelection(sel)) return;
   for (const a of annotations.value) strokeAnno(ctx, a);
   if (activeAnno.value) strokeAnno(ctx, activeAnno.value);
+  // 移动工具下选中的标注：虚线框标示可缩放/删除/复制
+  if (annoTool.value === 'move') strokeAnnoSelection(ctx);
 }
+
+/** 选中标注的虚线包围框（手柄由 DOM 渲染） */
+function strokeAnnoSelection(ctx: CanvasRenderingContext2D): void {
+  const a = selectedAnno();
+  if (!a) return;
+  const b = annoBounds(a);
+  if (!b) return;
+  ctx.save();
+  ctx.strokeStyle = '#f0b429';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  const pad = 2;
+  ctx.strokeRect(b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2);
+  ctx.restore();
+}
+
+/** 选中标注的 8 向手柄渲染点 */
+const annoHandlePoints = computed<Array<{ handle: Handle; x: number; y: number }>>(() => {
+  if (mode.value !== 'selected' || annoTool.value !== 'move') return [];
+  const a = selectedAnno();
+  if (!a) return [];
+  const b = annoBounds(a);
+  if (!b) return [];
+  const { x, y, w, h } = b;
+  return [
+    { handle: 'nw', x, y }, { handle: 'n', x: x + w / 2, y }, { handle: 'ne', x: x + w, y },
+    { handle: 'e', x: x + w, y: y + h / 2 }, { handle: 'se', x: x + w, y: y + h },
+    { handle: 's', x: x + w / 2, y: y + h }, { handle: 'sw', x, y: y + h },
+    { handle: 'w', x, y: y + h / 2 },
+  ];
+});
 
 // 选区变化（拖拽建区/手柄缩放/移动/清空）同步重绘：裁剪矩形在绘制时烘焙，
 // 不重绘会残留旧边界的裁剪结果（手柄放大后标注仍被旧范围截断）
@@ -819,45 +1098,39 @@ watch(selection, () => {
   redrawAnnos();
 });
 
-/** 近白色判定（文字白底衬块时自动把近白文字加深，避免白字白底不可读） */
-function isNearWhite(hex: string): boolean {
-  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return false;
-  const n = parseInt(hex.slice(1), 16);
-  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-  return (r * 299 + g * 587 + b * 114) / 1000 > 230;
+/** 画布测量上下文（模块级复用）：文字标注宽高与渲染共用同一字体口径 */
+let measureCtx: CanvasRenderingContext2D | null = null;
+const measureTextReal: MeasureText = (text, fontSize) => {
+  measureCtx ??= document.createElement('canvas').getContext('2d');
+  if (!measureCtx) return defaultMeasureText(text, fontSize);
+  measureCtx.font = `${fontSize}px ui-sans-serif, system-ui, sans-serif`;
+  let w = 0;
+  for (const line of text.split('\n')) w = Math.max(w, measureCtx.measureText(line).width);
+  return { w, h: Math.max(1, text.split('\n').length) * fontSize * 1.3 };
+};
+
+/** 当前选中标注（move 工具下可缩放/删除/复制） */
+function selectedAnno(): Annotation | null {
+  return annotations.value.find((a) => a.id === annoSelectedId.value) ?? null;
 }
 
-/** 标注的包围盒（移动工具命中与选区钳制用；逻辑坐标） */
+/** 标注的紧致包围盒（缩放手柄定位与选区钳制用；逻辑坐标） */
 function annoBounds(a: Annotation): Rect | null {
   if (a.tool === 'text') return textAnnoBounds(a);
-  if (a.tool === 'mosaic') return mosaicRegion(a);
-  if (a.tool === 'pen') {
-    if (!a.points?.length) return null;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of a.points) {
-      minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-    }
-    const pad = a.size;
-    return { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
-  }
-  const x = Math.min(a.x1, a.x2);
-  const y = Math.min(a.y1, a.y2);
-  const w = Math.abs(a.x2 - a.x1);
-  const h = Math.abs(a.y2 - a.y1);
-  if (a.tool === 'arrow') {
-    const pad = a.size * 2;
-    return { x: x - pad, y: y - pad, w: w + pad * 2, h: h + pad * 2 };
-  }
-  if (w <= 0 || h <= 0) return null; // rect/ellipse/mosaic 未成形
-  return { x, y, w, h };
+  return annoBoundsOf(a, measureTextReal);
+}
+
+/** 标注的命中包围盒（点选拾取用：外扩线宽/笔刷半径） */
+function annoHitBounds(a: Annotation): Rect | null {
+  if (a.tool === 'text') return textAnnoBounds(a);
+  return hitBoundsOf(a, measureTextReal);
 }
 
 /** 最上层包含指定点的标注（移动工具拾取；从数组尾部向前） */
 function topmostAnnoAt(px: number, py: number): Annotation | null {
   for (let i = annotations.value.length - 1; i >= 0; i--) {
     const a = annotations.value[i]!;
-    const b = annoBounds(a);
+    const b = annoHitBounds(a);
     if (b && inRect(b, px, py)) return a;
   }
   return null;
@@ -927,26 +1200,31 @@ function confirmSelection(action: 'copy' | 'save' | 'pin'): void {
     void emit('snip:confirm', payload);
     return;
   }
-  // 烘焙：输出画布为全分辨率物理尺寸（payload.w×h），底图源是「预览图」——
-  // 4K 会话的预览长边 ≤2560，源坐标必须按 预览natural/全分辨率 比例映射，
-  // 否则会从预览图的右下象限采样（区域错位）。标注逻辑坐标 × scale 不变。
-  // 已知取舍：4K 屏带标注导出的底图为预览放大（轻微软化），无标注路径仍走
-  // Rust 全分辨率裁剪，产物无损
+  // 烘焙：输出画布为全分辨率物理尺寸（payload.w×h）。底图源优先全分辨率原图
+  // （full-ref 已解码时 kx=ky=1，4K 产物逐像素无损）；未到达时回退预览图并按
+  // natural/全分辨率 比例映射源坐标（否则会从预览图右下象限采样，区域错位）。
+  // 标注逻辑坐标 × scale 不变。
+  const source = sourceForBake();
+  if (!source) { void emit('snip:confirm', payload); return; }
   const out = document.createElement('canvas');
   out.width = payload.w;
   out.height = payload.h;
   const ctx = out.getContext('2d');
   if (!ctx) { void emit('snip:confirm', payload); return; }
-  const src = bgSourceCanvas ?? bgImgRef.value!;
-  const kx = src.width / (viewW.value * scale.value);
-  const ky = src.height / (viewH.value * scale.value);
+  const kx = source.w / (viewW.value * scale.value);
+  const ky = source.h / (viewH.value * scale.value);
   ctx.drawImage(
-    src,
+    source.src,
     payload.x * kx, payload.y * ky, payload.w * kx, payload.h * ky,
     0, 0, payload.w, payload.h,
   );
   ctx.setTransform(scale.value, 0, 0, scale.value, -rect.x * scale.value, -rect.y * scale.value);
-  for (const a of annotations.value) strokeAnno(ctx, a);
+  bakeSourceImg = fullSourceImg; // 马赛克采样同步切到全分辨率源
+  try {
+    for (const a of annotations.value) strokeAnno(ctx, a);
+  } finally {
+    bakeSourceImg = null;
+  }
   const dataUrl = out.toDataURL('image/png');
   void invoke<string | null>('save_clipboard_image', { dataUrl }).then((refStr) => {
     if (!refStr) { void emit('snip:confirm', payload); return; }
@@ -1003,7 +1281,7 @@ const rootCursorClass = computed(() => {
 
 // ===== 选区外快捷键提示卡（选中态光标移到遮罩区域时跟随显示） =====
 const cursorOutsideSel = computed(() => {
-  if (mode.value !== 'selected' || textDraft.visible || colorOpen.value) return false;
+  if (mode.value !== 'selected' || textDraft.visible || colorOpen.value || savePanelOpen.value) return false;
   const s = selection.value;
   return !!s && isValidSelection(s) && !inRect(s, cursor.x, cursor.y);
 });
@@ -1013,7 +1291,7 @@ const hintLines = computed(() => [
   ...(annoTool.value === 'rect' || annoTool.value === 'ellipse'
     ? [{ k: 'Shift', label: t('snip.hint_square') }]
     : []),
-  { k: '1~7', label: t('snip.hint_tools') },
+  { k: '1~9', label: t('snip.hint_tools') },
   { k: 'Ctrl+Z', label: t('snip.tip_undo') },
   { k: 'G', label: t('snip.toggle_guides') },
   { k: 'Esc', label: t('snip.btn_cancel') },
@@ -1024,19 +1302,27 @@ const sizeLabel = computed(() => {
   return `${Math.round(s.w * scale.value)} × ${Math.round(s.h * scale.value)}`;
 });
 
-const TOOL_ICONS: Array<{ tool: AnnoTool; key: string }> = [
+const TOOL_ICONS: Array<{ tool: Tool; key: string }> = [
   { tool: 'rect', key: 'tool_rect' },
   { tool: 'ellipse', key: 'tool_ellipse' },
   { tool: 'arrow', key: 'tool_arrow' },
+  { tool: 'line', key: 'tool_line' },
   { tool: 'pen', key: 'tool_pen' },
+  { tool: 'highlighter', key: 'tool_highlighter' },
   { tool: 'text', key: 'tool_text' },
   { tool: 'mosaic', key: 'tool_mosaic' },
+  { tool: 'step', key: 'tool_step' },
   { tool: 'move', key: 'tool_move' },
 ];
 
-function toggleTool(tool: AnnoTool): void {
+function toggleTool(tool: Tool): void {
   annoTool.value = annoTool.value === tool ? null : tool;
   if (annoTool.value === 'text') textDraft.visible = false;
+  // 仅移动工具保留对象选中（其它工具下无手柄可操作，选中框会误导）
+  if (annoTool.value !== 'move') annoSelectedId.value = 0;
+  annoResize.active = false;
+  moveState.active = false;
+  redrawAnnos();
 }
 
 /** 线宽输入钳制（数值编辑：1~20，非法回落 4） */
@@ -1181,6 +1467,558 @@ const pickerUp = computed(() => {
   return pBottom + 400 * Math.min(k, 1.25) > viewH.value;
 });
 
+// ===== 保存面板：保存前选目录 / 格式 / 质量（全部持久化，记住上次选择） =====
+const savePanelOpen = ref(false);
+const saveEl = ref<HTMLElement | null>(null);
+const saveBox = reactive({ w: 280, h: 170 });
+/** 保存参数（模块级单例 ref，写经 setter 落库——跨会话记住上次选择） */
+const saveDir = useSnipSaveDir();
+const saveFmt = useSnipFormat();
+const saveQuality = useSnipJpegQuality();
+
+/** 浏览：目录选择对话框（选中即持久化为默认保存目录） */
+async function browseSaveDir(): Promise<void> {
+  // 护盾 +1/-1：原生目录选择对话框期间覆盖窗失焦不触发兜底取消（用户实测消失）
+  nativeDialogOpen++;
+  try {
+    const dir = await open({ directory: true, defaultPath: saveDir.value || undefined }).catch(() => null);
+    if (dir && typeof dir === 'string') await setSnipSaveDir(dir);
+  } finally {
+    nativeDialogOpen--;
+  }
+}
+
+/** 面板确认：保存改由页面内自闭环执行（doSave）——裁剪/写盘/弹岛全部直连
+ *  Rust 与灵动岛，不经主窗口事件链（原 snip:confirm 跨窗口链路存在运行时
+ *  静默断点：无文件无提示，用户实测；重写后零事件跳板） */
+function commitSavePanel(): void {
+  void setSnipJpegQuality(saveQuality.value);
+  savePanelOpen.value = false;
+  void doSave();
+}
+
+/** 全分辨率引用（管理器 full-ready 后转发；保存裁剪的源）。未到时轮询等待 */
+const fullFileRef = ref<string | null>(null);
+/** 系统可用 OCR 语言（空 = 未安装/非 Windows，隐藏 OCR 动作） */
+const ocrLangs = ref<string[]>([]);
+const ocrCapable = computed(() => ocrLangs.value.length > 0);
+const ocrRunning = ref(false);
+/** OCR 结果确认框：识别结果先预览（可编辑），用户确认后才写剪贴板 */
+const ocrResult = reactive({ visible: false, text: '' });
+const ocrTextEl = ref<HTMLTextAreaElement | null>(null);
+
+/** 覆盖窗内提示条：截图会话期间主窗口弹岛（alwaysOnTop）会压住本层 UI，
+ *  因此操作反馈在窗内就地显示；同一份内容同时由主窗口静默写入灵动岛历史
+ *  （失败原因可在「灵动岛历史」回查） */
+const snipToast = reactive({ visible: false, kind: 'info' as 'success' | 'error' | 'info', text: '' });
+let snipToastTimer: ReturnType<typeof setTimeout> | null = null;
+function snipNotify(payload: { kind: 'success' | 'error' | 'info'; text?: string }): void {
+  notifyIsland(payload);
+  snipToast.kind = payload.kind;
+  snipToast.text = payload.text ?? '';
+  snipToast.visible = true;
+  if (snipToastTimer) clearTimeout(snipToastTimer);
+  snipToastTimer = setTimeout(() => { snipToast.visible = false; }, payload.kind === 'error' ? 8000 : 3000);
+}
+
+/** 写文本到系统剪贴板并回读校验（写入调用成功 ≠ 真落地：剪贴板可能正被占用）。
+ *  Windows 换行会被规范成 CRLF，比较前统一。失败重试几次，抖动多来自插件监听轮询抢锁。 */
+async function writeClipboardTextVerified(text: string): Promise<boolean> {
+  const norm = (s: string): string => s.replace(/\r\n/g, '\n');
+  for (let i = 0; i < 4; i += 1) {
+    const ok = await writeText(text).then(() => true, () => false);
+    if (ok) {
+      const back = await readText().catch(() => null);
+      if (back !== null && norm(back).trimEnd() === norm(text)) return true;
+    }
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  return false;
+}
+
+/** 确认识别结果 → 页面直接写剪贴板并校验 → 通知主窗口收起截图 + 弹岛确认。
+ *  写由覆盖窗自闭环完成（与取色复制同链路）：主窗口代写在运行时会静默不落地。 */
+async function confirmOcrCopy(): Promise<void> {
+  const text = ocrResult.text.trim();
+  if (!text) return;
+  ocrResult.visible = false;
+  const ok = await writeClipboardTextVerified(text);
+  if (!ok) {
+    // 写失败：保留对话框供重试，就地给出原因
+    ocrResult.visible = true;
+    await nextTick();
+    ocrTextEl.value?.focus();
+    snipNotify({ kind: 'error', text: t('snip.clipboard_failed') });
+    return;
+  }
+  await emit('snip:ocr-copied', { text }).catch(() => {});
+}
+
+/** OCR：识别选区文字 → 弹出结果确认框（确认后才复制）。
+ *  有标注时先烘焙（识别「所见即所得」），否则直接用全分辨率原图区域。 */
+async function runOcr(): Promise<void> {
+  const { t } = useI18n();
+  const rect = selection.value;
+  if (!rect || !isValidSelection(rect) || ocrRunning.value) return;
+  ocrRunning.value = true;
+  try {
+    const base = {
+      x: Math.round(rect.x * scale.value),
+      y: Math.round(rect.y * scale.value),
+      w: Math.round(rect.w * scale.value),
+      h: Math.round(rect.h * scale.value),
+    };
+    let srcRef = fullFileRef.value;
+    let crop = { x: base.x, y: base.y, w: base.w, h: base.h };
+    if (annotations.value.length > 0) {
+      const baked = bakeAnnotated(base, rect);
+      const refStr = baked
+        ? await invoke<string | null>('save_clipboard_image', { dataUrl: baked }).catch(() => null)
+        : null;
+      if (refStr) {
+        srcRef = refStr;
+        crop = { x: 0, y: 0, w: base.w, h: base.h };
+      }
+    }
+    if (!srcRef) {
+      const deadline = Date.now() + 3000;
+      while (!fullFileRef.value && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      srcRef = fullFileRef.value;
+    }
+    if (!srcRef) {
+      snipNotify({ kind: 'error', text: `${t('snip.ocr_failed')}：${t('snip.ocr_no_source')}` });
+      return;
+    }
+    const res = await invoke<{ text: string; language: string }>('snip_ocr_region', {
+      fileRef: srcRef,
+      x: crop.x, y: crop.y, w: crop.w, h: crop.h,
+      lang: useSnipOcrLang().value || null,
+    });
+    const text = (res?.text ?? '').trim();
+    if (!text) {
+      snipNotify({ kind: 'info', text: t('snip.ocr_empty') });
+      return;
+    }
+    // 不直接写剪贴板：先展示识别结果供核对/修改，确认后才复制
+    ocrResult.text = text;
+    ocrResult.visible = true;
+    await nextTick();
+    ocrTextEl.value?.focus();
+    ocrTextEl.value?.select();
+  } catch (e) {
+    snipNotify({ kind: 'error', text: `${t('snip.ocr_failed')}：${String(e)}` });
+  } finally {
+    ocrRunning.value = false;
+  }
+}
+
+// ===== 长截图（P2）：隐藏覆盖 UI 并穿透鼠标 → 定时抓取选区 → 竖向拼接 =====
+/** 长截图进行中（根节点据此隐藏全部 UI，仅留 HUD） */
+const longMode = ref(false);
+/** 已抓取的有效帧数（相同画面按内容寻址引用去重） */
+const longFrames = ref(0);
+const longSeconds = ref(0);
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 长截图：用户滚动目标窗口，静止约 2 秒自动结束；拼接结果入剪贴板 + 历史 */
+async function runLongCapture(): Promise<void> {
+  const { t } = useI18n();
+  const rect = selection.value;
+  if (!rect || !isValidSelection(rect) || longMode.value) return;
+  longAbort = false;
+  longMode.value = true;
+  longFrames.value = 0;
+  longSeconds.value = 0;
+  const win = getCurrentWindow();
+  const base = {
+    x: Math.round(monitorOrigin.x + rect.x * scale.value),
+    y: Math.round(monitorOrigin.y + rect.y * scale.value),
+    w: Math.max(1, Math.round(rect.w * scale.value)),
+    h: Math.max(1, Math.round(rect.h * scale.value)),
+  };
+  const refs: string[] = [];
+  let idle = 0;
+  let running = true;
+  // 让 Vue 先渲染出「穿透态」（本帧不含冻结画面/遮罩），再开始抓屏
+  await nextTick();
+  await win.setIgnoreCursorEvents(true).catch(() => {});
+  snipNotify({ kind: 'info', text: t('snip.long_hint') });
+  await sleep(180);
+  const started = Date.now();
+  try {
+    while (running && !longAbort && Date.now() - started < 20_000) {
+      const shot = await invoke<{ fileRef?: string | null } | null>('snip_capture_region', {
+        x: base.x, y: base.y, w: base.w, h: base.h, includeCursor: false,
+      }).catch(() => null);
+      const ref = shot?.fileRef ?? null;
+      if (ref) {
+        if (refs[refs.length - 1] !== ref) {
+          refs.push(ref);
+          longFrames.value = refs.length;
+          idle = 0;
+        } else {
+          idle++;
+          // 至少拼过一帧 + 连续静止 ≈2.1s → 认为滚动结束
+          if (refs.length >= 2 && idle >= 6) running = false;
+        }
+      }
+      longSeconds.value = Math.round((Date.now() - started) / 1000);
+      if (running) await sleep(350);
+    }
+  } finally {
+    await win.setIgnoreCursorEvents(false).catch(() => {});
+    longMode.value = false;
+  }
+  // Esc 中止：直接结束会话，不做拼接
+  if (longAbort) {
+    longAbort = false;
+    void emit('snip:cancel');
+    return;
+  }
+  if (refs.length < 2) {
+    snipNotify({ kind: 'info', text: t('snip.long_empty') });
+    return;
+  }
+  const stitched = await invoke<{ fileRef?: string | null } | null>('snip_stitch_vertical', {
+    fileRefs: refs,
+  }).catch(() => null);
+  const outRef = stitched?.fileRef ?? null;
+  if (!outRef) {
+    snipNotify({ kind: 'error', text: t('snip.long_failed') });
+    return;
+  }
+  // 写剪贴板 + 入历史由主窗口执行（覆盖窗无数据库连接），随后关闭本次框选
+  void emit('snip:long-done', { fileRef: outRef, frames: refs.length });
+  void emit('snip:cancel');
+}
+
+// ===== OCR 自动打码（P2）：识别选区文字行 → 批量生成马赛克标注 =====
+const autoMaskRunning = ref(false);
+
+async function runAutoMask(): Promise<void> {
+  const { t } = useI18n();
+  const rect = selection.value;
+  if (!rect || !isValidSelection(rect) || autoMaskRunning.value) return;
+  autoMaskRunning.value = true;
+  try {
+    const base = {
+      x: Math.round(rect.x * scale.value),
+      y: Math.round(rect.y * scale.value),
+      w: Math.round(rect.w * scale.value),
+      h: Math.round(rect.h * scale.value),
+    };
+    const deadline = Date.now() + 3000;
+    while (!fullFileRef.value && Date.now() < deadline) await sleep(50);
+    if (!fullFileRef.value) throw new Error('截图尚未就绪');
+    const boxes = await invoke<Array<{ x: number; y: number; w: number; h: number }>>('snip_ocr_boxes', {
+      fileRef: fullFileRef.value,
+      ...base,
+      lang: useSnipOcrLang().value || null,
+    });
+    if (!boxes.length) {
+      snipNotify({ kind: 'info', text: t('snip.ocr_empty') });
+      return;
+    }
+    snapshotForUndo();
+    const pad = Math.max(1, Math.round(2 * uiScale.value));
+    const made: Annotation[] = boxes.map((b) => {
+      // 裁剪图像素 → 覆盖窗页面逻辑坐标
+      const lx = rect.x + b.x / scale.value;
+      const ly = rect.y + b.y / scale.value;
+      const lw = b.w / scale.value;
+      const lh = b.h / scale.value;
+      return {
+        id: ++annoSeq,
+        tool: 'mosaic' as const,
+        color: annoColor.value,
+        size: currentSize.value,
+        x1: lx - pad,
+        y1: ly - pad,
+        x2: lx + lw + pad,
+        y2: ly + lh + pad,
+        block: mosaicBlock.value,
+        style: mosaicStyle.value,
+      };
+    });
+    annotations.value = renumberSteps([...annotations.value, ...made]);
+    redrawAnnos();
+    snipNotify({ kind: 'success', text: t('snip.auto_mask_done', { n: made.length }) });
+  } catch (e) {
+    snipNotify({ kind: 'error', text: `${t('snip.auto_mask_failed')}：${String(e)}` });
+  } finally {
+    autoMaskRunning.value = false;
+  }
+}
+
+// ===== AI 识图（P2）：当前选区（含标注）→ 多模态模型 → 结果复制 =====
+const aiRunning = ref(false);
+/** 已配置可识图的 AI（OpenAI 兼容 / Anthropic 且填了 Key）才显示按钮 */
+const aiReady = ref(false);
+
+async function runAiVision(): Promise<void> {
+  const { t } = useI18n();
+  const rect = selection.value;
+  if (!rect || !isValidSelection(rect) || aiRunning.value) return;
+  aiRunning.value = true;
+  try {
+    const base = {
+      x: Math.round(rect.x * scale.value),
+      y: Math.round(rect.y * scale.value),
+      w: Math.round(rect.w * scale.value),
+      h: Math.round(rect.h * scale.value),
+    };
+    // 所见即所得：标注烘焙进图后交给模型
+    const dataUrl = bakeAnnotated(base, rect);
+    if (!dataUrl) throw new Error('裁图失败');
+    const cfg = await loadAiConfig();
+    const text = (await aiVision(cfg, t('snip.ai_vision_prompt'), dataUrl)).trim();
+    if (!text) {
+      snipNotify({ kind: 'info', text: t('snip.ai_empty') });
+      return;
+    }
+    suppressIslandCopy();
+    await writeText(text);
+    snipNotify({ kind: 'success', text: t('snip.ai_copied', { n: text.length }) });
+  } catch (e) {
+    snipNotify({ kind: 'error', text: `${t('snip.ai_failed')}：${String(e)}` });
+  } finally {
+    aiRunning.value = false;
+  }
+}
+
+// ===== 上传分享（P1）：当前选区（含标注）→ 配置的上传地址 → 结果复制 =====
+const uploadRunning = ref(false);
+/** 上传地址（空 = 未配置，隐藏上传按钮） */
+const uploadTarget = computed(() => useSnipUploadUrl().value.trim());
+
+/** 当前选区的图片引用（有标注时烘焙，否则全分辨率裁剪；等待 full-ref 最多 3s） */
+async function currentCropFileRef(): Promise<string | null> {
+  const rect = selection.value;
+  if (!rect) return null;
+  const base = {
+    x: Math.round(rect.x * scale.value),
+    y: Math.round(rect.y * scale.value),
+    w: Math.round(rect.w * scale.value),
+    h: Math.round(rect.h * scale.value),
+  };
+  if (annotations.value.length > 0) {
+    const baked = bakeAnnotated(base, rect);
+    const ref = baked
+      ? await invoke<string | null>('save_clipboard_image', { dataUrl: baked }).catch(() => null)
+      : null;
+    if (ref) return ref;
+  }
+  const deadline = Date.now() + 3000;
+  while (!fullFileRef.value && Date.now() < deadline) await sleep(50);
+  if (!fullFileRef.value) return null;
+  const crop = await invoke<{ fileRef?: string } | null>('snip_crop_region', {
+    fileRef: fullFileRef.value, ...base,
+  }).catch(() => null);
+  return crop?.fileRef ?? null;
+}
+
+async function runUpload(): Promise<void> {
+  const { t } = useI18n();
+  if (uploadRunning.value) return;
+  const target = uploadTarget.value;
+  if (!target || !selection.value) return;
+  uploadRunning.value = true;
+  try {
+    const ref = await currentCropFileRef();
+    if (!ref) throw new Error('裁图失败');
+    const result = await invoke<string>('snip_upload_image', { fileRef: ref, url: target });
+    suppressIslandCopy();
+    await writeText(result);
+    snipNotify({ kind: 'success', text: t('snip.upload_copied') });
+  } catch (e) {
+    snipNotify({ kind: 'error', text: `${t('snip.upload_failed')}：${String(e)}` });
+  } finally {
+    uploadRunning.value = false;
+  }
+}
+
+/** 保存诊断 HUD：覆盖窗右键被拦截（=取消截图）、devtools 打不开，控制台错误
+ *  用户看不到（「看不到是什么原因导致的」）——保存流程每一步与错误细节直接
+ *  显示在覆盖窗左下角；失败时界面保留，读屏即可定位 */
+const saveTrace = ref<string[]>([]);
+function trace(msg: string): void {
+  saveTrace.value = [...saveTrace.value.slice(-8), `${new Date().toLocaleTimeString()} ${msg}`];
+}
+
+/** 页面内保存闭环：裁剪（全分辨率/标注合成）→ 目录/格式/质量 → 写盘 →
+ *  灵动岛反馈 → 成功收起；失败保留界面 + HUD 显示原因 */
+async function doSave(): Promise<void> {
+  const { t } = useI18n();
+  saveTrace.value = [];
+  trace('保存开始');
+  const fail = (why: string) => {
+    trace(`失败：${why}`);
+    snipNotify({ kind: 'error', text: t('snip.save_failed') });
+  };
+  try {
+    const rect = selection.value;
+    if (!rect || !isValidSelection(rect)) { trace('失败：选区无效'); return; }
+    savePanelOpen.value = false;
+
+    // 1) 裁剪源：有标注 → 烘焙合成图；无标注 → 全分辨率引用（等转发，超时 3s）
+    let srcRef: string | null = null;
+    let cropPayload: SnipConfirmShape;
+    const base = {
+      x: Math.round(rect.x * scale.value),
+      y: Math.round(rect.y * scale.value),
+      w: Math.round(rect.w * scale.value),
+      h: Math.round(rect.h * scale.value),
+    };
+    if (annotations.value.length > 0) {
+      trace(`标注 ${annotations.value.length} 条，烘焙中`);
+      const baked = bakeAnnotated(base, rect);
+      if (baked) {
+        const refStr = await invoke<string | null>('save_clipboard_image', { dataUrl: baked })
+          .catch((e: unknown) => { trace(`烘焙落盘异常：${String(e)}`); return null; });
+        if (refStr) { srcRef = refStr; cropPayload = { ...base, x: 0, y: 0 }; trace('烘焙完成'); }
+      } else {
+        trace('烘焙失败（canvas 异常），改用原图');
+      }
+    }
+    if (!srcRef) {
+      const deadline = Date.now() + 3000;
+      while (!fullFileRef.value && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      if (!fullFileRef.value) { fail('全分辨率引用未到达（full-ready 转发缺失）'); return; }
+      srcRef = fullFileRef.value;
+      cropPayload = base;
+      trace(`裁剪源：${srcRef.slice(0, 24)}`);
+    }
+
+    // 2) 裁剪
+    const crop = await invoke<{ fileRef: string } | null>('snip_crop_region', {
+      fileRef: srcRef,
+      x: cropPayload!.x, y: cropPayload!.y, w: cropPayload!.w, h: cropPayload!.h,
+    }).catch((e: unknown) => { trace(`裁剪命令异常：${String(e)}`); return null; });
+    if (!crop?.fileRef) { fail('裁剪返回空'); return; }
+    trace('裁剪完成');
+
+    // 3) 参数与目录（面板刚写入的内存值即最新；缺省回退系统图片文件夹）
+    const fmt = saveFmt.value === 'jpeg' ? 'jpeg' : 'png';
+    const quality = Math.min(100, Math.max(60, Math.round(saveQuality.value || 90)));
+    const name = `s1d3_board_${saveStamp()}.${fmt}`;
+    const pictures = await pictureDir().catch(() => '');
+    const dir = saveDir.value.trim() || pictures;
+    if (!dir) { fail('无可用目录（配置为空且图片文件夹不可用）'); return; }
+    trace(`目录：${dir}`);
+
+    // 4) 写盘（配置目录失败回退图片文件夹重试一次），错误原文入 HUD
+    const write = async (d: string): Promise<string | null> => {
+      const p = await join(d, name).catch(() => null);
+      if (!p) { trace(`join 失败：${d}`); return null; }
+      const ok = await invoke('snip_export_file', { fileRef: crop.fileRef, destPath: p, format: fmt, quality })
+        .then(() => true, (e: unknown) => { trace(`写盘错误：${String(e)}`); return false; });
+      return ok ? p : null;
+    };
+    let finalPath = await write(dir);
+    if (!finalPath && pictures && pictures !== dir) {
+      trace('配置目录失败，回退图片文件夹');
+      finalPath = await write(pictures);
+    }
+    if (!finalPath) { fail('写盘失败（见上方错误原文）'); return; }
+    trace(`已保存：${finalPath}`);
+    snipNotify({ kind: 'success', text: t('snip.saved', { path: finalPath }) });
+    // 记住本次选区（多入口「上次区域」快捷键复用）
+    void setSnipLastRegion({ x: base.x, y: base.y, w: base.w, h: base.h });
+
+    // 5) 成功收起（延迟 600ms 让 HUD 最后一帧可见）
+    setTimeout(() => { void emit('snip:cancel'); }, 600);
+  } catch (e) {
+    trace(`异常：${String(e)}`);
+    console.error('[snip] save failed:', e);
+    fail(String(e));
+  }
+}
+
+/** 保存载荷形状（doSave 内部用） */
+interface SnipConfirmShape { x: number; y: number; w: number; h: number }
+
+/** 标注烘焙的底图源：优先全分辨率原图（4K 无损），否则预览图/画布 */
+function sourceForBake(): { src: CanvasImageSource; w: number; h: number } | null {
+  if (fullSourceImg && fullSourceImg.naturalWidth) {
+    return { src: fullSourceImg, w: fullSourceImg.naturalWidth, h: fullSourceImg.naturalHeight };
+  }
+  if (bgSourceCanvas && bgSourceCanvas.width) {
+    return { src: bgSourceCanvas, w: bgSourceCanvas.width, h: bgSourceCanvas.height };
+  }
+  const img = bgImgRef.value;
+  if (img?.naturalWidth) return { src: img, w: img.naturalWidth, h: img.naturalHeight };
+  return null;
+}
+
+/** 标注烘焙：选区 + 标注 → 全分辨率 PNG data URL（全分辨率源逐像素无损） */
+function bakeAnnotated(base: SnipConfirmShape, rect: Rect): string | null {
+  try {
+    const out = document.createElement('canvas');
+    out.width = base.w;
+    out.height = base.h;
+    const ctx = out.getContext('2d');
+    if (!ctx) return null;
+    const source = sourceForBake();
+    if (!source) return null;
+    const kx = source.w / (viewW.value * scale.value);
+    const ky = source.h / (viewH.value * scale.value);
+    ctx.drawImage(source.src, base.x * kx, base.y * ky, base.w * kx, base.h * ky, 0, 0, base.w, base.h);
+    ctx.setTransform(scale.value, 0, 0, scale.value, -rect.x * scale.value, -rect.y * scale.value);
+    bakeSourceImg = fullSourceImg;
+    try {
+      for (const a of annotations.value) strokeAnno(ctx, a);
+    } finally {
+      bakeSourceImg = null;
+    }
+    return out.toDataURL('image/png');
+  } catch { return null; }
+}
+
+/** 保存文件名时间戳：s1d3_board_20261025_153000 */
+function saveStamp(): string {
+  const d = new Date();
+  const p = (n: number, len = 2) => String(n).padStart(len, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+const saveStyle = computed(() => {
+  const tp = toolbarPos.value;
+  if (!tp) return {};
+  const k = uiScale.value;
+  const tH = toolbarBox.h * k;
+  const tTop = tp.top != null ? tp.top : viewH.value - (tp.bottom ?? 0) - tH;
+  // 叠在参数栏下（参数栏可见时），否则贴工具条
+  const paramsOn = !!annoTool.value && annoTool.value !== 'move';
+  const stackTop = tTop + tH + (paramsOn ? paramsBox.h * k + 4 : 0) + 4;
+  const sH = saveBox.h * k;
+  const sW = saveBox.w * k;
+  const left = Math.min(Math.max(8, tp.left), Math.max(8, viewW.value - sW - 8));
+  let top: number;
+  if (stackTop + sH <= viewH.value - 8) {
+    top = stackTop;
+  } else {
+    const above = tTop - sH - 4;
+    top = above >= 8 ? above : Math.max(8, Math.min(stackTop, viewH.value - sH - 8));
+  }
+  return { left: `${left}px`, top: `${top}px`, transform: `scale(${k})`, transformOrigin: 'top left' };
+});
+
+watch(savePanelOpen, (v) => {
+  if (!v) return;
+  void nextTick(() => {
+    const el = saveEl.value;
+    if (el) {
+      saveBox.w = el.offsetWidth || saveBox.w;
+      saveBox.h = el.offsetHeight || saveBox.h;
+    }
+  });
+}, { flush: 'post' });
+
 // 模式/工具变化后重测两栏（渲染完成再量，避免首帧 0 宽）
 watch([mode, annoTool], () => {
   if (mode.value !== 'selected') return;
@@ -1191,11 +2029,19 @@ watch([mode, annoTool], () => {
 <template>
   <div
       class="fixed inset-0 select-none overflow-hidden"
-      :class="rootCursorClass"
+      :class="[rootCursorClass, longMode ? 'snip-long-mode' : '']"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
   >
+    <!-- 长截图 HUD（唯一在穿透态保留的图层；窗口此时鼠标穿透，仅作提示） -->
+    <div
+        v-if="longMode"
+        class="snip-long-hud pointer-events-none absolute bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/75 px-4 py-2 text-xs text-white shadow-lg backdrop-blur"
+    >
+      <svg class="h-3.5 w-3.5 animate-spin text-gold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+      <span>{{ t('snip.long_hud', { n: longFrames, s: longSeconds }) }}</span>
+    </div>
     <!-- 冻结画面（imgfile 引用按需读盘为 data URL） -->
     <img
         v-if="bgDataUrl"
@@ -1273,6 +2119,18 @@ watch([mode, annoTool], () => {
         v-for="pt in handlePoints"
         :key="pt.handle"
         class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-sm border border-gold bg-white"
+        :style="{
+          left: `${pt.x}px`, top: `${pt.y}px`,
+          width: `${handleSize}px`, height: `${handleSize}px`,
+          boxShadow: '0 0 0 1px rgba(0,0,0,.4)',
+        }"
+    />
+
+    <!-- 选中标注的缩放手柄（move 工具 + 有选中项；命中在根节点 pointerdown 判定） -->
+    <div
+        v-for="pt in annoHandlePoints"
+        :key="`anno-${pt.handle}`"
+        class="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-sm border border-gold bg-white"
         :style="{
           left: `${pt.x}px`, top: `${pt.y}px`,
           width: `${handleSize}px`, height: `${handleSize}px`,
@@ -1370,11 +2228,69 @@ watch([mode, annoTool], () => {
         <button type="button" v-tip="`${t('snip.btn_copy')}（Enter）`" class="flex h-7 w-7 items-center justify-center rounded-lg bg-gold/30 text-gold transition-colors hover:bg-gold/40" @click.stop="confirmSelection('copy')">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
         </button>
-        <button type="button" v-tip="t('snip.btn_save')" class="flex h-7 w-7 items-center justify-center rounded-lg text-white/90 transition-colors hover:bg-white/15" @click.stop="confirmSelection('save')">
+        <button type="button" v-tip="t('snip.btn_save')" class="flex h-7 w-7 items-center justify-center rounded-lg text-white/90 transition-colors hover:bg-white/15" :class="savePanelOpen ? 'bg-gold/30' : ''" @click.stop="savePanelOpen = !savePanelOpen">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /><path d="M12 15V3" /></svg>
         </button>
         <button type="button" v-tip="t('snip.btn_pin')" class="flex h-7 w-7 items-center justify-center rounded-lg text-white/90 transition-colors hover:bg-white/15" @click.stop="confirmSelection('pin')">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" /></svg>
+        </button>
+        <!-- OCR 取字：系统未安装识别语言时隐藏（能力检测在挂载时完成） -->
+        <button
+            v-if="ocrCapable"
+            type="button"
+            v-tip="t('snip.btn_ocr')"
+            class="flex h-7 w-7 items-center justify-center rounded-lg text-white/90 transition-colors hover:bg-white/15 disabled:opacity-40"
+            :disabled="ocrRunning"
+            @click.stop="runOcr"
+        >
+          <svg v-if="!ocrRunning" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2" /><path d="M8 12h8" /></svg>
+          <svg v-else class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+        </button>
+        <!-- OCR 自动打码：识别文字行并批量盖马赛克（P2，系统 OCR 可用时显示） -->
+        <button
+            v-if="ocrCapable"
+            type="button"
+            v-tip="t('snip.btn_auto_mask')"
+            class="flex h-7 w-7 items-center justify-center rounded-lg text-white/90 transition-colors hover:bg-white/15 disabled:opacity-40"
+            :disabled="autoMaskRunning"
+            @click.stop="runAutoMask"
+        >
+          <svg v-if="!autoMaskRunning" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18" /><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.4 4.5" /><path d="M6.6 6.6A17.6 17.6 0 0 0 2 12s3.5 7 10 7a10.9 10.9 0 0 0 4.4-.9" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></svg>
+          <svg v-else class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+        </button>
+        <!-- 长截图：隐藏 UI 并穿透鼠标后逐帧抓取选区，静止自动结束（P2） -->
+        <button
+            type="button"
+            v-tip="t('snip.btn_long')"
+            class="flex h-7 w-7 items-center justify-center rounded-lg text-white/90 transition-colors hover:bg-white/15 disabled:opacity-40"
+            :disabled="longMode"
+            @click.stop="runLongCapture"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="9" rx="1.5" /><rect x="7" y="13" width="10" height="9" rx="1.5" /><path d="M12 9.5v5" /></svg>
+        </button>
+        <!-- AI 识图：未配置可用 AI 时隐藏（P2） -->
+        <button
+            v-if="aiReady"
+            type="button"
+            v-tip="t('snip.btn_ai')"
+            class="flex h-7 w-7 items-center justify-center rounded-lg text-white/90 transition-colors hover:bg-white/15 disabled:opacity-40"
+            :disabled="aiRunning"
+            @click.stop="runAiVision"
+        >
+          <svg v-if="!aiRunning" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" /><circle cx="12" cy="12" r="3.2" /></svg>
+          <svg v-else class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
+        </button>
+        <!-- 上传分享：设置页填了上传地址才显示（P1） -->
+        <button
+            v-if="uploadTarget"
+            type="button"
+            v-tip="t('snip.btn_upload')"
+            class="flex h-7 w-7 items-center justify-center rounded-lg text-white/90 transition-colors hover:bg-white/15 disabled:opacity-40"
+            :disabled="uploadRunning"
+            @click.stop="runUpload"
+        >
+          <svg v-if="!uploadRunning" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" /></svg>
+          <svg v-else class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>
         </button>
         <button type="button" v-tip="`${t('snip.btn_cancel')}（Esc）`" class="flex h-7 w-7 items-center justify-center rounded-lg text-white/90 transition-colors hover:bg-white/15" @click.stop="emit('snip:cancel')">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
@@ -1398,12 +2314,12 @@ watch([mode, annoTool], () => {
         </button>
       </div>
       <div class="flex items-center gap-1 whitespace-nowrap border-t border-white/25 px-1 pt-1.5">
-        <!-- 工具（1~6 快捷切换；再点一次收起回移动/吸附模式） -->
+        <!-- 工具（1~9 快捷切换，0 = 移动；再点一次收起回移动/吸附模式） -->
         <button
             v-for="(ti, tiIdx) in TOOL_ICONS"
             :key="ti.tool"
             type="button"
-            v-tip="`${t(`snip.${ti.key}`)}（${tiIdx + 1}）`"
+            v-tip="`${t(`snip.${ti.key}`)}（${ti.tool === 'move' ? 0 : tiIdx + 1}）`"
             class="flex h-7 w-7 items-center justify-center rounded-lg text-white/90 transition-colors hover:bg-white/15"
             :class="annoTool === ti.tool ? 'bg-gold/30 text-gold' : ''"
             @click.stop="toggleTool(ti.tool)"
@@ -1414,7 +2330,10 @@ watch([mode, annoTool], () => {
           <svg v-else-if="ti.tool === 'ellipse'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="8" ry="6" /></svg>
           <svg v-else-if="ti.tool === 'arrow'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5M19 5v8M19 5h-8" /></svg>
           <svg v-else-if="ti.tool === 'pen'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+          <svg v-else-if="ti.tool === 'line'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20 20 4" /></svg>
           <svg v-else-if="ti.tool === 'text'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7V5h16v2M12 5v14m-3 0h6" /></svg>
+          <svg v-else-if="ti.tool === 'highlighter'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.5 20.5 10 11 19.5H4.5V13Z" /><path d="M6 21h14" stroke-width="3" opacity=".55" /></svg>
+          <svg v-else-if="ti.tool === 'step'" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" /><path d="M10 9.5 12 8v8" stroke-linecap="round" /></svg>
           <svg v-else class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="5" height="5" /><rect x="10" y="4" width="5" height="5" opacity=".6" /><rect x="16" y="4" width="4" height="5" /><rect x="4" y="10" width="5" height="5" opacity=".6" /><rect x="10" y="10" width="5" height="5" /><rect x="16" y="10" width="4" height="5" opacity=".6" /><rect x="4" y="16" width="5" height="4" /><rect x="10" y="16" width="5" height="4" opacity=".6" /><rect x="16" y="16" width="4" height="4" /></svg>
         </button>
       </div>
@@ -1529,6 +2448,111 @@ watch([mode, annoTool], () => {
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M8 8h8M12 8v8" /></svg>
       </button>
     </div>
+
+    <!-- 保存面板：保存前自定义目录（记住上次选择）+ 格式 + JPEG 质量等基础参数，
+         全部经 snipSettings 持久化，下次截图原样恢复。叠在参数栏/工具条下方 -->
+    <div
+        v-if="mode === 'selected' && savePanelOpen"
+        ref="saveEl"
+        class="absolute z-10 flex w-max flex-col gap-2 rounded-xl border border-white/25 bg-black/40 p-2.5 shadow-lg backdrop-blur-sm"
+        :style="saveStyle"
+        @pointerdown.stop
+    >
+      <!-- 保存目录：路径展示 + 浏览选择（选中即持久化，下次直存该目录） -->
+      <div class="flex items-center gap-2">
+        <span class="w-14 shrink-0 text-xs text-white/70">{{ t('snip.save_dir') }}</span>
+        <span class="min-w-0 flex-1 truncate rounded-lg border border-white/25 bg-black/30 px-2 py-1 text-xs text-white/90" :title="saveDir">
+          {{ saveDir || t('snip.save_no_dir') }}
+        </span>
+        <button type="button" class="shrink-0 rounded-lg px-2.5 py-1 text-xs text-white/90 transition-colors hover:bg-white/15" @click.stop="browseSaveDir">
+          {{ t('snip.save_browse') }}
+        </button>
+      </div>
+      <!-- 格式：PNG（无损直拷）/ JPEG -->
+      <div class="flex items-center gap-2">
+        <span class="w-14 shrink-0 text-xs text-white/70">{{ t('snip.save_format') }}</span>
+        <div class="flex overflow-hidden rounded-lg border border-white/25">
+          <button
+              v-for="f in ['png', 'jpeg'] as const"
+              :key="f"
+              type="button"
+              class="px-3 py-1 text-xs transition-colors"
+              :class="saveFmt === f ? 'bg-gold/30 text-gold' : 'text-white/90 hover:bg-white/15'"
+              @click.stop="setSnipFormat(f)"
+          >{{ f.toUpperCase() }}</button>
+        </div>
+        <!-- JPEG 质量（仅 JPEG 显示；滑条实时预览数值，面板确认时落库） -->
+        <template v-if="saveFmt === 'jpeg'">
+          <span class="ml-1 shrink-0 text-xs text-white/70">{{ t('snip.save_quality') }}</span>
+          <input type="range" :min="60" :max="100" v-model.number="saveQuality" class="h-6 w-20 cursor-pointer accent-gold" />
+          <span class="w-7 text-center text-xs text-white/90">{{ saveQuality }}</span>
+        </template>
+      </div>
+      <!-- 动作：保存（落库质量并走原保存管线）/ 取消 -->
+      <div class="flex items-center justify-end gap-2 border-t border-white/25 pt-1.5">
+        <button type="button" class="rounded-lg px-3 py-1 text-xs text-white/70 transition-colors hover:bg-white/15" @click.stop="savePanelOpen = false">
+          {{ t('snip.btn_cancel') }}
+        </button>
+        <button type="button" class="btn-gold rounded-lg px-4 py-1 text-xs" @click.stop="commitSavePanel">
+          {{ t('snip.btn_save') }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 保存诊断 HUD：左下角固定，逐步显示保存链路状态与错误原文（覆盖窗
+         devtools 打不开，用户「看不到原因」——错误必须上屏）。失败时界面保留 -->
+    <div
+        v-if="saveTrace.length"
+        class="pointer-events-none absolute bottom-3 left-3 z-30 max-w-[90%] space-y-0.5 rounded-lg border border-white/25 bg-black/80 p-2 font-mono text-[11px] leading-4 text-white/90 shadow-lg"
+    >
+      <div v-for="(line, i) in saveTrace" :key="i" :class="line.includes('失败') || line.includes('错误') || line.includes('异常') ? 'text-red-300' : ''">
+        {{ line }}
+      </div>
+    </div>
+
+    <!-- 窗内提示条：会话期间岛不弹窗（会压住本层），操作结果与失败原因就地显示；
+         同样的内容由主窗口静默写入灵动岛历史，可事后回查 -->
+    <div
+        v-if="snipToast.visible"
+        class="pointer-events-none absolute bottom-24 left-1/2 z-30 max-w-[80%] -translate-x-1/2 rounded-lg px-3 py-1.5 text-xs leading-5 shadow-lg"
+        :class="snipToast.kind === 'error'
+          ? 'bg-red-900/90 text-red-100'
+          : snipToast.kind === 'success' ? 'bg-emerald-900/90 text-emerald-100' : 'bg-black/85 text-white/90'"
+    >
+      {{ snipToast.text }}
+    </div>
+
+    <!-- OCR 结果确认框：识别结果先预览（可直接改错字），确认后才写剪贴板 -->
+    <div
+        v-if="ocrResult.visible"
+        class="absolute inset-0 z-40 flex items-center justify-center bg-black/45"
+        @pointerdown.stop
+        @wheel.stop
+    >
+      <div class="flex max-h-[72vh] w-[min(620px,86vw)] flex-col gap-2 rounded-xl border border-white/20 bg-[#1e1e22]/95 p-3 shadow-2xl">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-xs font-medium text-white/90">{{ t('snip.ocr_title') }}</span>
+          <span class="text-[11px] text-white/45">{{ t('snip.ocr_edit_hint') }}</span>
+        </div>
+        <textarea
+            ref="ocrTextEl"
+            v-model="ocrResult.text"
+            class="h-[min(46vh,320px)] w-full resize-none rounded-lg border border-white/15 bg-black/40 p-2 font-mono text-xs leading-5 text-white/95 outline-none focus:border-gold/60"
+            spellcheck="false"
+        />
+        <div class="flex items-center justify-between gap-2 border-t border-white/10 pt-2">
+          <span class="text-[11px] text-white/45">{{ t('snip.ocr_confirm_hint') }}</span>
+          <div class="flex items-center gap-2">
+            <button type="button" class="rounded-lg px-3 py-1 text-xs text-white/70 transition-colors hover:bg-white/15" @click="ocrResult.visible = false">
+              {{ t('snip.btn_cancel') }}
+            </button>
+            <button type="button" class="btn-gold rounded-lg px-4 py-1 text-xs" @click="confirmOcrCopy">
+              {{ t('snip.btn_copy') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1548,5 +2572,9 @@ input[type='number'] {
 .snip-text-draft {
   field-sizing: content;
   min-width: 4px;
+}
+/* 长截图穿透态：隐藏全部交互层（保持窗口可见以驱动抓屏循环），只留 HUD */
+.snip-long-mode > *:not(.snip-long-hud) {
+  display: none !important;
 }
 </style>
