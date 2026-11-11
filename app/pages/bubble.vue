@@ -185,8 +185,11 @@ async function applyIsland(payload: IslandEggPayload): Promise<void> {
   if (islandHideTimer) { clearTimeout(islandHideTimer); islandHideTimer = null; }
   const win = getCurrentWindow();
   // 平滑替换：岛可见期间收到新岛（解析中 → 结果切换）不闪断窗口、不重播入场动画，
-  // 仅切换内容 + 金环脉冲；替换时重置悬停态，让结果岛从零开始走正常停留计时
-  const replacing = islandVisible.value;
+  // 仅切换内容 + 金环脉冲；替换时重置悬停态，让结果岛从零开始走正常停留计时。
+  // 必须同时校验原生窗口可见性：截图会话开始时主窗口会直接 hide 岛窗口（让位覆盖窗），
+  // 此时页面 islandVisible 仍为 true——只按该标记判定「替换」会跳过 win.show()，
+  // 结果岛写入内容却永不显示
+  const replacing = islandVisible.value && await win.isVisible().catch(() => false);
   if (replacing) {
     islandDomHover = false;
     islandProxHover = false;

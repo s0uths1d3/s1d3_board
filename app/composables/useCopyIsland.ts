@@ -34,6 +34,39 @@ import { tryCaptureClipboardImage } from '~/src/clipboard/clipboardListener';
 
 const setting = createBooleanSetting('island_enabled', true);
 
+/**
+ * 截图会话进行中（主窗口标记）：覆盖窗打开期间岛「不弹窗显示」——岛是 alwaysOnTop，
+ * 会比截图覆盖窗层级更高，挡住选区/工具条（用户实测）。历史落库/统计/出站事件照常，
+ * 截图内的即时反馈由覆盖窗内 toast 承担（见 snipManager setSnipSessionActive）。
+ */
+let snipSessionActive = false;
+
+/** 岛窗口 label（与 ISLAND_LABEL 一致，提前声明供会话标记隐藏用） */
+const ISLAND_WINDOW_LABEL = 'clipboard-bubble-island';
+
+/**
+ * 标记截图会话开始/结束（snipManager 调用，主窗口上下文）。
+ * 开始时一并收起停留中的岛；结束时恢复弹窗。直接调用而非事件，
+ * 避免「确认截图 → 关会话 → 弹岛」链路上事件异步导致确认岛被吞。
+ */
+export function setSnipSessionActive(active: boolean): void {
+  snipSessionActive = active;
+  if (!active || !isTauri()) return;
+  void WebviewWindow.getByLabel(ISLAND_WINDOW_LABEL)
+    .then((w) => w?.hide())
+    .catch(() => {});
+}
+
+if (isTauri()) {
+  // 子窗口的 notifyIsland 请求（子窗口没有岛链路/数据库初始化，统一交主窗口执行）
+  void listen<IslandShowPayload>('island:notify-request', (ev) => {
+    if (getCurrentWindow().label !== 'main') return;
+    const p = ev.payload;
+    if (!p || !p.kind) return;
+    void showIsland(p);
+  }).catch(() => {});
+}
+
 /** 设置页绑定：灵动岛开关（共享同一状态源） */
 export function useIslandEnabled() {
   const islandEnabled = setting.useSetting();
@@ -253,6 +286,12 @@ export function notifyIslandPaste(content: string, type: 'text' | 'image' | 'htm
  * （success/info/error），text 显示具体消息，可省略（仅显示 kind 默认标签）。
  */
 export function notifyIsland(payload: IslandShowPayload): void {
+  // 子窗口（截图覆盖窗 / 贴图窗 / 岛历史窗等）：岛窗口管理、设置与数据库都只在主窗口
+  // 初始化，直接调用会静默丢失（用户实测：截图内操作「没有任何提示」）。转交主窗口执行。
+  if (isTauri() && getCurrentWindow().label !== 'main') {
+    void emit('island:notify-request', payload).catch(() => {});
+    return;
+  }
   void showIsland(payload);
 }
 
@@ -456,8 +495,9 @@ async function positionIsland(win: WebviewWindow): Promise<void> {
 /** 顶部居中（光标所在显示器）定位岛窗口并推送内容；窗口显隐与动画由页面控制 */
 async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
   // 显示链路（总开关开启时）：确保窗口就绪并定位；关闭时跳过建窗——
-  // 总开关只关显示，下方历史/统计/出站事件（island:show → Rust 桥 → SSE/Webhook）始终工作
-  if (setting.enabled.value) {
+  // 总开关只关显示，下方历史/统计/出站事件（island:show → Rust 桥 → SSE/Webhook）始终工作。
+  // 截图会话进行中同样只入历史/出站、不弹窗（岛 alwaysOnTop 会压住截图覆盖窗）。
+  if (setting.enabled.value && !snipSessionActive) {
     const win = await ensureIsland();
     if (win) {
       try {
@@ -504,14 +544,17 @@ async function emitIslandShow(payload: IslandShowPayload): Promise<void> {
   }
   // 岛显示事件（小 payload：缩略图）：先发显示再发出站，出站大图序列化不拖慢岛弹出。
   // text 直接透传：二维码图片事件在生产端已把链接写入 text（胶囊与缩略图并存渲染）
-  await emit('island:show-ui', {
-    kind: payload.kind,
-    text: payload.text,
-    image: displayImage,
-    title: payload.title,
-    durationMs: payload.durationMs ?? islandDurationMs.value,
-    sticky: payload.sticky ?? false,
-  }).catch(() => {});
+  // 截图会话期间跳过显示事件（历史/出站已在上方写入），避免岛压住截图覆盖窗
+  if (!snipSessionActive) {
+    await emit('island:show-ui', {
+      kind: payload.kind,
+      text: payload.text,
+      image: displayImage,
+      title: payload.title,
+      durationMs: payload.durationMs ?? islandDurationMs.value,
+      sticky: payload.sticky ?? false,
+    }).catch(() => {});
+  }
   // 出站事件（Rust 桥 → SSE/Webhook 广播，image 保持原图语义）：uiHandled 标记岛窗口跳过
   // 本次显示（显示已由 show-ui 负责，否则岛要重复接收并解码数 MB 原图）；
   // Rust 桥 json! 白名单构造天然剥离该标记，出站载荷不含实现细节。
