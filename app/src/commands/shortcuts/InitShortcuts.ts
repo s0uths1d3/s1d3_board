@@ -44,8 +44,11 @@ const focusSearchCommand = new FocusSearchCommand()
 // Ctrl+P：全局搜索命令面板
 const globalSearchCommand = new GlobalSearchCommand()
 const cycleColorSchemeCommand = new CycleColorSchemeCommand()
-// Ctrl+Alt+A：全局截图（snipManager 会话）
-const screenshotCommand = new ScreenshotCommand()
+// Ctrl+Alt+A 等：全局截图（snipManager 会话，多入口）
+const screenshotCommand = new ScreenshotCommand('region')
+const screenshotFullscreenCommand = new ScreenshotCommand('fullscreen')
+const screenshotWindowCommand = new ScreenshotCommand('window')
+const screenshotLastCommand = new ScreenshotCommand('last')
 const pinnedClipCommands = Array.from({ length: 10 }, (_, i) => new PinnedClipPasteCommand(i + 1))
 
 const clipboardSlotCommands = Array.from({ length: 10 }, (_, i) => new ClipboardSlotPasteCommand(i + 1))
@@ -234,6 +237,34 @@ const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
         scope: 'global',
         command: screenshotCommand,
         title: 'shortcut.screenshot',
+        enabled: true
+    },
+    // 多入口：整屏 / 窗口 / 上次区域（预选后仍可微调或直接确认）
+    {
+        id: 'screenshot_fullscreen',
+        key: 'Control+Alt+F',
+        defaultKey: 'Control+Alt+F',
+        scope: 'global',
+        command: screenshotFullscreenCommand,
+        title: 'shortcut.screenshot_fullscreen',
+        enabled: true
+    },
+    {
+        id: 'screenshot_window',
+        key: 'Control+Alt+W',
+        defaultKey: 'Control+Alt+W',
+        scope: 'global',
+        command: screenshotWindowCommand,
+        title: 'shortcut.screenshot_window',
+        enabled: true
+    },
+    {
+        id: 'screenshot_last',
+        key: 'Control+Alt+R',
+        defaultKey: 'Control+Alt+R',
+        scope: 'global',
+        command: screenshotLastCommand,
+        title: 'shortcut.screenshot_last',
         enabled: true
     },
 ];
