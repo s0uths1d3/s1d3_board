@@ -63,20 +63,26 @@ import {
   setSnipAutoCopy,
   setSnipAutoHistory,
   setSnipCaptureCursor,
+  setSnipCaptureScope,
   setSnipDelaySec,
   setSnipEnabled,
   setSnipFormat,
   setSnipMaskOpacity,
+  setSnipOcrLang,
   setSnipSaveDir,
+  setSnipUploadUrl,
   useSnipAutoCopy,
   useSnipAutoHistory,
   useSnipCaptureCursor,
+  useSnipCaptureScope,
   useSnipDelaySec,
   useSnipEnabled,
   useSnipFormat,
   useSnipJpegQuality,
   useSnipMaskOpacity,
+  useSnipOcrLang,
   useSnipSaveDir,
+  useSnipUploadUrl,
 } from '~/src/snip/snipSettings';
 import type { ClipExtractor, ClipScheme } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
@@ -463,6 +469,18 @@ const snipAutoHistory = useSnipAutoHistory();
 const snipFormat = useSnipFormat();
 const snipSaveDir = useSnipSaveDir();
 const snipCaptureCursor = useSnipCaptureCursor();
+const snipCaptureScope = useSnipCaptureScope();
+const snipCaptureScopeLabel = computed(() => t(
+  snipCaptureScope.value === 'cursor'
+    ? 'setting.general.snip_capture_scope_cursor'
+    : 'setting.general.snip_capture_scope_all',
+));
+const snipCaptureScopeOptions = computed(() => [
+  { value: 'all', label: t('setting.general.snip_capture_scope_all') },
+  { value: 'cursor', label: t('setting.general.snip_capture_scope_cursor') },
+]);
+const snipOcrLangInput = ref('');
+const snipUploadUrlInput = ref('');
 const snipDelayInput = ref('');
 const snipMaskOpacityInput = ref('');
 const snipSaveDirInput = ref('');
@@ -517,6 +535,25 @@ async function pickSnipSaveDir() {
   snipSaveDirInput.value = dir;
   await setSnipSaveDir(dir);
   showHint(t('setting.general.snip_save_dir_saved'));
+}
+/** 框选捕获范围：all = 全部显示器并集（可跨屏框选）；cursor = 仅光标所在屏 */
+async function selectSnipCaptureScope(value: string) {
+  const scope = value === 'cursor' ? 'cursor' : 'all';
+  if (scope === snipCaptureScope.value) return;
+  await setSnipCaptureScope(scope);
+  showHint(t('setting.general.snip_capture_scope_saved'));
+}
+/** OCR 识别语言（BCP-47，如 zh-Hans-CN / en-US；留空 = 系统默认语言） */
+async function saveSnipOcrLang() {
+  await setSnipOcrLang(snipOcrLangInput.value.trim());
+  snipOcrLangInput.value = useSnipOcrLang().value;
+  showHint(t('setting.general.snip_ocr_lang_saved'));
+}
+/** 上传地址（https；留空 = 隐藏截图工具栏「上传」入口） */
+async function saveSnipUploadUrl() {
+  await setSnipUploadUrl(snipUploadUrlInput.value.trim());
+  snipUploadUrlInput.value = useSnipUploadUrl().value;
+  showHint(t('setting.general.snip_upload_url_saved'));
 }
 // 剪贴板预览（tooltip）换行开关：默认关闭（不折行，超宽横向滚动），共享 composable 单例状态
 const { tooltipWrapEnabled } = useTooltipWrap();
@@ -2015,6 +2052,8 @@ onMounted(async () => {
   snipMaskOpacityInput.value = String(useSnipMaskOpacity().value);
   snipSaveDirInput.value = useSnipSaveDir().value;
   snipDelayInput.value = String(useSnipDelaySec().value);
+  snipOcrLangInput.value = useSnipOcrLang().value;
+  snipUploadUrlInput.value = useSnipUploadUrl().value;
   // 图片缓存磁盘占用查询（失败显示统计中占位，不阻塞其余设置恢复）
   void refreshImageCacheUsage();
   // API Key 加密存储：先把旧明文 KV 迁移进系统凭据库（失败保留明文），再从凭据库读取
@@ -3036,6 +3075,53 @@ onMounted(async () => {
                       :tip-on="t('setting.general.snip_capture_cursor_tip_on')" :tip-off="t('setting.general.snip_capture_cursor_tip_off')"
                       :label="t('setting.general.snip_capture_cursor')"
                       @change="onSnipCaptureCursorToggle"
+                  />
+                  <!-- 框选捕获范围：全部显示器并集（可跨屏框选）/ 仅光标所在屏 -->
+                  <UiDropdown
+                      v-else-if="item.type === 'select' && item.label === 'setting.general.snip_capture_scope'"
+                      class="w-full"
+                      align="end"
+                      match-trigger-width
+                      :aria-label="t('setting.general.snip_capture_scope')"
+                      panel-class="glass-card menu w-full rounded-2xl p-2"
+                  >
+                    <template #trigger="{ open: ddOpen }">
+                      <button type="button" tabindex="-1" class="btn-soft flex w-full items-center justify-between rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink">
+                        <span>{{ snipCaptureScopeLabel }}</span>
+                        <svg class="h-4 w-4 opacity-60 transition-transform duration-200" :class="ddOpen ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+                    </template>
+                    <ul class="menu p-2">
+                      <li v-for="opt in snipCaptureScopeOptions" :key="opt.value">
+                        <button
+                            type="button"
+                            class="flex w-full items-center justify-between rounded-xl"
+                            :class="snipCaptureScope === opt.value ? 'text-gold' : ''"
+                            @click="selectSnipCaptureScope(opt.value)"
+                        >
+                          <span>{{ opt.label }}</span>
+                          <svg v-if="snipCaptureScope === opt.value" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        </button>
+                      </li>
+                    </ul>
+                  </UiDropdown>
+                  <!-- OCR 识别语言：BCP-47（留空 = 系统默认） -->
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.snip_ocr_lang'"
+                      v-model="snipOcrLangInput"
+                      :placeholder="t('setting.general.snip_ocr_lang_placeholder')"
+                      @save="saveSnipOcrLang"
+                  />
+                  <!-- 上传地址：https 图床/自建服务；留空隐藏截图工具栏上传入口 -->
+                  <SettingInput
+                      v-else-if="item.type === 'input' && item.label === 'setting.general.snip_upload_url'"
+                      v-model="snipUploadUrlInput"
+                      :placeholder="t('setting.general.snip_upload_url_placeholder')"
+                      @save="saveSnipUploadUrl"
                   />
                   <!-- 保存格式：保存到文件时使用 PNG / JPEG -->
                   <UiDropdown

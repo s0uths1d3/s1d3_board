@@ -124,6 +124,10 @@ const SNIP_JPEG_QUALITY_KEY = 'snip_jpeg_quality';
 const SNIP_SAVE_DIR_KEY = 'snip_save_dir';
 const SNIP_DELAY_KEY = 'snip_delay_sec';
 const SNIP_CAPTURE_CURSOR_KEY = 'snip_capture_cursor';
+const SNIP_CAPTURE_SCOPE_KEY = 'snip_capture_scope';
+const SNIP_LAST_REGION_KEY = 'snip_last_region';
+const SNIP_UPLOAD_URL_KEY = 'snip_upload_url';
+const SNIP_OCR_LANG_KEY = 'snip_ocr_lang';
 
 const maskOpacity = ref(SNIP_MASK_OPACITY_DEFAULT);
 const format = ref<'png' | 'jpeg'>('png');
@@ -131,6 +135,12 @@ const jpegQuality = ref(SNIP_JPEG_QUALITY_DEFAULT);
 const saveDir = ref('');
 const delaySec = ref(SNIP_DELAY_DEFAULT);
 const captureCursor = createBooleanSetting(SNIP_CAPTURE_CURSOR_KEY, false);
+/** 捕获范围：all = 虚拟桌面（跨屏框选，默认）；cursor = 光标所在显示器 */
+const captureScope = ref<'all' | 'cursor'>('all');
+/** 上传分享目标地址（空 = 未配置，隐藏分享动作） */
+const uploadUrl = ref('');
+/** OCR 识别语言标签（空 = 跟随系统用户语言） */
+const ocrLang = ref('');
 
 function sanitizeMaskOpacity(v: number): number {
   if (!Number.isFinite(v)) return SNIP_MASK_OPACITY_DEFAULT;
@@ -156,12 +166,18 @@ export function ensureSnipSettingsLoaded(): Promise<void> {
       dbService.getKeyValue(SNIP_JPEG_QUALITY_KEY).catch(() => null),
       dbService.getKeyValue(SNIP_SAVE_DIR_KEY).catch(() => null),
       dbService.getKeyValue(SNIP_DELAY_KEY).catch(() => null),
-    ]).then(([mo, f, q, dir, delay]) => {
+      dbService.getKeyValue(SNIP_CAPTURE_SCOPE_KEY).catch(() => null),
+      dbService.getKeyValue(SNIP_UPLOAD_URL_KEY).catch(() => null),
+      dbService.getKeyValue(SNIP_OCR_LANG_KEY).catch(() => null),
+    ]).then(([mo, f, q, dir, delay, scope, upload, ocr]) => {
       if (mo && mo.trim()) maskOpacity.value = sanitizeMaskOpacity(Number(mo));
       if (f === 'png' || f === 'jpeg') format.value = f;
       if (q && q.trim()) jpegQuality.value = sanitizeJpegQuality(Number(q));
       if (dir) saveDir.value = dir;
       if (delay && delay.trim()) delaySec.value = sanitizeDelay(Number(delay));
+      if (scope === 'all' || scope === 'cursor') captureScope.value = scope;
+      if (upload) uploadUrl.value = upload.trim();
+      if (ocr) ocrLang.value = ocr.trim();
     });
   }
   return settingsLoadPromise;
@@ -227,4 +243,70 @@ export async function setSnipCaptureCursor(v: boolean): Promise<void> {
 export async function isSnipCaptureCursor(): Promise<boolean> {
   await captureCursor.ensureLoaded();
   return captureCursor.enabled.value;
+}
+
+// ===== 捕获范围 / 上次选区 / 上传地址 / OCR 语言 =====
+
+/** 捕获范围（all = 虚拟桌面跨屏；cursor = 光标所在显示器） */
+export async function getSnipCaptureScope(): Promise<'all' | 'cursor'> {
+  await ensureSnipSettingsLoaded();
+  return captureScope.value;
+}
+export function useSnipCaptureScope() {
+  ensureSnipSettingsLoaded();
+  return captureScope;
+}
+export async function setSnipCaptureScope(v: 'all' | 'cursor'): Promise<void> {
+  captureScope.value = v;
+  try { await dbService.setKeyValue(SNIP_CAPTURE_SCOPE_KEY, v); } catch { /* 忽略 */ }
+}
+
+/** 物理像素选区（屏幕全局坐标） */
+export interface SnipRegionRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** 记下上次确认的选区（多入口「上次区域」快捷键复用） */
+export async function getSnipLastRegion(): Promise<SnipRegionRect | null> {
+  try {
+    const raw = await dbService.getKeyValue(SNIP_LAST_REGION_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<SnipRegionRect>;
+    if (
+      typeof p.x === 'number' && typeof p.y === 'number' &&
+      typeof p.w === 'number' && typeof p.h === 'number' &&
+      p.w > 0 && p.h > 0
+    ) {
+      return { x: p.x, y: p.y, w: p.w, h: p.h };
+    }
+  } catch { /* 损坏数据忽略 */ }
+  return null;
+}
+export async function setSnipLastRegion(r: SnipRegionRect | null): Promise<void> {
+  try {
+    await dbService.setKeyValue(SNIP_LAST_REGION_KEY, r ? JSON.stringify(r) : '');
+  } catch { /* 忽略 */ }
+}
+
+/** 上传分享地址（空 = 未配置，前端隐藏分享动作） */
+export function useSnipUploadUrl() {
+  ensureSnipSettingsLoaded();
+  return uploadUrl;
+}
+export async function setSnipUploadUrl(v: string): Promise<void> {
+  uploadUrl.value = v.trim();
+  try { await dbService.setKeyValue(SNIP_UPLOAD_URL_KEY, uploadUrl.value); } catch { /* 忽略 */ }
+}
+
+/** OCR 语言标签（空 = 跟随系统用户语言） */
+export function useSnipOcrLang() {
+  ensureSnipSettingsLoaded();
+  return ocrLang;
+}
+export async function setSnipOcrLang(v: string): Promise<void> {
+  ocrLang.value = v.trim();
+  try { await dbService.setKeyValue(SNIP_OCR_LANG_KEY, ocrLang.value); } catch { /* 忽略 */ }
 }
