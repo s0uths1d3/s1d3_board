@@ -1,7 +1,7 @@
 # 截图功能实现规格书（screenshot spec）
 
 > **本文档是唯一实现依据**：执行时禁止自创任何命名/事件/键名/文案——全部以 §1 标识符总表为准；禁止更改既有架构决策——所有「照抄样板」给出了精确 `file:line`，先读样板再动手。
-> 设计定稿于 2026-10-24（`dev` 分支），状态：**P0/P1 已实现（2026-10-24 执行完毕）**，P2（长截图 / AI 识图）待单独细化。功能概览见 [features/screenshot.md](./features/screenshot.md)。
+> 设计定稿于 2026-10-24（`dev` 分支），状态：**P0/P1/P2 全部实现（P0/P1 于 2026-10-24；P2 长截图 / AI 识图 / OCR 于 2026-11-11，仅 Windows 验证）**。功能概览见 [features/screenshot.md](./features/screenshot.md)。
 > 实现偏差记录：截图入库走 `clipboardListener.saveSnipToHistory` 直存（抑制窗口存活于该模块仓储闭包内，spec 原文的 dbService 门面路线不满足单实例语义）；统计埋点由 saveClipboard 内部记录 + confirmSnip 显式 `clip_screenshot` 计数，未按 P0 原文重复记 `clip_image`。
 
 ---
@@ -710,13 +710,16 @@ export function isValidSelection(rect: Rect): boolean;
 
 ---
 
-## 4. P2 占位（本轮不实现）
+## 4. P2 进阶实现记录（2026-11-11，Windows 验证）
 
-仅登记方向，**须单独细化 spec 后再执行**：
+已实现并接入工具条（详细行为见 [features/screenshot.md](./features/screenshot.md)）：
 
-1. **长截图**：滚动拼接。草案：贴图式捕获窗 + 用户手动滚动 + 每 250ms `snip_capture_screen` 区域截帧 + 相邻帧行哈希重叠检测（顶部对齐偏移搜索）+ 纵向拼接 → 合成单图走既有入库管线。复杂度高（惯性滚动/固定元素/视差），不做自动驱动滚动。
-2. **AI 识图**：复用 `src-tauri/src/ai/engine.rs`（多提供商 SSE）：截图条目右键/环形气泡加「AI 识图」——把裁剪图（≤某尺寸）转 data URL 随 prompt 发多模态请求，产出关键词/摘要进环形气泡分节（与 `smart-clip` 段落管线汇合）。依赖所用模型的多模态能力，需探测降级。
-3. **出站联动**：岛事件 `island:show` 天然携带截图事件（imageRef 供 Rust 桥展开，`src-tauri/src/island/api.rs:292-331`），SSE/Webhook 订阅者免费获得「截图事件流」——P0 完成即生效，无需开发，此处仅记录。
+1. **长截图**：覆盖窗隐藏 UI + 鼠标穿透；`snip_capture_region` 每 350ms 抓帧（内容寻址引用天然去重）→ 静止约 2s / 20s 上限结束 → `snip_stitch_vertical`（行灰度签名重叠检测 + 纵向拼接）→ 主窗口监听 `snip:long-done` 统一写剪贴板 / 入历史 / 岛。
+2. **AI 识图**：`ai_vision_complete` 支持 OpenAI 兼容（`image_url`）与 Anthropic 原生（`source.type=base64`）多模态；选区（含标注烘焙）→ 描述文本复制；未配置 Key / 自定义提供商隐藏入口。
+3. **OCR 与自动打码**：`snip_ocr_region` / `snip_ocr_boxes`（Windows.Media.Ocr）；自动打码按行框批量生成马赛克标注（可撤销）。
+4. **上传分享**：`snip_upload_image` 仅允许 https（或本机回环 http），POST PNG 原字节并取返回链接。
+5. **出站联动**：岛事件 `island:show` 天然携带截图事件（imageRef 供 Rust 桥展开，`src-tauri/src/island/api.rs:292-331`），无需开发。
+6. **快速访问条**：确认后浮现在选区旁的小工具条（贴图 / 上传 / 历史），预热常驻窗 `snip-quickbar`，位置由纯函数 `app/src/snip/quickbar.ts` 计算（下方优先/上方回退/屏内钳制），4 秒无交互自动收起，动作回主窗口执行。OCR 入口只在截图编辑器（识别结果需预览确认后才会复制，避免「不知结果对错已被写入剪贴板」）。
 
 ---
 
