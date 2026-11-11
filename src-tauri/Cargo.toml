@@ -64,6 +64,16 @@ quircs = "0.10"
 qrcode = { version = "0.14", default-features = false, features = ["image"] }
 
 [target.'cfg(windows)'.dependencies]
+# Windows 原生 OCR（Windows.Media.Ocr WinRT 接口）：windows-sys 不含 WinRT，
+# 需 windows 元数据 crate；版本与 tauri 传递依赖一致（0.59），复用同一份编译产物
+windows = { version = "0.59", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Globalization",
+    "Graphics_Imaging",
+    "Media_Ocr",
+    "Storage_Streams",
+] }
 windows-sys = { version = "0.59", features = [
     "Win32_System_LibraryLoader",
     "Win32_Foundation",

@@ -137,6 +137,12 @@ pub fn run() {
             snip::capture::snip_write_clipboard_dib,
             snip::capture::snip_windows_at_point,
             snip::capture::snip_export_file,
+            snip::capture::snip_capture_region,
+            snip::capture::snip_stitch_vertical,
+            snip::capture::snip_upload_image,
+            snip::ocr::snip_ocr_region,
+            snip::ocr::snip_ocr_languages,
+            snip::ocr::snip_ocr_boxes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

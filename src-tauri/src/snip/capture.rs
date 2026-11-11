@@ -6,8 +6,11 @@
 //!   parse_dib 的逆变换）→ SetClipboardData，避让剪贴板插件轮询锁。
 //! - `snip_windows_at_point`：光标处根窗口矩形（窗口吸附高亮），物理像素。
 //! - `snip_export_file`：imgfile 引用 → 任意路径导出（保存到文件；jpeg 按质量重编码）。
+//! - `snip_capture_region`：指定物理矩形捕获（长截图逐帧）/ `snip_stitch_vertical`
+//!   竖向拼接（行签名重叠检测，纯函数暴露给集成测试）。
 //!
-//! 纯函数（build_dib_bgra_bottomup / rgba_to_jpeg_bytes）暴露给集成测试 roundtrip。
+//! 纯函数（build_dib_bgra_bottomup / find_vertical_overlap / stitch_vertical）
+//! 暴露给集成测试 roundtrip。
 
 use serde::Serialize;
 use tauri::AppHandle;
@@ -26,6 +29,10 @@ pub struct SnipCapture {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+    /// 捕获瞬间的光标全局物理坐标：前端据此定位光标所在显示器，取其 scaleFactor
+    /// （scope=all 时捕获矩形是虚拟桌面并集，无法再用矩形反查显示器）
+    pub cursor_x: i32,
+    pub cursor_y: i32,
 }
 
 /// 区域裁剪结果：file_ref = 裁剪图引用；thumb = 岛显示缩略图（384px PNG data URL）；
@@ -58,9 +65,66 @@ pub struct SnipWindowRect {
 /// 保编码 <100ms 且冻结画面视觉足够锐利
 const PREVIEW_MAX_SIDE: u32 = 2560;
 
-/// 光标所在显示器整屏截图（即时返回预览；全分辨率后台落盘）。
-/// 捕获失败（非 Windows/无显示器/GDI 失败/超 20MB 上限）返回 None，前端弹岛降级。
+/// 区域捕获结果（长截图逐帧拍摄用）：data_url = 该区域全分辨率 PNG data URL；
+/// file_ref = 内容寻址落盘引用（相同画面 → 相同引用，前端据此跳过未滚动帧）
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnipRegion {
+    pub data_url: String,
+    pub file_ref: Option<String>,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// 长截图拼接结果：file_ref = 合成图引用；data_url = 合成图 data URL（预览用）；
+/// overlap = 最后一次拼接采用的重叠行数（0 = 未检测到重叠，直接首尾相接）
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnipStitch {
+    pub file_ref: String,
+    pub data_url: String,
+    pub width: i32,
+    pub height: i32,
+    pub overlap: i32,
+}
+
+/// 捕获范围：all = 虚拟桌面（所有显示器并集，跨屏框选）；cursor = 光标所在显示器
+fn capture_rect(scope: Option<&str>) -> Option<windows_rect::Rect> {
+    #[cfg(target_os = "windows")]
+    {
+        match scope.unwrap_or("all") {
+            "cursor" => cursor_monitor_rect().map(windows_rect::Rect::from),
+            _ => virtual_screen_rect().map(windows_rect::Rect::from),
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = scope;
+        None
+    }
+}
+
+/// 跨平台矩形抽象（非 Windows 平台占位，避免 cfg 泄漏到调用方）
+mod windows_rect {
+    #[derive(Clone, Copy, Debug)]
+    pub struct Rect {
+        pub left: i32,
+        pub top: i32,
+        pub right: i32,
+        pub bottom: i32,
+    }
+    #[cfg(target_os = "windows")]
+    impl From<windows_sys::Win32::Foundation::RECT> for Rect {
+        fn from(r: windows_sys::Win32::Foundation::RECT) -> Self {
+            Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+        }
+    }
+}
+
+/// 整屏/虚拟桌面截图（即时返回预览；全分辨率后台落盘）。
+/// 捕获失败（非 Windows/无显示器/GDI 失败）返回 None，前端弹岛降级。
 /// include_cursor：把系统光标绘制进画面（snip_capture_cursor 设置）。
+/// scope：all（默认，虚拟桌面并集，支持跨屏框选）/ cursor（光标所在屏）。
 ///
 /// 延迟架构（用户实测「打开特别慢」的修复）：原实现热键路径同步等全分辨率
 /// PNG 编码（4K 约 200~500ms）+ 页面读盘跨 IPC + 解码，叠加 0.5~1.5s。现热路径
@@ -68,12 +132,16 @@ const PREVIEW_MAX_SIDE: u32 = 2560;
 /// 完成后经 `snip:full-ready` 事件补发 fileRef——用户框选的数秒内早已完成，
 /// 确认裁剪时才被前端等待（裁剪走全分辨率原图，产物无损）。
 #[tauri::command]
-pub async fn snip_capture_screen(app: AppHandle, include_cursor: Option<bool>) -> Option<SnipCapture> {
+pub async fn snip_capture_screen(
+    app: AppHandle,
+    include_cursor: Option<bool>,
+    scope: Option<String>,
+) -> Option<SnipCapture> {
     #[cfg(target_os = "windows")]
     {
         use base64::Engine;
         use tauri::Emitter;
-        let rect = cursor_monitor_rect()?;
+        let rect = capture_rect(scope.as_deref())?;
         let (w, h, rgba) = blit_capture(&rect, include_cursor.unwrap_or(false))?;
         // 1) 预览（热路径）+ 编码复用：≤2K 时预览即原图，热路径编码出的 PNG 字节
         //    直接交给后台线程落盘（省一次全图重复编码）；4K 则缩小另编预览
@@ -103,11 +171,13 @@ pub async fn snip_capture_screen(app: AppHandle, include_cursor: Option<bool>) -
             y: rect.top,
             width: w as i32,
             height: h as i32,
+            cursor_x: cursor_pos().map(|p| p.0).unwrap_or(rect.left),
+            cursor_y: cursor_pos().map(|p| p.1).unwrap_or(rect.top),
         })
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, include_cursor);
+        let _ = (app, include_cursor, scope);
         None
     }
 }
@@ -142,18 +212,28 @@ fn build_preview_url(w: u32, h: u32, rgba: &[u8]) -> Option<String> {
     ))
 }
 
-/// 光标所在显示器的 rcMonitor（物理像素）。GetCursorPos + MonitorFromPoint(NEAREST)。
+/// 光标全局物理坐标（失败返回 None）
 #[cfg(target_os = "windows")]
-fn cursor_monitor_rect() -> Option<windows_sys::Win32::Foundation::RECT> {
-    use windows_sys::Win32::Graphics::Gdi::{
-        GetMonitorInfoW, MonitorFromPoint, MONITOR_DEFAULTTONEAREST, MONITORINFO,
-    };
+fn cursor_pos() -> Option<(i32, i32)> {
     use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
     unsafe {
         let mut pt = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
         if GetCursorPos(&mut pt) == 0 {
             return None;
         }
+        Some((pt.x, pt.y))
+    }
+}
+
+/// 光标所在显示器的 rcMonitor（物理像素）。GetCursorPos + MonitorFromPoint(NEAREST)。
+#[cfg(target_os = "windows")]
+fn cursor_monitor_rect() -> Option<windows_sys::Win32::Foundation::RECT> {
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    };
+    unsafe {
+        let (x, y) = cursor_pos()?;
+        let pt = windows_sys::Win32::Foundation::POINT { x, y };
         let hmon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
         if hmon.is_null() {
             return None;
@@ -167,10 +247,30 @@ fn cursor_monitor_rect() -> Option<windows_sys::Win32::Foundation::RECT> {
     }
 }
 
+/// 虚拟桌面并集矩形（所有显示器覆盖范围；多屏可负坐标/非矩形排列）。
+/// SM_XVIRTUALSCREEN 等系统度量即物理像素（进程 Per-Monitor-V2 DPI aware）。
+#[cfg(target_os = "windows")]
+fn virtual_screen_rect() -> Option<windows_sys::Win32::Foundation::RECT> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
+    unsafe {
+        let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        Some(windows_sys::Win32::Foundation::RECT { left: x, top: y, right: x + w, bottom: y + h })
+    }
+}
+
 /// GDI BitBlt 整屏捕获 → RGBA（top-down）。include_cursor 时用 GetCursorInfo 取
 /// 全局光标句柄，DrawIconEx 画进 memDC（BitBlt 本身不含光标；坐标 = 屏幕物理 - 显示器原点）。
 #[cfg(target_os = "windows")]
-fn blit_capture(rect: &windows_sys::Win32::Foundation::RECT, include_cursor: bool) -> Option<(u32, u32, Vec<u8>)> {
+fn blit_capture(rect: &windows_rect::Rect, include_cursor: bool) -> Option<(u32, u32, Vec<u8>)> {
     use windows_sys::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
         GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, CAPTUREBLT, DIB_RGB_COLORS,
@@ -387,7 +487,7 @@ fn window_visible_rect(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<win
     use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
     unsafe {
         let mut r: windows_sys::Win32::Foundation::RECT = std::mem::zeroed();
-        if GetWindowRectFallback(hwnd, &mut r) == 0 {
+        if get_window_rect_fallback(hwnd, &mut r) == 0 {
             return None;
         }
         let mut dwm: windows_sys::Win32::Foundation::RECT = std::mem::zeroed();
@@ -411,7 +511,7 @@ fn window_visible_rect(hwnd: windows_sys::Win32::Foundation::HWND) -> Option<win
 
 /// GetWindowRect 的非宏包装（避免多处 use 冲突的简单封装）。
 #[cfg(target_os = "windows")]
-unsafe fn GetWindowRectFallback(
+unsafe fn get_window_rect_fallback(
     hwnd: windows_sys::Win32::Foundation::HWND,
     r: &mut windows_sys::Win32::Foundation::RECT,
 ) -> i32 {
@@ -535,3 +635,290 @@ pub async fn snip_export_file(
 // ===================== P1-T6 捕获鼠标光标（保留位） =====================
 // include_cursor 设置项 P0 已存 KV；绘制实现（GetIconInfo + DrawIconEx 到 memDC，
 // 坐标 = pt - rect.left/top）在 P1 落地，见 spec P1-T6。
+
+// ===================== P1-T7 长截图（逐帧捕获 + 竖向拼接） =====================
+
+/// 指定物理矩形捕获（长截图逐帧；区域通常为屏幕一部分，编码耗时可接受）。
+/// 返回全分辨率 PNG data URL——逐帧回传页面做进度预览，最终拼接走引用落盘。
+#[tauri::command]
+pub async fn snip_capture_region(
+    app: AppHandle,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    include_cursor: Option<bool>,
+) -> Option<SnipRegion> {
+    #[cfg(target_os = "windows")]
+    {
+        use base64::Engine;
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        let rect = windows_rect::Rect { left: x, top: y, right: x + w, bottom: y + h };
+        let (rw, rh, rgba) = blit_capture(&rect, include_cursor.unwrap_or(false))?;
+        let bytes = crate::clipboard::image_store::encode_rgba_png(rw, rh, &rgba)?;
+        // 内容寻址落盘：同画面复用同一引用（长截图循环据此判定「未滚动」）
+        let file_ref = crate::clipboard::image_store::images_dir(&app)
+            .and_then(|dir| crate::clipboard::image_store::save_png_bytes_to_dir(&dir, &bytes));
+        Some(SnipRegion {
+            data_url: format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&bytes)
+            ),
+            file_ref,
+            width: rw as i32,
+            height: rh as i32,
+        })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, x, y, w, h, include_cursor);
+        None
+    }
+}
+
+/// 重叠检测采样列数 / 最小重叠行数 / 可接受的平均灰度差
+const OVERLAP_COLS: u32 = 64;
+const OVERLAP_MIN_ROWS: u32 = 8;
+const OVERLAP_MAX_DIFF: f32 = 10.0;
+/// 右侧排除宽度：滚动条滑块在两帧间必然移动，参与比对会污染重叠检测
+const OVERLAP_RIGHT_GUARD: u32 = 24;
+
+/// 单行灰度签名（采样列，排除右侧滚动条区域）
+fn row_signature(buf: &[u8], w: u32, y: u32) -> Vec<u8> {
+    let usable = w.saturating_sub(OVERLAP_RIGHT_GUARD).max(1);
+    let cols = OVERLAP_COLS.min(usable).max(1);
+    (0..cols)
+        .map(|i| {
+            let x = if cols <= 1 {
+                0
+            } else {
+                (i as u64 * (usable as u64 - 1) / (cols as u64 - 1)) as u32
+            };
+            let p = ((y as u64 * w as u64 + x as u64) * 4) as usize;
+            if p + 2 >= buf.len() {
+                return 0;
+            }
+            ((buf[p] as u32 * 30 + buf[p + 1] as u32 * 59 + buf[p + 2] as u32 * 11) / 100) as u8
+        })
+        .collect()
+}
+
+/// 竖向重叠检测：返回 bottom 顶部与 top 底部的重叠行数。
+///
+/// 思路（滚动截图逐帧对齐）：候选重叠量 ov 从大到小（大重叠优先——页面滚动幅度
+/// 通常小于一屏），比较 top 的末 ov 行与 bottom 的前 ov 行；每行取 64 列灰度签名，
+/// 抽 24 行计算平均绝对差。分数 <2 提前接受（无损截图通常为 0），最优分数超过
+/// 阈值视为无重叠返回 None。
+///
+/// 两处刻意拒绝：完全重叠（两帧一致）视为「页面未滚动」（否则会拼出重复内容）。
+pub fn find_vertical_overlap(
+    top: &[u8],
+    tw: u32,
+    th: u32,
+    bottom: &[u8],
+    bw: u32,
+    bh: u32,
+) -> Option<u32> {
+    if tw == 0 || bw == 0 || th == 0 || bh == 0 {
+        return None;
+    }
+    if top.len() < (tw as usize * th as usize * 4) || bottom.len() < (bw as usize * bh as usize * 4)
+    {
+        return None;
+    }
+    let max_ov = th.min(bh);
+    if max_ov < OVERLAP_MIN_ROWS {
+        return None;
+    }
+    // 预计算各自用于比对的末段/前段行签名
+    let top_rows: Vec<Vec<u8>> = (0..max_ov)
+        .map(|i| row_signature(top, tw, th - max_ov + i))
+        .collect();
+    let bottom_rows: Vec<Vec<u8>> = (0..max_ov).map(|i| row_signature(bottom, bw, i)).collect();
+
+    let mut best: Option<(u32, f32)> = None;
+    for ov in (OVERLAP_MIN_ROWS..=max_ov).rev() {
+        let samples = 24u32.min(ov).max(1);
+        let mut sum = 0u64;
+        let mut cnt = 0u64;
+        for s in 0..samples {
+            let k = if samples <= 1 { 0 } else { s * (ov - 1) / (samples - 1) };
+            // top 末 ov 行里第 k 行 = 预计算数组下标 (max_ov - ov + k)
+            let ts = &top_rows[(max_ov - ov + k) as usize];
+            let bs = &bottom_rows[k as usize];
+            for i in 0..ts.len().min(bs.len()) {
+                sum += (ts[i] as i32 - bs[i] as i32).unsigned_abs() as u64;
+                cnt += 1;
+            }
+        }
+        let score = sum as f32 / cnt.max(1) as f32;
+        if best.map_or(true, |(_, bs)| score < bs) {
+            best = Some((ov, score));
+        }
+        if score < 2.0 {
+            break;
+        }
+    }
+    let (ov, score) = best?;
+    if score > OVERLAP_MAX_DIFF {
+        return None;
+    }
+    // 完全重叠 = 两帧一致（页面未滚动）：拒绝，交由调用方提示
+    if ov >= th.min(bh) {
+        return None;
+    }
+    Some(ov)
+}
+
+/// 竖向拼接：top 全量 + bottom 去掉与 top 重叠的 ov 行。宽度必须一致。
+pub fn stitch_vertical(
+    top: &[u8],
+    tw: u32,
+    th: u32,
+    bottom: &[u8],
+    bw: u32,
+    bh: u32,
+    overlap: u32,
+) -> Option<(u32, u32, Vec<u8>)> {
+    if tw == 0 || th == 0 || bh == 0 || tw != bw {
+        return None;
+    }
+    let need_top = tw as usize * th as usize * 4;
+    let need_bottom = bw as usize * bh as usize * 4;
+    if top.len() < need_top || bottom.len() < need_bottom {
+        return None;
+    }
+    let ov = overlap.min(bh).min(th);
+    let nh = th + bh - ov;
+    let mut out = Vec::with_capacity(tw as usize * nh as usize * 4);
+    out.extend_from_slice(&top[..need_top]);
+    let start = ov as usize * tw as usize * 4;
+    out.extend_from_slice(&bottom[start..need_bottom]);
+    Some((tw, nh, out))
+}
+
+/// 多帧竖向拼接（纯函数，单元测试覆盖）：
+/// 按顺序检测相邻重叠并累积；无重叠帧（未滚动 / 滚动过头）跳过而不是整帧追加，
+/// 否则会拼出重复或断裂内容。宽度不一致直接报错。
+pub fn stitch_frames(frames: &[(u32, u32, Vec<u8>)]) -> Result<(u32, u32, Vec<u8>, i32), String> {
+    if frames.is_empty() {
+        return Err("没有可拼接的截图".to_string());
+    }
+    let mut acc: Option<(u32, u32, Vec<u8>)> = None;
+    let mut last_overlap = 0i32;
+    for (w, h, raw) in frames {
+        let Some((aw, ah, araw)) = acc.take() else {
+            acc = Some((*w, *h, raw.clone()));
+            continue;
+        };
+        if *w != aw {
+            return Err("各帧宽度不一致，无法拼接".to_string());
+        }
+        let Some(ov) = find_vertical_overlap(&araw, aw, ah, raw, *w, *h) else {
+            // 跳过该帧但保留已拼内容（不能丢 acc）
+            acc = Some((aw, ah, araw));
+            continue;
+        };
+        let (nw, nh, nraw) =
+            stitch_vertical(&araw, aw, ah, raw, *w, *h, ov).ok_or("拼接失败")?;
+        last_overlap = ov as i32;
+        acc = Some((nw, nh, nraw));
+    }
+    let (w, h, raw) = acc.ok_or("没有可拼接的截图".to_string())?;
+    Ok((w, h, raw, last_overlap))
+}
+
+/// 长截图拼接命令：按顺序读取多帧，逐帧检测重叠并累积拼接，产出新 imgfile 引用。
+/// 任一帧宽度不一致 / 解码失败返回 Err（前端弹岛提示重拍）。
+#[tauri::command]
+pub async fn snip_stitch_vertical(app: AppHandle, file_refs: Vec<String>) -> Result<SnipStitch, String> {
+    if file_refs.len() < 2 {
+        return Err("至少需要两帧才能拼接".to_string());
+    }
+    let dir = crate::clipboard::image_store::images_dir(&app).ok_or("无法定位图片目录")?;
+    let mut frames: Vec<(u32, u32, Vec<u8>)> = Vec::with_capacity(file_refs.len());
+    for (i, r) in file_refs.iter().enumerate() {
+        let bytes = crate::clipboard::image_store::read_png_bytes(&app, r)
+            .ok_or_else(|| format!("读取第 {} 帧失败", i + 1))?;
+        let img = image::load_from_memory(&bytes)
+            .map_err(|e| format!("解码第 {} 帧失败: {e}", i + 1))?
+            .to_rgba8();
+        frames.push((img.width(), img.height(), img.into_raw()));
+    }
+    let (w, h, raw, last_overlap) = stitch_frames(&frames)?;
+    let out_bytes = crate::clipboard::image_store::encode_rgba_png(w, h, &raw).ok_or("编码失败")?;
+    let file_ref =
+        crate::clipboard::image_store::save_png_bytes_to_dir(&dir, &out_bytes).ok_or("落盘失败")?;
+    use base64::Engine;
+    Ok(SnipStitch {
+        file_ref,
+        data_url: format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&out_bytes)
+        ),
+        width: w as i32,
+        height: h as i32,
+        overlap: last_overlap,
+    })
+}
+
+/// 上传截图到自建/图床地址（设置页 snip_upload_url）。
+///
+/// 协议约定（够用且不绑定具体服务）：把 PNG 原字节作为请求体 POST 到该地址
+/// （Content-Type: image/png），响应若是 JSON 则依次取 url / data.url / data.link /
+/// link；否则把响应正文当结果（如纯文本 URL）。返回结果由前端复制到剪贴板。
+/// 安全：只允许 https（本机回环允许 http），避免明文外传截图。
+#[tauri::command]
+pub async fn snip_upload_image(
+    store: tauri::State<'_, crate::core::traits::ImageStoreHandle>,
+    file_ref: String,
+    url: String,
+) -> Result<String, String> {
+    let target = url.trim().to_string();
+    let allowed = target.starts_with("https://")
+        || target.starts_with("http://127.0.0.1")
+        || target.starts_with("http://localhost");
+    if !allowed {
+        return Err("上传地址必须是 https://（本机可用 http://localhost）".to_string());
+    }
+    let data_url = store.0.read(&file_ref).ok_or_else(|| "读取截图失败".to_string())?;
+    let bytes = crate::clipboard::image_store::decode_data_url(&data_url)
+        .ok_or_else(|| "解码截图失败".to_string())?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTP 客户端创建失败: {e}"))?;
+    let resp = client
+        .post(&target)
+        .header(reqwest::header::CONTENT_TYPE, "image/png")
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|e| format!("上传请求失败: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+    if !status.is_success() {
+        let preview: String = text.chars().take(200).collect();
+        return Err(format!("上传失败（HTTP {}）：{}", status.as_u16(), preview));
+    }
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+        for path in [&["url"][..], &["data", "url"][..], &["data", "link"][..], &["link"][..]] {
+            let mut cur = &json;
+            for key in path {
+                cur = &cur[*key];
+            }
+            if let Some(s) = cur.as_str() {
+                if s.starts_with("http") {
+                    return Ok(s.trim().to_string());
+                }
+            }
+        }
+    }
+    let plain = text.trim();
+    if plain.is_empty() {
+        return Err("上传成功但响应为空".to_string());
+    }
+    Ok(plain.chars().take(2000).collect())
+}
