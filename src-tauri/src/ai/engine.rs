@@ -524,3 +524,109 @@ pub async fn ai_complete(
         .complete(&cfg, &system, &content, &app)
         .await
 }
+
+// ===================== 多模态：截图 AI 识图 =====================
+
+/// 拆 data URL → (mime, base64)；仅接受 PNG / JPEG（截图产物只会是这两种）
+fn split_image_data_url(data_url: &str) -> Result<(String, String), String> {
+    let rest = data_url.strip_prefix("data:").ok_or("图片数据格式错误（缺少 data: 前缀）")?;
+    let (meta, b64) = rest.split_once(',').ok_or("图片数据格式错误（缺少分隔逗号）")?;
+    let mime = meta.strip_suffix(";base64").ok_or("图片数据必须是 base64 编码")?;
+    if mime != "image/png" && mime != "image/jpeg" {
+        return Err(format!("不支持的图片类型: {mime}"));
+    }
+    Ok((mime.to_string(), b64.to_string()))
+}
+
+/// AI 识图：把截图（data URL）随 prompt 发多模态请求，返回模型文本。
+/// 仅 openai-compat / anthropic 支持图片输入；custom 模板无法表达图片块，明确报错。
+#[tauri::command]
+pub async fn ai_vision_complete(
+    provider: String,
+    base_url: String,
+    api_key: String,
+    model: String,
+    prompt: String,
+    image_data_url: String,
+    custom_config: Option<String>,
+) -> Result<String, String> {
+    let cfg = AiConfig { provider, base_url, api_key, model, custom_config };
+    let (mime, b64) = split_image_data_url(&image_data_url)?;
+    match cfg.provider.as_str() {
+        "openai-compat" => {
+            let url = format!("{}/chat/completions", OpenAiCompatProvider::base(&cfg));
+            let body = serde_json::json!({
+                "model": cfg.model,
+                "max_tokens": MAX_TOKENS,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        { "type": "text", "text": prompt },
+                        { "type": "image_url", "image_url": { "url": image_data_url } }
+                    ]
+                }],
+            });
+            let resp = http_client()?
+                .post(url)
+                .header("Authorization", format!("Bearer {}", cfg.api_key))
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("AI API 请求失败: {e}"))?;
+            if !resp.status().is_success() {
+                return Err(error_from_response(resp).await);
+            }
+            let json = json_with_preview(resp).await?;
+            json["choices"][0]["message"]["content"]
+                .as_str()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "AI API 响应缺少 choices[0].message.content".to_string())
+        }
+        "anthropic" => {
+            let url = format!("{}/v1/messages", AnthropicProvider::base(&cfg));
+            let body = serde_json::json!({
+                "model": cfg.model,
+                "max_tokens": MAX_TOKENS,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        { "type": "image", "source": {
+                            "type": "base64", "media_type": mime, "data": b64
+                        }},
+                        { "type": "text", "text": prompt }
+                    ]
+                }],
+            });
+            let resp = http_client()?
+                .post(url)
+                .header("x-api-key", &cfg.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("AI API 请求失败: {e}"))?;
+            if !resp.status().is_success() {
+                return Err(error_from_response(resp).await);
+            }
+            let json = json_with_preview(resp).await?;
+            let mut out = String::new();
+            if let Some(blocks) = json["content"].as_array() {
+                for block in blocks {
+                    if block["type"] == "text" {
+                        if let Some(text) = block["text"].as_str() {
+                            out.push_str(text);
+                        }
+                    }
+                }
+            }
+            let out = out.trim().to_string();
+            if out.is_empty() {
+                return Err("AI API 响应缺少文本块".to_string());
+            }
+            Ok(out)
+        }
+        "custom" => Err("自定义提供商暂不支持 AI 识图（请改用 OpenAI 兼容或 Anthropic）".to_string()),
+        other => Err(format!("未知的 AI 提供商: {other}")),
+    }
+}

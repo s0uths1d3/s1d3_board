@@ -125,6 +125,7 @@ pub fn run() {
             clipboard::image_store::delete_clipboard_image_files,
             ai::engine::ai_test_connection,
             ai::engine::ai_complete,
+            ai::engine::ai_vision_complete,
             ai::secret::ai_key_get,
             ai::secret::ai_key_set,
             island::api::island_api_apply,

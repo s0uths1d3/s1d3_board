@@ -109,3 +109,16 @@ export async function aiComplete(cfg: AiClientConfig, system: string, content: s
         content,
     });
 }
+
+/** AI 识图：图片以 data URL 随提示词发送（仅 OpenAI 兼容 / Anthropic 提供商支持） */
+export async function aiVision(cfg: AiClientConfig, prompt: string, imageDataUrl: string): Promise<string> {
+    return await invoke<string>('ai_vision_complete', {
+        provider: cfg.provider,
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        customConfig: cfg.customConfig,
+        prompt,
+        imageDataUrl,
+    });
+}
