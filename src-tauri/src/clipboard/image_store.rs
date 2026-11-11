@@ -163,19 +163,26 @@ pub(crate) fn save_png_bytes_image(app: &AppHandle, bytes: &[u8]) -> Option<Stri
 /// 不在复制关键路径上；引用非法/文件缺失返回 None。
 pub(crate) fn read_image_ref(app: &AppHandle, file_ref: &str) -> Option<String> {
     let name = file_ref.strip_prefix("imgfile:")?;
-    if !valid_image_path(Path::new(name)) {
+    let dir = images_dir(app)?;
+    let path = dir.join(name);
+    if !valid_image_path(&path) {
         return None;
     }
-    images_dir(app).and_then(|dir| read_from_dir(&dir, name))
+    read_from_dir(&dir, name)
 }
 
 /// imgfile: 引用 → 原图 PNG 原始字节（snip 裁剪/导出用；非法引用/文件缺失返回 None）。
+/// 注意：必须先拼出完整路径再调 valid_image_path（它校验父目录名 + 文件存在），
+/// 裸文件名没有父目录 → 校验恒 false → 所有 snip 命令静默失败（用户实测
+/// 「保存无效果」，HUD 定位到根因）
 pub(crate) fn read_png_bytes(app: &AppHandle, file_ref: &str) -> Option<Vec<u8>> {
     let name = file_ref.strip_prefix("imgfile:")?;
-    if !valid_image_path(Path::new(name)) {
+    let dir = images_dir(app)?;
+    let path = dir.join(name);
+    if !valid_image_path(&path) {
         return None;
     }
-    images_dir(app).and_then(|dir| std::fs::read(dir.join(name)).ok())
+    std::fs::read(&path).ok()
 }
 
 /// 删除核心：文件不存在视为已删除（幂等 true）；删除失败返回 false（不致命，调用方仅记日志）。
