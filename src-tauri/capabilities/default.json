@@ -13,6 +13,7 @@
     "snip-overlay",
     "snip-overlay-*",
     "snip-pin-*",
+    "snip-quickbar",
     "tray-menu"
   ],
   "permissions": [
@@ -36,6 +37,7 @@
     "core:window:allow-set-focus",
     "core:window:allow-set-always-on-top",
     "core:window:allow-is-always-on-top",
+    "core:window:allow-set-ignore-cursor-events",
     "core:webview:default",
     "core:webview:allow-create-webview-window",
     "core:app:default",

@@ -141,6 +141,9 @@ export async function tryHideMainWindow() {
         if (w.label.startsWith('note-pin-')) continue;
         // 截图贴图常驻置顶：与桌签同语义（随自身把手关闭/双击收尾）
         if (w.label.startsWith('snip-pin-')) continue;
+        // 截图快速访问条：显隐由自身计时器/动作自管理（4 秒无交互收起），
+        // 主窗口失焦不应连带 close（销毁后预热引用失效，后续不再出现）
+        if (w.label === 'snip-quickbar') continue;
         if (await w.isVisible()) await w.close();
       } catch { /* 忽略单窗关闭失败 */ }
     }

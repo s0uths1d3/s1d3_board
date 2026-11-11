@@ -1,26 +1,34 @@
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { availableMonitors } from '@tauri-apps/api/window';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
+import { LogicalSize, PhysicalPosition, PhysicalSize } from '@tauri-apps/api/dpi';
 import { isTauri } from '~/utils/env';
-import { join } from '@tauri-apps/api/path';
 import { listen, emitTo, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { suppressIslandCopy, notifyIsland, notifySnipIsland } from '~/composables/useCopyIsland';
+import { writeText } from 'tauri-plugin-clipboard-api';
+import {
+  suppressIslandCopy,
+  notifyIsland,
+  notifySnipIsland,
+  setSnipSessionActive,
+  toggleIslandHistoryWindow,
+} from '~/composables/useCopyIsland';
 import { isPrivacyPaused } from '~/composables/usePrivacySettings';
 import { useI18n } from '~/composables/useI18n';
 import { saveSnipToHistory, suppressSnipCapture, suppressUseCountBump } from '../clipboard/clipboardListener';
 import dbService from '../db/dbService';
 import {
   ensureSnipSettingsLoaded,
+  getSnipCaptureScope,
+  getSnipLastRegion,
   isSnipAutoCopy,
   isSnipAutoHistory,
   isSnipCaptureCursor,
-  useSnipFormat,
-  useSnipJpegQuality,
-  useSnipSaveDir,
+  setSnipLastRegion,
+  useSnipUploadUrl,
 } from './snipSettings';
+import { clampPreselect, preselectSource } from './preselect';
+import { placeQuickBar, quickBarWidth, QUICKBAR_HEIGHT } from './quickbar';
 
 /**
  * 截图会话管理器（主窗口上下文；全局快捷键 ScreenshotCommand 调用 openSnip）。
@@ -59,8 +67,9 @@ interface SnipSession {
   /** 整屏全分辨率截图引用（后台线程落盘完成后经 snip:full-ready 补发；
    *  确认裁剪时通过 fullPromise 等待——用户框选期间早已完成） */
   fileRef: string | null;
-  /** 全分辨率引用就绪 promise（openSnip 时创建，full-ready 事件 resolve） */
-  fullPromise: Promise<string>;
+  /** 全分辨率引用就绪 promise（openSnip 时创建，full-ready 事件 resolve；
+   *  超时 resolve(null)——永不 reject，杜绝未确认/取消场景的 unhandled rejection） */
+  fullPromise: Promise<string | null>;
 }
 
 let snip: SnipSession | null = null;
@@ -75,7 +84,7 @@ async function getMonitors(): Promise<Awaited<ReturnType<typeof availableMonitor
 }
 
 /** 当次捕获的全分辨率引用补发管道（openSnip 登记 → full-ready 事件消费） */
-let pendingFull: { ts: number; resolve: (ref: string) => void } | null = null;
+let pendingFull: { ts: number; resolve: (ref: string | null) => void } | null = null;
 
 /** 会话进行中（覆盖窗可见）：再次触发按取消处理（热键 toggle 语义） */
 export function isSnipOpen(): boolean {
@@ -155,35 +164,245 @@ async function safeUnlisten(u: UnlistenFn | null): Promise<void> {
 /** 收起覆盖窗（常驻不销毁）：会话清空 + 隐藏；焦点自然回落目标应用 */
 export async function closeSnip(): Promise<void> {
   snip = null;
+  // 会话结束：恢复岛显示（确认截图后的「已截图」岛不被吞）
+  setSnipSessionActive(false);
   await overlay?.hide().catch(() => {});
+}
+
+// ===== 快速访问条（确认截图后浮现的小工具条：贴图 / OCR / 上传 / 历史） =====
+// 与覆盖窗同款预热：WebView 建窗 1~3s，热路径现建会明显滞后于截图完成，
+// 因此启动即隐藏创建，显示时只做「改尺寸/改位置/投数据/show」。
+const QUICKBAR_LABEL = 'snip-quickbar';
+let quickbar: WebviewWindow | null = null;
+let quickbarReady = false;
+let quickbarCreating: Promise<WebviewWindow | null> | null = null;
+/** 本次工具条对应的截图上下文（动作执行用；隐藏后置空防串） */
+let quickbarCtx: { crop: SnipCropResult; p: SnipConfirmPayload } | null = null;
+
+async function ensureQuickBar(): Promise<WebviewWindow | null> {
+  if (quickbar && quickbarReady) return quickbar;
+  const existing = await WebviewWindow.getByLabel(QUICKBAR_LABEL).catch(() => null);
+  if (existing) {
+    quickbar = existing;
+    return quickbar;
+  }
+  if (quickbarCreating) return quickbarCreating;
+  quickbarCreating = (async () => {
+    const unReady = await listen('snip-quickbar:ready', (ev) => {
+      if ((ev.payload as string) !== QUICKBAR_LABEL) return;
+      quickbarReady = true;
+    }).catch(() => null);
+    const win = new WebviewWindow(QUICKBAR_LABEL, {
+      url: '/snip-quickbar',
+      title: 'Snip Quick Bar',
+      width: 1,
+      height: 1,
+      x: -32000,
+      y: -32000,
+      resizable: false,
+      decorations: false,
+      transparent: true,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      focus: false,
+      focusable: true,
+      shadow: false,
+      visible: false,
+    });
+    quickbar = win;
+    win.once('tauri://error', () => {
+      quickbarReady = false;
+      if (quickbar === win) quickbar = null;
+    });
+    // 被系统/清理流程销毁后重置状态，下次 showQuickBar 重新创建（否则残留失效引用）
+    win.once('tauri://destroyed', () => {
+      void safeUnlisten(unReady!);
+      quickbarReady = false;
+      if (quickbar === win) quickbar = null;
+      quickbarCtx = null;
+    });
+    setTimeout(() => {
+      void safeUnlisten(unReady!);
+      if (!quickbarReady) quickbarReady = true;
+    }, READY_TIMEOUT_MS);
+    return win;
+  })().finally(() => { quickbarCreating = null; });
+  return quickbarCreating;
+}
+
+/** 收起快速访问条（常驻不销毁） */
+async function hideQuickBar(): Promise<void> {
+  quickbarCtx = null;
+  await quickbar?.hide().catch(() => {});
+}
+
+/** 显示快速访问条：贴在选区下方（放不下翻到上方，钳制在显示器内），不抢焦点。 */
+async function showQuickBar(crop: SnipCropResult, p: SnipConfirmPayload): Promise<void> {
+  const win = await ensureQuickBar();
+  if (!win) return;
+  const ctx = { crop, p };
+  quickbarCtx = ctx;
+  const upload = useSnipUploadUrl().value.trim().length > 0;
+  // 按钮：贴图 / 历史 + 上传（仅配置地址时）——文字识别只在截图编辑器工具条
+  const logicalW = quickBarWidth(upload ? 3 : 2);
+  const logicalH = QUICKBAR_HEIGHT;
+  const monitors = await getMonitors();
+  const mon = monitors.find((mm) =>
+    p.x >= mm.position.x && p.x < mm.position.x + mm.size.width &&
+    p.y >= mm.position.y && p.y < mm.position.y + mm.size.height) ?? monitors[0];
+  const scale = mon?.scaleFactor || 1;
+  const monRect = mon
+    ? { x: mon.position.x, y: mon.position.y, w: mon.size.width, h: mon.size.height }
+    : { x: p.x, y: p.y, w: p.w, h: p.h };
+  const bar = { w: Math.round(logicalW * scale), h: Math.round(logicalH * scale) };
+  const pos = placeQuickBar({ x: p.x, y: p.y, w: p.w, h: p.h }, monRect, bar);
+  // 页面未就绪（预热门窗刚创建/重载）：轮询等待 ready 再投，避免 emitTo 落空
+  if (!quickbarReady) {
+    const deadline = Date.now() + 1500;
+    while (!quickbarReady && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+  }
+  await win.setSize(new LogicalSize(logicalW, logicalH)).catch(() => {});
+  await win.setPosition(new PhysicalPosition(pos.x, pos.y)).catch(() => {});
+  await emitTo(QUICKBAR_LABEL, 'snip-quickbar:data', {
+    fileRef: crop.fileRef,
+    width: crop.width,
+    height: crop.height,
+    upload,
+  }).catch(() => {});
+  await win.show().catch(() => {});
+  // 兜底收起：页面计时器（4s 无交互）失效时主窗口也能收尾
+  setTimeout(() => {
+    if (quickbarCtx === ctx) void hideQuickBar();
+  }, 8000);
+}
+
+/** 快速访问条动作（子窗口只发动作名，抑制标记/岛/数据库全部在主窗口执行） */
+async function handleQuickBarAction(action: string): Promise<void> {
+  const ctx = quickbarCtx;
+  if (!ctx) return;
+  const { crop, p } = ctx;
+  await hideQuickBar();
+  const { t } = useI18n();
+  if (action === 'pin') {
+    await createPinWindow(crop, p);
+    return;
+  }
+  if (action === 'history') {
+    await toggleIslandHistoryWindow().catch(() => {});
+    return;
+  }
+  if (action === 'upload') {
+    const url = useSnipUploadUrl().value.trim();
+    if (!url) return;
+    try {
+      const link = await invoke<string>('snip_upload_image', { fileRef: crop.fileRef, url });
+      suppressIslandCopy();
+      await writeText(link);
+      notifyIsland({ kind: 'success', text: t('snip.upload_copied') });
+    } catch (e) {
+      notifyIsland({ kind: 'error', text: `${t('snip.upload_failed')}：${String(e)}` });
+    }
+  }
 }
 
 /** 唤起截图：先截屏后显示（顺序即正确性——自绘遮罩不入镜）。
  *  会话中再按 = 忽略（键盘连击/自动重复不再「开→取消→开」闪烁，用户实测反馈）；
- *  开启中的重复触发同样去重（截屏 200~300ms 窗口内的第二次按下不并发开两条会话）。 */
+ *  开启中的重复触发同样去重（截屏 200~300ms 窗口内的第二次按下不并发开两条会话）。
+ *
+ *  entry（多入口快捷键）：
+ *   - region：自由框选（默认）
+ *   - fullscreen：预选光标所在显示器整屏
+ *   - window：预选光标下的窗口
+ *   - last：预选上次确认的选区 */
+export type SnipEntry = 'region' | 'fullscreen' | 'window' | 'last';
+
 let opening = false;
-export async function openSnip(): Promise<void> {
+export async function openSnip(entry: SnipEntry = 'region'): Promise<void> {
   if (snip || opening) return;
   opening = true;
   try {
-    await openSnipInner();
+    await openSnipInner(entry);
   } finally {
     opening = false;
   }
 }
 
-async function openSnipInner(): Promise<void> {
+interface CaptureInfo {
+  previewUrl: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  cursorX: number;
+  cursorY: number;
+}
+
+interface MonInfo {
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+  scaleFactor: number;
+}
+
+/** 计算预选选区（逻辑坐标，相对覆盖窗）。无法确定时返回 null（自由框选）。 */
+async function computePreselect(
+  entry: SnipEntry,
+  cap: CaptureInfo,
+  scale: number,
+  cursorMon: MonInfo | undefined,
+): Promise<{ x: number; y: number; w: number; h: number } | null> {
+  // 窗口探测：光标下的可见窗口（DWM 扩展边框已排除）
+  const windowRect = entry === 'window'
+    ? await invoke<{ x: number; y: number; w: number; h: number } | null>(
+        'snip_windows_at_point',
+        { x: cap.cursorX, y: cap.cursorY },
+      ).catch(() => null)
+    : null;
+  const lastRegion = entry === 'last' ? await getSnipLastRegion() : null;
+  const source = preselectSource(
+    entry,
+    cap,
+    cursorMon ? { x: cursorMon.position.x, y: cursorMon.position.y, w: cursorMon.size.width, h: cursorMon.size.height } : null,
+    windowRect,
+    lastRegion,
+  );
+  return clampPreselect(source, cap, scale);
+}
+
+async function openSnipInner(entry: SnipEntry): Promise<void> {
   const ts = Date.now();
+  // 0) 会话与全分辨率等待先行登记，再发起截屏：后台落盘线程会立刻 emit
+  //    snip:full-ready（≤2K 屏预览已编码，写盘往往快于大数据量预览 IPC 返回），
+  //    若等 capture 返回后才登记 pendingFull/snip，事件会因「无主」被丢弃——
+  //    覆盖窗永远拿不到全分辨率引用，OCR/保存随后报「截图数据尚未就绪」（用户实测）。
+  //    超时兜底**resolve(null)**（冷盘/大屏首编偶发慢，宽容到 8s），不用 reject——
+  //    取消/未确认时的超时触发会产生 unhandled rejection；确认路径对 null 判错即可。
+  let resolveFull!: (ref: string | null) => void;
+  const fullPromise = new Promise<string | null>((resolve) => {
+    resolveFull = resolve;
+    setTimeout(() => {
+      if (pendingFull?.ts === ts) pendingFull = null;
+      resolve(null);
+    }, 8000);
+  });
+  pendingFull = { ts, resolve: resolveFull };
+  snip = { ts, fileRef: null, fullPromise };
+  // 会话开始：岛（alwaysOnTop）立刻让位，避免压住截图覆盖窗；期间反馈走覆盖窗内 toast
+  setSnipSessionActive(true);
+  // 上次截图残留的快速访问条先收起（新会话优先，避免两条浮层叠在屏幕上）
+  void hideQuickBar();
   // 子窗口显示瞬间豁免主窗口失焦连带（照 BubbleToggleCommand.openRing :194）
   (window as any).__childOpeningUntil = Date.now() + 600;
 
   // 1. 先截屏（物理像素；捕获光标按设置）。即时返回预览（≤2K 缩小快编），
   //    全分辨率 PNG 后台落盘经 snip:full-ready 补发——热路径不等它（打开慢的根因）。
   //    失败自动重试一次（GDI / 剪贴板插件锁的偶发竞争）
+  //    scope：默认虚拟桌面并集（跨屏框选），设置可回退单屏；全屏/窗口入口必须
+  //    用并集（窗口可能跨屏，预选后仍需完整覆盖）
   const includeCursor = await isSnipCaptureCursor();
-  const captureOnce = () => invoke<{ previewUrl: string; x: number; y: number; width: number; height: number } | null>(
+  const scope = entry === 'region' ? await getSnipCaptureScope() : 'all';
+  const captureOnce = () => invoke<CaptureInfo | null>(
     'snip_capture_screen',
-    { includeCursor },
+    { includeCursor, scope },
   ).catch(() => null);
   let cap = await captureOnce();
   if (!cap?.previewUrl) {
@@ -192,35 +411,31 @@ async function openSnipInner(): Promise<void> {
   }
   const { t } = useI18n();
   if (!cap?.previewUrl || !cap.previewUrl.startsWith('data:')) {
+    // 未进入覆盖窗：先清会话（否则 isSnipOpen 恒真、后续热键全被吞），恢复岛显示
+    snip = null;
+    pendingFull = null;
+    setSnipSessionActive(false);
     notifyIsland({ kind: 'error', text: t('snip.capture_failed') });
     return;
   }
-  // 2. 匹配显示器求 scale：capture 的 rect 与该屏 position/size 物理像素比对。
-  //    容差 ±2px（个别驱动/虚拟屏上报的矩形有 1px 舍入差，精确相等会失配回退
-  //    scale=1 导致多屏混合 DPI 坐标偏移——审查发现）
+  // 2. 求 scale：捕获矩形可能是虚拟桌面并集（无法与单显示器矩形比对），
+  //    改用「捕获瞬间光标坐标落在哪个显示器」判定——光标所在屏的 scaleFactor
+  //    即覆盖窗内容的 DPI 基准（混合 DPI 多屏下非光标屏内容会有缩放开销，
+  //    见 spec 平台限制说明；同 DPI 多屏完全精确）
   const monitors = await getMonitors();
-  const near = (a: number, b: number) => Math.abs(a - b) <= 2;
-  const m = monitors.find((mm) =>
-    near(mm.position.x, cap.x) && near(mm.position.y, cap.y) &&
-    near(mm.size.width, cap.width) && near(mm.size.height, cap.height));
-  const scale = m?.scaleFactor || 1;
+  const cursorMon = monitors.find((mm) =>
+    cap.cursorX >= mm.position.x && cap.cursorX < mm.position.x + mm.size.width &&
+    cap.cursorY >= mm.position.y && cap.cursorY < mm.position.y + mm.size.height);
+  const scale = cursorMon?.scaleFactor || 1;
+  const preselect = await computePreselect(entry, cap, scale, cursorMon as MonInfo | undefined);
 
   // 3. 常驻窗移到目标显示器（物理像素直传，避免除法取整误差）→ 投数据 → 显示取焦
-  // 全分辨率引用等待 promise：full-ready 事件 resolve（带会话纪元校验，防旧事件
-  // 串会话）；8s 超时兜底拒绝（冷盘/大屏首编偶发慢，宽容到 8s 才判失败并清理
-  // pendingFull——审查发现原 3.5s 硬失败 + 陈旧引用未清）
-  let resolveFull!: (ref: string) => void;
-  const fullPromise = new Promise<string>((resolve, reject) => {
-    resolveFull = resolve;
-    setTimeout(() => {
-      if (pendingFull?.ts === ts) pendingFull = null;
-      reject(new Error('full-timeout'));
-    }, 8000);
-  });
-  pendingFull = { ts, resolve: resolveFull };
-  snip = { ts, fileRef: null, fullPromise };
   const win = await ensureOverlay();
   if (!win) {
+    // 覆盖窗创建失败：同样清会话 + 恢复岛显示
+    snip = null;
+    pendingFull = null;
+    setSnipSessionActive(false);
     notifyIsland({ kind: 'error', text: t('snip.capture_failed') });
     return;
   }
@@ -248,8 +463,24 @@ async function openSnipInner(): Promise<void> {
     originY: cap.y,
     width: cap.width / scale,
     height: cap.height / scale,
+    preselect,
   }).catch(() => {});
-  await win.show().catch(() => {});
+  // 全分辨率引用可能先于 snip:data 到达（后台落盘快于预览 IPC）——页面在
+  // startSession 里会把它清空。数据投递后补发一次已就绪的引用（同引用重复投递
+  // 无害，页面幂等覆盖），保证 OCR/保存一定能拿到原图。
+  if (snip && snip.ts === ts && snip.fileRef) {
+    const readyRef = snip.fileRef;
+    await emitTo(OVERLAY_LABEL, 'snip:full-ref', { fileRef: readyRef }).catch(() => {});
+  }
+  const shown = await win.show().then(() => true, () => false);
+  if (!shown) {
+    // 覆盖窗显示失败：先清会话，不留在「会话进行中」（否则岛会一直被抑制）
+    snip = null;
+    pendingFull = null;
+    setSnipSessionActive(false);
+    notifyIsland({ kind: 'error', text: t('snip.capture_failed') });
+    return;
+  }
   await win.setFocus().catch(() => {});
 }
 
@@ -258,13 +489,17 @@ async function bindSessionListeners(): Promise<void> {
   if (sessionListenersBound) return;
   sessionListenersBound = true;
   await listen('snip:cancel', () => { if (snip) void closeSnip(); });
-  // 后台全分辨率落盘完成：按会话纪元校验后 resolve（旧会话的迟到事件丢弃）
+  // 后台全分辨率落盘完成：按会话纪元校验后 resolve（旧会话的迟到事件丢弃），
+  // 同时把引用转发给覆盖窗页面——保存动作在页面内自闭环执行（裁剪/写盘/弹岛
+  // 全部页面直连 Rust 与灵动岛，不经主窗口事件链；此前页面→主窗口的
+  // snip:confirm 事件链在运行时存在静默断点，保存无文件无提示，用户实测）
   await listen<{ fileRef: string }>('snip:full-ready', (ev) => {
     const p = pendingFull;
     if (!p || !snip || snip.ts !== p.ts) return;
     pendingFull = null;
     snip.fileRef = ev.payload.fileRef;
     p.resolve(ev.payload.fileRef);
+    void emitTo(OVERLAY_LABEL, 'snip:full-ref', { fileRef: ev.payload.fileRef }).catch(() => {});
   });
   await listen('snip:confirm', (ev) => {
     const p = ev.payload as SnipConfirmPayload;
@@ -272,6 +507,53 @@ async function bindSessionListeners(): Promise<void> {
     const ts = snip.ts;
     if (p.action === 'pin') void pinSnip(p, ts);
     else void confirmSnip(p, ts);
+  });
+  // OCR 结果已由覆盖窗写入剪贴板并回读校验：这里只负责收起截图（结束会话）+ 弹岛确认
+  await listen<{ text?: string }>('snip:ocr-copied', async (ev) => {
+    const text = (ev.payload?.text ?? '').trim();
+    if (!text) return;
+    const { t } = useI18n();
+    // 抑制剪贴板 watcher 的「已复制」岛：正文已写，避免与下面这条重复弹
+    suppressIslandCopy(1500);
+    // 先结束会话再反馈：会话期间岛被抑制（让位截图 UI），关闭后岛才能正常弹出
+    if (snip) await closeSnip();
+    notifyIsland({ kind: 'success', text: t('snip.ocr_copied', { n: text.length }) });
+  });
+  // 长截图拼接完成：由主窗口统一写剪贴板 + 入历史（页面所在覆盖窗无数据库连接）
+  await listen<{ fileRef: string; frames?: number }>('snip:long-done', async (ev) => {
+    const ref = ev.payload?.fileRef;
+    if (!ref) return;
+    // 长截图完成：会话已结束（页面随后 emit cancel），先恢复岛显示再反馈
+    setSnipSessionActive(false);
+    const { t } = useI18n();
+    const privacy = isPrivacyPaused();
+    // 与 confirmSnip 同语义：写剪贴板（开关 + 双抑制先行）→ 入历史 → 岛
+    if (await isSnipAutoCopy()) {
+      suppressIslandCopy();
+      dbService.suppressUseCountBump();
+      suppressSnipCapture(1500);
+      const ok = await invoke('snip_write_clipboard_dib', { fileRef: ref }).then(
+        () => true,
+        () => false,
+      );
+      if (!ok) {
+        notifyIsland({ kind: 'error', text: t('snip.clipboard_failed') });
+        return;
+      }
+    }
+    if (!privacy && (await isSnipAutoHistory())) {
+      await saveSnipToHistory(ref, null).catch(() => {});
+    }
+    if (!privacy) {
+      void import('~/src/statistics/statsService').then(m => m.default.record({ clip_screenshot: 1 }).catch(() => {}));
+      notifyIsland({ kind: 'success', text: t('snip.long_done', { n: ev.payload.frames ?? 0 }) });
+    }
+  });
+  // 快速访问条：自动收起请求 + 动作（子窗口无数据库/抑制标记，动作统一回主窗口执行）
+  await listen('snip-quickbar:hide', () => { void hideQuickBar(); });
+  await listen<{ action?: string }>('snip-quickbar:action', (ev) => {
+    const action = ev.payload?.action;
+    if (action) void handleQuickBarAction(action);
   });
 }
 
@@ -281,6 +563,7 @@ if (isTauri() && getCurrentWindow().label === 'main') {
   void ensureSnipSettingsLoaded().catch(() => {});
   void bindSessionListeners();
   void ensureOverlay().catch(() => {});
+  void ensureQuickBar().catch(() => {});
 }
 
 /** 裁剪结果（写入系统剪贴板 / 入库 / 导出 / 贴图共用的中间产物） */
@@ -290,6 +573,8 @@ interface SnipCropResult {
   qrText: string | null;
   /** 裁剪图原图 data URL（贴图窗显示直达用） */
   dataUrl: string;
+  width: number;
+  height: number;
 }
 
 async function cropSelection(p: SnipConfirmPayload, fileRef: string): Promise<SnipCropResult | null> {
@@ -306,7 +591,9 @@ async function cropSelection(p: SnipConfirmPayload, fileRef: string): Promise<Sn
 async function confirmSnip(p: SnipConfirmPayload, ts: number): Promise<void> {
   const session = snip;
   if (!session || session.ts !== ts) return;
-  await closeSnip(); // ① 先关覆盖窗（焦点归还目标应用）
+  // 记录本次选区（多入口「上次区域」快捷键复用；物理像素原始值）
+  void setSnipLastRegion({ x: Math.round(p.x), y: Math.round(p.y), w: Math.round(p.w), h: Math.round(p.h) });
+  await closeSnip(); // ① 先关覆盖窗（焦点归还；保存对话框在覆盖窗收起后打开，不被置顶窗遮挡）
   const { t } = useI18n();
 
   // ② 裁剪源：标注合成产物（annotatedRef）已是"选区大小的成图"，恒等裁剪换缩略
@@ -327,9 +614,10 @@ async function confirmSnip(p: SnipConfirmPayload, ts: number): Promise<void> {
   }
   const privacy = isPrivacyPaused();
 
-  // ③ 保存到文件：与复制互斥动作（裁剪产物经导出后由磁盘清理回收孤儿文件）
+  // ③ 保存已改由覆盖窗页面自闭环执行（doSave，见页面）；此处仅兜底——
+  //    万一旧版页面仍 emit save，给出可见错误而非静默返回
   if (p.action === 'save') {
-    await exportToFile(crop, t);
+    notifyIsland({ kind: 'error', text: t('snip.save_failed') });
     return;
   }
 
@@ -358,42 +646,21 @@ async function confirmSnip(p: SnipConfirmPayload, ts: number): Promise<void> {
     // 截图动作计数：独立于入库（auto_history 关闭也计），画像/统计页消费
     void import('~/src/statistics/statsService').then(m => m.default.record({ clip_screenshot: 1 }).catch(() => {}));
     notifySnipIsland({ thumb: crop.thumb ?? undefined, qrText: crop.qrText ?? undefined, imageRef: crop.fileRef });
+    // ⑦ 快速访问条：贴图 / OCR / 上传 / 历史（4 秒无交互自动收起，不抢焦点）
+    void showQuickBar(crop, p);
   }
 }
 
-/** 保存到文件：默认目录 → 保存对话框 → Rust 导出（png 直拷 / jpeg 重编码） */
-async function exportToFile(crop: SnipCropResult, t: (k: string, p?: Record<string, string | number>) => string): Promise<void> {
-  const fmt = useSnipFormat().value;
-  const dir = useSnipSaveDir().value;
-  const ext = fmt === 'jpeg' ? 'jpeg' : 'png';
-  const name = `Snip_${stamp()}.${ext}`;
-  const defaultPath = dir ? await join(dir, name).catch(() => name) : name;
-  const path = await saveDialog({
-    defaultPath,
-    filters: [{ name: fmt === 'jpeg' ? 'JPEG' : 'PNG', extensions: [ext] }],
-  }).catch(() => null);
-  if (!path) return; // 用户取消
-  const quality = useSnipJpegQuality().value;
-  await invoke('snip_export_file', { fileRef: crop.fileRef, destPath: path, format: ext, quality }).then(
-    () => notifyIsland({ kind: 'success', text: t('snip.saved', { path }) }),
-    () => notifyIsland({ kind: 'error', text: t('snip.save_failed') }),
-  );
-}
-
-/** 文件名时间戳：Snip_20261024_153000 */
-function stamp(): string {
-  const d = new Date();
-  const p = (n: number, len = 2) => String(n).padStart(len, '0');
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-}
-
-// ===== P1-T2 贴图（snip-pin 窗口）：与 confirmSnip 同构，落地于 P1 批次 =====
+// 注：保存动作已改由覆盖窗页面自闭环执行（页面 doSave：full-ref 转发 → 页内
+// 裁剪/写盘/弹岛），管理器不再持有保存管线——原跨窗口 snip:confirm 事件链
+// 在运行时存在静默断点（无文件无提示），页面直连后零事件跳板
 const pinSessions: WebviewWindow[] = [];
 
 /** 贴图：裁剪结果以置顶小窗钉在桌面（会话级，不持久化；双击关闭）。 */
 async function pinSnip(p: SnipConfirmPayload, ts: number): Promise<void> {
   const session = snip;
   if (!session || session.ts !== ts) return;
+  void setSnipLastRegion({ x: Math.round(p.x), y: Math.round(p.y), w: Math.round(p.w), h: Math.round(p.h) });
   await closeSnip();
   const { t } = useI18n();
   // 裁剪源同 confirmSnip：合成产物直用；否则等全分辨率后台落盘（框选期间早已完成）
@@ -410,6 +677,12 @@ async function pinSnip(p: SnipConfirmPayload, ts: number): Promise<void> {
     notifyIsland({ kind: 'error', text: t('snip.crop_failed') });
     return;
   }
+  await createPinWindow(crop, p);
+}
+
+/** 由裁剪结果创建/复用置顶贴图窗（工具条贴图与快速访问条共用） */
+async function createPinWindow(crop: SnipCropResult, p: SnipConfirmPayload): Promise<void> {
+  const { t } = useI18n();
   const hash8 = crop.fileRef.replace('imgfile:', '').slice(0, 8);
   const label = `snip-pin-${hash8}`;
   // 同内容重复贴图：复用已有贴图窗（置顶提醒即可）

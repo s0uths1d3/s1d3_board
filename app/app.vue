@@ -62,7 +62,7 @@ function isMainWindow(): boolean {
 const route = useRoute();
 
 /** 子窗口路由：不渲染主窗口 TitleBar（导航 + 窗口控制）；/note-pin/{id} 为动态段按前缀匹配 */
-const CHILD_WINDOW_ROUTES = ['/viewer', '/tooltip', '/bubble', '/island-history', '/note-colors', '/tray-menu', '/note-pin'];
+const CHILD_WINDOW_ROUTES = ['/viewer', '/tooltip', '/bubble', '/island-history', '/note-colors', '/tray-menu', '/note-pin', '/snip-quickbar'];
 const isChildWindowRoute = computed(() => CHILD_WINDOW_ROUTES.some(p => route.path === p || route.path.startsWith(`${p}/`)));
 
 /** 应用模块注册表（组合根装配；boot 按依赖拓扑序 init→start，shutdown 反序 stop→dispose） */
