@@ -94,6 +94,12 @@ class DatabaseService {
         return this.clipboard.fetchClipboardSingleData(id);
     }
 
+    /** 最近 sinceMs 后落库图片条目的二维码文本（Ctrl+B 内容源；只读 qr_text，不解析原图） */
+    public async fetchRecentImageQr(sinceMs: number): Promise<{ qrText: string | null } | null> {
+        await this.ensureDbInitialized();
+        return this.clipboard.fetchRecentImageQr(sinceMs);
+    }
+
     /** 区间内复制来源应用 Top N（统计页"来源应用"榜；YYYY-MM-DD 闭区间，内部换算毫秒边界） */
     public async fetchSourceAppTop(from: string, to: string, limit = 5): Promise<{ app: string; cnt: number }[]> {
         await this.ensureDbInitialized();

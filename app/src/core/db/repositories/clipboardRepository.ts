@@ -131,6 +131,12 @@ export interface ClipboardRepository {
     decodeQrText(id: number, content: string): Promise<string | null>;
     fetchClipboardData(filter: any, page?: PageQuery): Promise<ClipboardData[]>;
     fetchClipboardSingleData(id: number): Promise<ClipboardData | undefined>;
+    /**
+     * 最近 `sinceMs` 之后落库的图片条目的二维码文本（Ctrl+B 内容源）：
+     * 只读 qr_text 单列，不解析原图（避免数 MB 的图片字节跨 IPC）；
+     * 无最近图片返回 null，有图片但未识别出二维码返回 { qrText: null }。
+     */
+    fetchRecentImageQr(sinceMs: number): Promise<{ qrText: string | null } | null>;
     updateFavorite(id: number, value: number): Promise<void>;
     increaseUseCount(id: number): Promise<void>;
     increaseUseCountByContent(content: string): Promise<void>;
@@ -534,6 +540,17 @@ export function createClipboardRepository({ conn, getKeyValue, recordStats }: {
             const db = await conn.ready();
             const data = await db.select("SELECT * FROM clipboard WHERE id = $1", [id]) as ClipboardData[]
             return (await resolveImageRows(data))[0]
+        },
+
+        async fetchRecentImageQr(sinceMs: number): Promise<{ qrText: string | null } | null> {
+            const db = await conn.ready();
+            const rows = await db.select(
+                "SELECT qr_text FROM clipboard WHERE type = 'image' AND created_at >= $1 ORDER BY created_at DESC, id DESC LIMIT 1",
+                [sinceMs],
+            ) as { qr_text: string | null }[];
+            const row = rows[0];
+            if (!row) return null;
+            return { qrText: row.qr_text && row.qr_text.length > 0 ? row.qr_text : null };
         },
 
         async updateFavorite(id: number, value: number): Promise<void> {
