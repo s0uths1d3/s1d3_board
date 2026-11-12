@@ -32,6 +32,7 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-is-focused",
+    "core:window:allow-is-visible",
     "core:window:allow-unminimize",
     "core:window:allow-set-icon",
     "core:window:allow-set-focus",

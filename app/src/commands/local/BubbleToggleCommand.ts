@@ -1,20 +1,20 @@
 import type { Command } from '../Command';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
-import { availableMonitors, cursorPosition } from '@tauri-apps/api/window';
+import { availableMonitors, cursorPosition, getCurrentWindow } from '@tauri-apps/api/window';
 import { listen, emit, emitTo, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { writeText } from 'tauri-plugin-clipboard-api';
-import { getSmartClipEntries, parseClipItem } from '../../smart-clip/smartClip';
+import { parseClipItem } from '../../smart-clip/smartClip';
+import { describeClipboardReadError, pickSelectedRingContent, resolveClipboardSource } from '../../smart-clip/clipboardSource';
 import { planAnalysis, type AnalysisOutcome, type AnalysisPlan } from '../../smart-clip/analysis';
 import { normalizeSegments, mergeAiSegments, type RingSegment } from '../../smart-clip/ringSegments';
-import type { ClipboardData } from '../../entities';
 import { recordPaste, recordAiAdoption } from '../../smart-clip/habitProfile';
-import { getSelectedItem } from './clipboardStore';
 import { notifyIsland, notifyIslandPaste, suppressIslandCopy } from '~/composables/useCopyIsland';
 import { useI18n } from '~/composables/useI18n';
 import { classifyAiError } from '~/utils/aiError';
 import { hashText } from '~/utils/hash';
 import dbService from '../../db/dbService';
+import { getSelectedItem } from './clipboardStore';
 
 /**
  * Ctrl+B 环形片段盘（设计文档 §4.4，单窗口版）。
@@ -42,16 +42,35 @@ interface RingSession {
 }
 
 let ring: RingSession | null = null;
+/** 开环流程进行中（含读剪贴板、建窗握手等 await）：期间的连按必须忽略，避免并发建环 */
+let opening = false;
 
 export class BubbleToggleCommand implements Command {
   async execute(event?: { state: string }): Promise<void> {
     if (event?.state !== 'Pressed') return;
+    // openRing 内多次 await 期间 ring 尚未赋值，连按会并发开出两只环：
+    // 后一只覆盖会话引用，前一只窗口无人关闭，旧内容/旧分析结果滞留在屏幕上
+    if (opening) return;
     if (ring) {
       await closeRing(); // toggle off（粘贴后环已销毁，重按即全新开环）
       return;
     }
-    await openRing();
+    opening = true;
+    try { await openRing(); } finally { opening = false; }
   }
+}
+
+/**
+ * 列表条目显式触发分析（右键「AI 分析」）：内容取自用户点名的历史条目，
+ * 走与 Ctrl+B 完全相同的开环管线（本地切分 + 按设置开关执行 AI 分析）。
+ * 入口显式、目标确定，不属于「隐式引用历史内容」。
+ */
+export async function analyzeClipboardItemContent(content: string): Promise<void> {
+  const text = (content ?? '').trim();
+  if (!text || opening) return;
+  if (ring) await closeRing();
+  opening = true;
+  try { await openRing(text); } finally { opening = false; }
 }
 
 function epochAlive(ts: number): boolean {
@@ -131,12 +150,11 @@ function aiErrIslandText(raw: string): string {
 }
 
 /**
- * 阶段一（本地拆分）：按预判分流立刻弹首屏岛；解析「当前选中项」，缓存命中的 AI
- * 产出同步并入（阶段一即得最终片段）；无选中项/解析失败回退最近一条解析结果
- * （不拍平整份历史，避免新旧解析结果混在同一环里）。
+ * 阶段一（本地拆分）：按预判分流立刻弹首屏岛；解析**本次唯一内容源**（按下瞬间的
+ * 系统剪贴板），缓存命中的 AI 产出同步并入（阶段一即得最终片段）。
+ * 不回退任何历史条目：解析失败时只降级为本次内容的原文单段。
  */
 async function parseRingSegments(
-  selected: ClipboardData | undefined,
   content: string,
   plan: AnalysisPlan | null,
 ): Promise<{ segments: RingSegment[]; parseError?: string }> {
@@ -146,31 +164,32 @@ async function parseRingSegments(
       ? t('island.ai_not_configured')
       : o.reason === 'too_long'
         ? t('island.ai_skipped_long', { n: o.maxChars ?? 1000 })
-        : t(`island.ai_skipped_${o.reason}`);
+        // 过短必须带上实际字数：用户能立刻判断「被分析的是不是我以为的那段内容」
+        : o.reason === 'too_short'
+          ? t('island.ai_skipped_too_short', { n: o.chars ?? 0 })
+          : t(`island.ai_skipped_${o.reason}`);
 
+  // 功能状态（含两个 AI 开关全关）一律经灵动岛如实告知，不静默
   if (plan?.type === 'skipped') notifyIsland({ kind: 'info', text: skipIslandText(plan.outcome) });
   else if (plan?.type === 'cached') notifyIsland({ kind: 'success', text: t('island.ai_done') });
   else if (plan?.type === 'ai') notifyIsland({ kind: 'loading', text: t('island.parsing'), sticky: true });
 
   let raw: Array<{ text: string; extractorId?: string }> = [];
   let parseError: string | undefined;
-  if (selected && content) {
-    try {
-      const entry = await parseClipItem(selected.id, content, Date.now(), (e) => {
-        parseError ??= String(e); // 降级软错误（首个优先）：灵动岛提示失败原因用
-      });
-      raw = entry.segments.map((s) => ({ text: s.text, extractorId: s.extractorId }));
-    } catch (e) {
-      parseError = String(e);
-    }
+  try {
+    // id 固定为 0：本次内容不绑定列表中任何条目（缓存键仍含内容与配置版本，语义不变）
+    const entry = await parseClipItem(0, content, Date.now(), (e) => {
+      parseError ??= String(e); // 降级软错误（首个优先）：灵动岛提示失败原因用
+    });
+    raw = entry.segments.map((s) => ({ text: s.text, extractorId: s.extractorId }));
+  } catch (e) {
+    parseError = String(e);
   }
-  if (raw.length === 0) {
-    const latest = getSmartClipEntries()[0];
-    raw = latest ? latest.segments.map((s) => ({ text: s.text, extractorId: s.extractorId })) : [];
-  }
+  // 解析失败只降级为本次内容的原文单段，绝不借用历史条目（单一内容源原则）
+  if (raw.length === 0) raw = [{ text: content }];
   const segments = normalizeSegments(raw);
 
-  // 解析失败：环降级展示最近结果，灵动岛给出错误原因
+  // 解析失败：环降级展示本次内容原文单段，灵动岛给出错误原因
   if (parseError) {
     notifyIsland({ kind: 'error', text: t('island.parse_failed', { error: aiErrIslandText(parseError) }) });
     return { segments, parseError };
@@ -185,7 +204,40 @@ async function parseRingSegments(
  * 打开环形。时序：注册握手监听 → 建 overlay 窗 → 挂指令通道 → 阶段一解析 →
  * 推数据 → 显示取焦 → 阶段二 AI。全程纪元校验，环被关闭即中止。
  */
-async function openRing(): Promise<void> {
+async function openRing(contentOverride?: string): Promise<void> {
+  // 内容源优先级（设计文档 §24）：
+  //   1. contentOverride：右键「AI 分析本条」，用户点名条目；
+  //   2. 主窗口可见且选中了文本/富文本行：分析「当前选中项」（不是列表第一项，也不是剪贴板旧内容）；
+  //   3. 其余情况：当前系统剪贴板，绝不回退历史。
+  // 窗口不可见时不用选中项——此时选择可能已过期，会重现「结果与对象不符」的旧问题。
+  let content: string;
+  if (contentOverride !== undefined) {
+    content = contentOverride;
+  } else {
+    let picked: string | null = null;
+    try {
+      if (await getCurrentWindow().isVisible()) picked = pickSelectedRingContent(getSelectedItem());
+    } catch {
+      picked = null; // 无权限/窗口已销毁：按剪贴板处理
+    }
+    if (picked !== null) {
+      content = picked;
+    } else {
+      const source = await resolveClipboardSource();
+      if (source.kind !== 'text') {
+        const { t } = useI18n();
+        const text = source.kind === 'empty'
+          ? t('island.ctrl_b_empty')
+          : source.kind === 'error'
+            // 带上具体原因（如「剪贴板被其他程序占用」），不笼统报「失败」
+            ? t('island.ctrl_b_read_failed', { error: describeClipboardReadError(source.error) })
+            : t(`island.ctrl_b_unsupported_${source.reason}`);
+        notifyIsland({ kind: source.kind === 'error' ? 'error' : 'info', text });
+        return;
+      }
+      content = source.content;
+    }
+  }
   const ts = Date.now();
   // 环活跃期间豁免主窗口失焦自动隐藏（app.vue），并收掉已显示的主窗口 tooltip
   (window as any).__ringActive = true;
@@ -193,18 +245,11 @@ async function openRing(): Promise<void> {
   const label = `clipboard-bubble-ring-${ts}`;
   (window as any).__childOpeningUntil = Date.now() + 600;
 
-  // 预判先行（毫秒级，无 AI 成本）：按下瞬间定分流去向；选中项此刻快照。
-  // 二维码图片：解码出的链接当文本走环盘流程；预判异常按无 AI 链路降级
-  const selected = getSelectedItem();
-  const content = selected && (selected.type ?? 'text') === 'text'
-    ? selected.content
-    : selected?.type === 'image' ? (selected.qr_text ?? '') : '';
-  const planP: Promise<AnalysisPlan | null> = content
-    ? planAnalysis(content).catch((e) => {
-        console.error('[ring] AI 预判失败，按无 AI 链路处理:', e);
-        return null;
-      })
-    : Promise.resolve(null);
+  // 预判先行（毫秒级，无 AI 成本）：按下瞬间定分流去向；预判异常按无 AI 链路降级
+  const planP: Promise<AnalysisPlan | null> = planAnalysis(content).catch((e) => {
+    console.error('[ring] AI 预判失败，按无 AI 链路处理:', e);
+    return null;
+  });
 
   const readyP = waitOverlayReady(label); // 先注册握手监听再建窗，杜绝握手丢失
   const { cx, cy, monitor } = await ringCenter();
@@ -249,7 +294,7 @@ async function openRing(): Promise<void> {
   if (!epochAlive(ts)) return;
 
   // ---- 阶段一：本地拆分 → 推数据 → 显示 ----
-  const base = await parseRingSegments(selected, content, await planP);
+  const base = await parseRingSegments(content, await planP);
   if (!epochAlive(ts)) return;
   const plan = await planP;
   // 无片段，或仅原文单段且 AI 链路不可用：环盘无分析价值不开环（灵动岛已提示原因）
@@ -264,7 +309,7 @@ async function openRing(): Promise<void> {
   await emitTo(label, 'ring:data', {
     segments: base.segments,
     source: content,
-    contentHash: hashText(selected?.content ?? ''),
+    contentHash: hashText(content),
     aiPending: plan?.type === 'ai',
   }).catch(() => {});
   await overlay.show().catch(() => {});
@@ -274,11 +319,13 @@ async function openRing(): Promise<void> {
   // ---- 阶段二：AI 分析完成 → 新增片段推给页面补位上环 ----
   // 解析失败时跳过：AI 大概率同源失败，且失败弹岛会与 parseError 弹岛重叠
   if (base.parseError || plan?.type !== 'ai') return;
+  // 归属校验键：页面侧据此拒绝「不属于本次内容」的 AI 投递
+  const contentHash = hashText(content);
   const outcome = await plan.start();
   if (!epochAlive(ts)) return;
   if (outcome.type === 'failed') {
     // 先熄灭环心"解析中"状态条（环保留时不能残留假进行态），再弹失败岛
-    void emitTo(label, 'ring:ai-result', { segments: [], status: 'failed' }).catch(() => {});
+    void emitTo(label, 'ring:ai-result', { segments: [], status: 'failed', contentHash }).catch(() => {});
     notifyIsland({ kind: 'error', text: aiFailedIsland(String(outcome.error)) });
     if (base.segments.length <= 1) await closeRing(); // 仅原文单段：无增量价值
     return;
@@ -287,7 +334,7 @@ async function openRing(): Promise<void> {
   notifyIsland({ kind: 'success', text: useI18n().t('island.ai_done') });
   const added = mergeAiSegments(base.segments, outcome);
   if (added.length > 0) {
-    void emitTo(label, 'ring:ai-result', { segments: added, status: 'done' }).catch(() => {});
+    void emitTo(label, 'ring:ai-result', { segments: added, status: 'done', contentHash }).catch(() => {});
   } else if (base.segments.length <= 1) {
     await closeRing(); // AI 产出与原文全重复且基础仅单段：无增量价值
   }

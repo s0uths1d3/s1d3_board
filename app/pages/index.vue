@@ -34,6 +34,7 @@ import { activeTab, setActiveTab } from "~/composables/useTabs";
 import { bus, type GlobalSearchJumpDetail } from "~/src/core/events";
 import { beginElementDrag, endElementDrag } from "~/src/core/dragState";
 import { SwitchTabCommand } from "~/src/commands/local/SwitchTabCommand";
+import { analyzeClipboardItemContent } from "~/src/commands/local/BubbleToggleCommand";
 import { CLIP_SOURCE_LINK_TITLE, clipToNote, clipToTodos } from "~/src/commands/local/dispatchClip";
 import { useTooltipEnabled } from "~/composables/useTooltipEnabled";
 import { isTooltipWrapEnabled } from "~/composables/useTooltipWrap";
@@ -916,6 +917,8 @@ function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
     },
     // 跨模块分发（仅文本类条目）：内容作为收件箱流向待办/便签（共享 dispatchClip 管道）
     ...((item.type ?? 'text') === 'text' || item.type === 'html' ? [
+      // 直接分析本条（不读系统剪贴板）：解决「剪贴板里是图片、想分析的文本在历史里」的场景
+      { label: t('clip.ctx_ai_analyze'), action: () => analyzeClipItem(item) },
       { label: t('clip.ctx_to_todo'), action: () => dispatchToTodo(item) },
       { label: t('clip.ctx_to_note'), action: () => dispatchToNote(item) },
     ] : []),
@@ -933,6 +936,13 @@ function openContextMenu(item: ClipboardData, index: number, e: MouseEvent) {
       void judgeQrForMenu(item);
     }
   }
+}
+
+/** 右键「AI 分析」：直接以该条目内容开环（本地切分 + 按设置开关做 AI 分析），
+ *  不依赖系统剪贴板——剪贴板被图片占用时也能分析历史文本条目 */
+function analyzeClipItem(item: ClipboardData) {
+  ctxMenuVisible.value = false;
+  void analyzeClipboardItemContent(item.content);
 }
 
 /** 右键判定进行中的目标项：异步判定回填菜单前校验菜单未被关闭/切换到其他项 */

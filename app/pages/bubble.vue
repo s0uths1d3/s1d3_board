@@ -512,7 +512,9 @@ onMounted(async () => {
       ringContentHash.value = ev.payload.contentHash ?? '';
       ringAiPending.value = !!ev.payload.aiPending;
     }));
-    unlisteners.push(await getCurrentWebviewWindow().listen<{ segments: RingSegment[]; status: 'done' | 'failed' }>('ring:ai-result', (ev) => {
+    unlisteners.push(await getCurrentWebviewWindow().listen<{ segments: RingSegment[]; status: 'done' | 'failed'; contentHash?: string }>('ring:ai-result', (ev) => {
+      // 归属校验：AI 结果必须属于本页当前源内容，否则丢弃（防止历史/串窗结果套到本次内容上）
+      if (ev.payload.contentHash !== ringContentHash.value) return;
       ringAiPending.value = false;
       const added = ev.payload.segments ?? [];
       if (added.length > 0) ringSegments.value = [...ringSegments.value, ...added];
