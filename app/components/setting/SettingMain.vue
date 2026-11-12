@@ -84,7 +84,7 @@ import {
   useSnipSaveDir,
   useSnipUploadUrl,
 } from '~/src/snip/snipSettings';
-import type { ClipExtractor, ClipScheme } from '~/src/entities';
+import type { ExtractRule } from '~/src/entities';
 import type { SmartClipMode } from '~/src/smart-clip/types';
 import { updateSmartClipConfig } from '~/src/smart-clip/smartClip';
 import { ISLAND_API_DEFAULT_PORT, applyIslandApi, ensureIslandApiToken, generateIslandApiToken, lastIslandApiFailure } from '~/src/island/islandApi';
@@ -92,11 +92,11 @@ import { bus, type GlobalSearchJumpDetail } from '~/src/core/events';
 import { settings, type SettingGroup } from '~/src/setting/settingGroups';
 import { loadIslandWebhookConfig, saveIslandWebhookConfig, testIslandWebhook, validateWebhookUrl, type WebhookTarget } from '~/src/island/islandWebhook';
 import {
-  loadExtractors, persistExtractors, missingBuiltinExtractors,
-  type Translator,
+  loadExtractRules, persistExtractRules, createExtractRule,
+  isExtractRuleValid, MAX_EXTRACT_RULES,
 } from '~/src/smart-clip/extractors';
-import { generateExtractorDraft, generateSchemeDraft } from '~/src/smart-clip/aiGenerate';
 import { clampAnalysisMaxChars } from '~/src/smart-clip/analyzer';
+import { clampKeywordsMax, clampKeywordsMin, KEYWORDS_MAX_DEFAULT, KEYWORDS_MIN_DEFAULT } from '~/src/smart-clip/analysis';
 import { AI_CUSTOM_TEMPLATE, loadAiApiKey, migrateAiApiKey, storeAiApiKey } from '~/src/smart-clip/aiClient';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { isTauri } from '~/utils/env';
@@ -797,6 +797,59 @@ watch(aiAnalysisMax, (val) => {
     dbService.setKeyValue('ai_analysis_max_chars', String(clampAnalysisMaxChars(val))));
 });
 
+// ===== 三个独立功能开关（设计文档 §23）：本地切分 / AI 关键字 / AI 总结 =====
+// 本地切分与 AI 关键字互斥：关键字关闭时本地切分被强制关闭（开关置灰，需先开关键字）
+const aiKeywordsEnabled = ref(true);
+const aiSummaryEnabled = ref(true);
+const localSplitEnabled = ref(true);
+
+/** 开关即时落库：planAnalysis / smartClip 每次 Ctrl+B 读取，无需等防抖 */
+async function onAiKeywordsToggle(val: boolean) {
+  aiKeywordsEnabled.value = val;
+  await dbService.setKeyValue('ai_keywords_enabled', val ? '1' : '0');
+  if (!val && localSplitEnabled.value) {
+    // 互斥约束：AI 关键字关闭 → 本地切分同步关闭并落库（避免下次启动恢复成非法组合）
+    localSplitEnabled.value = false;
+    await dbService.setKeyValue('local_split_enabled', '0');
+    refreshSmartClipConfig();
+    showHint(t('smart.keywords_off_split_off'));
+    return;
+  }
+  refreshSmartClipConfig();
+  showHint(val ? t('smart.keywords_on') : t('smart.keywords_off'));
+}
+
+async function onSummaryToggle(val: boolean) {
+  aiSummaryEnabled.value = val;
+  await dbService.setKeyValue('ai_summary_enabled', val ? '1' : '0');
+  showHint(val ? t('smart.summary_on') : t('smart.summary_off'));
+}
+
+async function onLocalSplitToggle(val: boolean) {
+  if (!aiKeywordsEnabled.value) {
+    // 双保险：AI 关键字关闭时禁止启用本地切分
+    showHint(t('smart.split_blocked'));
+    return;
+  }
+  localSplitEnabled.value = val;
+  await dbService.setKeyValue('local_split_enabled', val ? '1' : '0');
+  refreshSmartClipConfig();
+  showHint(val ? t('smart.split_on') : t('smart.split_off'));
+}
+
+// ===== 关键词数量范围（默认 3–16，上限 18；非法回落默认值） =====
+const aiKeywordsMin = ref('');
+const aiKeywordsMax = ref('');
+watch(aiKeywordsMin, (val) => {
+  debouncePersist('ai_keywords_min', () =>
+    dbService.setKeyValue('ai_keywords_min', String(clampKeywordsMin(val))));
+});
+watch(aiKeywordsMax, (val) => {
+  debouncePersist('ai_keywords_max', () =>
+    dbService.setKeyValue('ai_keywords_max', String(clampKeywordsMax(val))));
+});
+
+
 // ===== 自定义 JSON 模板编辑（仅 provider = custom 时显示） =====
 /** 结构校验：JSON 可解析 + body 为对象 + headers 键值均为字符串（path/提取路径可省略有默认） */
 function validateCustomConfig(text: string): string | null {
@@ -886,17 +939,16 @@ async function testAiConnection(): Promise<void> {
   }
 }
 
-// ===== 智能剪贴板（设计文档 §4.3/§4.5）：模式 / 方案 / 提取器 / 开放 API =====
-// 概念：提取器 = 单个内容的提取单元；方案 = 多个提取器的集成体（含独立标题与描述）。
-// 已移除：原「分词规则」（clip_rules）与「AI 加工默认指令」——拆分能力由提取器承担，
-// AI 指令写在 AI 提取器里，不再保留并列的全局规则/指令配置。
-// ===== 方案：多条可 CRUD；一条「默认方案」作为开启态的叠加加工层 =====
-const DEFAULT_SCHEME_ID = 'scheme_default';
-
+// ===== 智能剪贴板（设计文档 §14）：模式 / 自定义提取规则 / 开放 API =====
+// 单层模型：内置切分器（链接/邮箱/分词）编译在代码里、用户不可见也不可配置；
+// 普通用户零配置即可使用，只有确实需要按自己的规则切分时才展开「高级」。
 const smartMode = ref<SmartClipMode>('on');
-const schemes = ref<ClipScheme[]>([]);
-const extractors = ref<ClipExtractor[]>([]);
-const defaultSchemeId = ref('');
+/** 自定义提取规则：列表顺序 = 执行顺序，首个产出 ≥2 段的规则生效 */
+const rules = ref<ExtractRule[]>([]);
+/** 高级区默认折叠：不把「规则/提取器」概念推给普通用户 */
+const advancedRulesOpen = ref(false);
+/** 迁移时停用的自定义 AI 提取器数量（>0 时折叠区内给出说明） */
+const aiDisabledCount = ref(0);
 /** AI 结果冷却窗口（秒）：同内容在此时间内不重复触发 AI 生成（0 = 每次重新生成） */
 const aiCacheWindow = ref('300');
 watch(aiCacheWindow, (val) => {
@@ -914,329 +966,116 @@ const SMART_MODE_OPTIONS = computed(() => [
 ]);
 function selectSmartMode(v: string) {
   smartMode.value = v as SmartClipMode;
+  refreshSmartClipConfig();
   showHint(t('smart.mode_switched', { name: t(`smart.mode_${v}`) }));
 }
-/** 提取器方式：正则 / 分隔符 / AI 指令 */
-const EXTRACTOR_METHOD_OPTIONS = computed(() => [
+
+/** 规则类型：正则 / 分隔符（AI 提取器已下线，AI 只用于散文分析） */
+const RULE_TYPE_OPTIONS = computed(() => [
   { value: 'regex' as const, label: t('smart.method_regex') },
   { value: 'separator' as const, label: t('smart.method_separator') },
-  { value: 'ai' as const, label: t('smart.method_ai') },
 ]);
 
-/** 把当前配置快照推送给处理层（smartClip 的 mode/scheme/extractors 缓存） */
+/** 把当前配置快照推送给处理层（smartClip 的 mode/rules/splitEnabled 缓存） */
 function refreshSmartClipConfig(): void {
-  const scheme = schemes.value.find((x) => x.id === defaultSchemeId.value && x.enabled === 1) ?? null;
-  updateSmartClipConfig({ mode: smartMode.value, scheme, extractors: extractors.value });
+  // 互斥约束在这里统一兜底：AI 关键字关闭时本地切分恒为关闭
+  updateSmartClipConfig({
+    mode: smartMode.value,
+    rules: rules.value,
+    splitEnabled: localSplitEnabled.value && aiKeywordsEnabled.value,
+  });
 }
 
-// ===== 卡片编辑态：默认折叠（只显示标题 + 描述），点「编辑」才展开编辑区 =====
-const editingSchemeId = ref<string | null>(null);
-const editingExtractorId = ref<string | null>(null);
+// ===== 自定义提取规则：默认折叠的高级能力（不配置即用内置切分器） =====
+const editingRuleId = ref<string | null>(null);
 
-/** 折叠态的一行摘要：提取器 = 描述（无则表达式首行） */
 function firstLine(text: string): string {
-    return text.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
+  return text.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
 }
-function extractorSummary(x: ClipExtractor): string {
-    return x.desc.trim() || firstLine(x.expression) || '-';
+/** 折叠态摘要：类型 + 表达式首行 */
+function ruleSummary(rule: ExtractRule): string {
+  const type = t(rule.type === 'separator' ? 'smart.method_separator' : 'smart.method_regex');
+  return `${type} · ${firstLine(rule.expression) || '-'}`;
 }
-/** 方案折叠态摘要：描述 → 成员名（空成员 = 全部提取器） */
-function schemeSummary(s: ClipScheme): string {
-  if (s.description.trim()) return s.description;
-  if ((s.members ?? []).length === 0) return t('smart.scheme_members_auto');
-  return s.members.map((id) => extractorName(id)).join(' + ');
-}
-/** 提取器 id → 名称（方案成员展示用；已删除的成员显示占位） */
-function extractorName(id: string): string {
-  return extractors.value.find((x) => x.id === id)?.name ?? t('smart.member_missing');
+/** 规则不可执行（空表达式/非法正则）：折叠态标红，执行时会被跳过 */
+function isRuleBroken(rule: ExtractRule): boolean {
+  return rule.enabled === 1 && !isExtractRuleValid(rule);
 }
 
-// ===== 方案：可自由 CRUD；一条「默认方案」作为开启态的叠加加工层 =====
-/**
- * 方案对账（每次进入设置页执行）：
- * - 清理已下线的旧内置方案行（历史 seed 产物）；
- * - 一条方案都没有时自动创建「默认方案」（保证叠加加工层始终可用）；
- * - 默认方案指向失效（被删）时回落到第一条。
- */
-const LEGACY_SCHEME_IDS = ['scheme_netdisk', 'scheme_url_email', 'scheme_ai_netdisk', 'scheme_ai_summarize'];
-
-async function ensureSchemes(): Promise<void> {
-  for (const id of LEGACY_SCHEME_IDS) {
-    if (schemes.value.some((x) => x.id === id)) await dbService.deleteClipScheme(id);
-  }
-  schemes.value = schemes.value.filter((x) => !LEGACY_SCHEME_IDS.includes(x.id));
-  if (schemes.value.length === 0) {
-    await dbService.saveClipScheme({
-      id: DEFAULT_SCHEME_ID,
-      title: t('smart.scheme_title_default'),
-      description: t('smart.scheme_desc_default'),
-      members: [],
-      body: '',
-      enabled: 1,
-    });
-  }
-  schemes.value = await dbService.fetchClipSchemes();
-  if (!schemes.value.some((x) => x.id === defaultSchemeId.value)) {
-    defaultSchemeId.value = schemes.value[0]?.id ?? '';
-    await dbService.setKeyValue('smart_default_scheme_id', defaultSchemeId.value);
-  }
-}
-
-function addScheme(): void {
-  const scheme: ClipScheme = {
-    id: crypto.randomUUID(),
-    title: t('smart.new_scheme'),
-    description: '',
-    members: [],
-    body: '',
-    enabled: 1,
-  };
-  schemes.value.unshift(scheme);
-  editingSchemeId.value = scheme.id;
-  void dbService.saveClipScheme(scheme);
-  refreshSmartClipConfig();
-  showHint(t('smart.scheme_added'));
-}
-
-/** 方案落库：标题/描述/成员/排版/启用任一改动都即时持久化 */
-function saveScheme(scheme: ClipScheme): void {
-  if (!scheme.title.trim()) scheme.title = t('smart.new_scheme');
-  void dbService.saveClipScheme(scheme);
-  refreshSmartClipConfig();
-  showHint(t('smart.scheme_saved'));
-}
-
-async function removeScheme(scheme: ClipScheme): Promise<void> {
-  schemes.value = schemes.value.filter((x) => x.id !== scheme.id);
-  if (editingSchemeId.value === scheme.id) editingSchemeId.value = null;
-  await dbService.deleteClipScheme(scheme.id);
-  // 删除的是默认方案：回落到第一条；一条不剩则重建默认方案
-  if (defaultSchemeId.value === scheme.id) {
-    if (schemes.value.length === 0) {
-      await dbService.saveClipScheme({
-        id: DEFAULT_SCHEME_ID,
-        title: t('smart.scheme_title_default'),
-        description: t('smart.scheme_desc_default'),
-        members: [],
-        body: '',
-        enabled: 1,
-      });
-    }
-    defaultSchemeId.value = schemes.value[0]?.id ?? DEFAULT_SCHEME_ID;
-    await dbService.setKeyValue('smart_default_scheme_id', defaultSchemeId.value);
-  }
-  refreshSmartClipConfig();
-  showHint(t('smart.scheme_deleted', { name: scheme.title }));
-}
-
-/** 设为/取消默认方案（默认方案 = 开启态实际执行的叠加加工层） */
-function toggleDefaultScheme(s: ClipScheme): void {
-  const next = defaultSchemeId.value === s.id ? '' : s.id;
-  defaultSchemeId.value = next;
-  void dbService.setKeyValue('smart_default_scheme_id', next);
-  refreshSmartClipConfig();
-  showHint(next ? t('smart.default_scheme_set', { name: s.title }) : t('smart.default_scheme_cleared'));
-}
-
-/** 成员芯片移除：移除后为空则回到「自动接入全部提取器」 */
-function removeMember(scheme: ClipScheme, id: string): void {
-  scheme.members = (scheme.members ?? []).filter((x) => x !== id);
-  saveScheme(scheme);
-  showHint(t('smart.scheme_member_removed', { name: extractorName(id) }));
-}
-
-/** 重置成员：清空指定子集，回到声明式的「全部提取器自动接入」 */
-function resetMembers(scheme: ClipScheme): void {
-  scheme.members = [];
-  saveScheme(scheme);
-  showHint(t('smart.scheme_members_auto'));
-}
-
-/** AI 生成专属方案：按描述生成标题/描述，并从已有提取器中挑选成员组合 */
-const addingAiScheme = ref(false);
-const aiSchemeDesc = ref('');
-const generatingScheme = ref(false);
-async function generateSchemeByAi(): Promise<void> {
-  const desc = aiSchemeDesc.value.trim();
-  if (!desc || generatingScheme.value) return;
-  generatingScheme.value = true;
-  try {
-    const draft = await generateSchemeDraft(desc, extractors.value);
-    const scheme: ClipScheme = {
-      id: crypto.randomUUID(),
-      title: draft.title,
-      description: draft.description,
-      members: draft.members,
-      body: '',
-      enabled: 1,
-    };
-    schemes.value.unshift(scheme);
-    await dbService.saveClipScheme(scheme);
-    aiSchemeDesc.value = '';
-    addingAiScheme.value = false;
-    editingSchemeId.value = scheme.id;
-    refreshSmartClipConfig();
-    showHint(t('smart.ai_generate_scheme_done', { name: scheme.title }));
-  } catch (e) {
-    showHint(t('smart.ai_generate_failed', { error: String(e) }), 'error');
-  } finally {
-    generatingScheme.value = false;
-  }
-}
-
-// ===== 提取器：单个内容的提取单元，可自由 CRUD（内置项同样可改可删，可一键恢复） =====
-// 长按拖拽排序（与导航配置/设置分类同一套交互）：列表顺序 = 方案执行顺序
-const extractorDraggingKey = ref<string | null>(null);
-const extractorReorder = useLongPressReorder({
-  container: '[data-extractor-list]',
-  items: '.extractor-item',
+// 长按拖拽排序（与导航配置/设置分类同一套交互）：列表顺序 = 规则执行顺序
+const ruleDraggingKey = ref<string | null>(null);
+const ruleReorder = useLongPressReorder({
+  container: '[data-rule-list]',
+  items: '.rule-item',
   axis: 'y',
   onReorder: (from, to) => {
-    const a = extractors.value.findIndex((x) => x.id === from);
-    const b = extractors.value.findIndex((x) => x.id === to);
+    const a = rules.value.findIndex((x) => x.id === from);
+    const b = rules.value.findIndex((x) => x.id === to);
     if (a < 0 || b < 0) return;
-    const list = [...extractors.value];
+    const list = [...rules.value];
     const [moved] = list.splice(a, 1);
     list.splice(b, 0, moved!);
-    extractors.value = list;
+    rules.value = list;
   },
   onDrop: () => {
-    void persistExtractors(extractors.value);
+    void persistExtractRules(rules.value);
     refreshSmartClipConfig();
   },
-  onStateChange: (k) => { extractorDraggingKey.value = k; },
+  onStateChange: (k) => { ruleDraggingKey.value = k; },
 });
 
 /** 行 pointerdown：仅从非交互元素启动长按拖拽（输入框/按钮保持原生行为） */
-function onExtractorPointerDown(x: ClipExtractor, e: PointerEvent): void {
+function onRulePointerDown(rule: ExtractRule, e: PointerEvent): void {
   const target = e.target as HTMLElement | null;
   if (target?.closest('input, textarea, select, button')) return;
-  extractorReorder.pressStart(x.id, e);
+  ruleReorder.pressStart(rule.id, e);
 }
 
 /** 行点击：展开/收起编辑；拖拽结束时的点击被抑制，避免误展开 */
-function onExtractorRowClick(x: ClipExtractor): void {
-  if (extractorReorder.consumeDragged()) return;
-  editingExtractorId.value = editingExtractorId.value === x.id ? null : x.id;
+function onRuleRowClick(rule: ExtractRule): void {
+  if (ruleReorder.consumeDragged()) return;
+  editingRuleId.value = editingRuleId.value === rule.id ? null : rule.id;
 }
 
-function saveExtractor(x: ClipExtractor): void {
-  if (!x.name.trim()) x.name = t('smart.new_extractor');
-  void persistExtractors(extractors.value);
+async function saveRule(rule: ExtractRule): Promise<void> {
+  if (!rule.name.trim()) rule.name = t('smart.new_extractor');
+  await persistExtractRules(rules.value);
   refreshSmartClipConfig();
   showHint(t('smart.extractor_saved'));
 }
 
-/**
- * 新增提取器面板：分隔符 / 正则 / AI 指令**三合一**。
- * 三者的输入草稿相互独立（draftSeparator / draftRegex / draftAi）——切换方式不会
- * 覆盖已填内容，切回来仍在；提交时只取当前方式对应的那份草稿。
- */
-const addingExtractor = ref(false);
-const newExtractorName = ref('');
-const newExtractorDesc = ref('');
-const newExtractorMethod = ref<ClipExtractor['method']>('regex');
-const draftSeparator = ref('');
-const draftRegex = ref('');
-const draftAi = ref('');
-
-function currentDraft(): string {
-    if (newExtractorMethod.value === 'separator') return draftSeparator.value;
-    if (newExtractorMethod.value === 'ai') return draftAi.value;
-    return draftRegex.value;
-}
-
-/** AI 生成：用一句描述生成提取器配置并回填表单（不直接落库，用户确认后再添加） */
-const aiExtractorDesc = ref('');
-const generatingExtractor = ref(false);
-async function generateExtractorByAi(): Promise<void> {
-  const desc = aiExtractorDesc.value.trim();
-  if (!desc || generatingExtractor.value) return;
-  generatingExtractor.value = true;
-  try {
-    const draft = await generateExtractorDraft(desc);
-    newExtractorName.value = draft.name;
-    newExtractorDesc.value = draft.desc;
-    newExtractorMethod.value = draft.method;
-    if (draft.method === 'separator') draftSeparator.value = draft.expression;
-    else if (draft.method === 'ai') draftAi.value = draft.expression;
-    else draftRegex.value = draft.expression;
-    aiExtractorDesc.value = '';
-    addingExtractor.value = true;
-    showHint(t('smart.ai_generate_done'));
-  } catch (e) {
-    showHint(t('smart.ai_generate_failed', { error: String(e) }), 'error');
-  } finally {
-    generatingExtractor.value = false;
+async function addRule(): Promise<void> {
+  if (rules.value.length >= MAX_EXTRACT_RULES) {
+    showHint(t('smart.rules_limit', { n: String(MAX_EXTRACT_RULES) }), 'info');
+    return;
   }
-}
-
-/** 清空新增面板全部草稿（提交成功 / 取消共用，防旧内容残留到下次打开） */
-function resetExtractorDrafts(): void {
-    newExtractorName.value = '';
-    newExtractorDesc.value = '';
-    aiExtractorDesc.value = '';
-    draftSeparator.value = '';
-    draftRegex.value = '';
-    draftAi.value = '';
-}
-
-function submitNewExtractor(): void {
-    const expression = currentDraft().trim();
-    if (!expression) return;
-    const x: ClipExtractor = {
-        id: crypto.randomUUID(),
-        name: newExtractorName.value.trim() || t('smart.new_extractor'),
-        desc: newExtractorDesc.value.trim(),
-        method: newExtractorMethod.value,
-        expression,
-        sample: '',
-        builtin: 0,
-    };
-    // 追加到末尾：列表顺序即方案执行顺序，新增提取器即声明式接入
-    extractors.value.push(x);
-    void persistExtractors(extractors.value);
-    refreshSmartClipConfig();
-    // 清空草稿、收起面板，并让新建项直接进入编辑态以便补描述/示例
-    resetExtractorDrafts();
-    addingExtractor.value = false;
-    editingExtractorId.value = x.id;
-    showHint(t('smart.extractor_added', { name: x.name }));
-}
-
-async function removeExtractor(x: ClipExtractor): Promise<void> {
-  extractors.value = extractors.value.filter((e) => e.id !== x.id);
-  if (editingExtractorId.value === x.id) editingExtractorId.value = null;
-  await persistExtractors(extractors.value);
+  const rule = createExtractRule(t('smart.new_extractor'));
+  rules.value.push(rule);
+  editingRuleId.value = rule.id;
+  await persistExtractRules(rules.value);
   refreshSmartClipConfig();
-  showHint(t('smart.extractor_removed', { name: x.name }));
 }
 
-/** 提取器列表顺序 = 方案执行顺序：上移/下移并即时落库 */
-async function moveExtractor(index: number, delta: number): Promise<void> {
-  const list = [...extractors.value];
+async function removeRule(rule: ExtractRule): Promise<void> {
+  rules.value = rules.value.filter((x) => x.id !== rule.id);
+  if (editingRuleId.value === rule.id) editingRuleId.value = null;
+  await persistExtractRules(rules.value);
+  refreshSmartClipConfig();
+  showHint(t('smart.extractor_removed', { name: rule.name }));
+}
+
+/** 规则列表顺序 = 执行顺序：上移/下移并即时落库 */
+async function moveRule(index: number, delta: number): Promise<void> {
+  const list = [...rules.value];
   const j = index + delta;
   if (j < 0 || j >= list.length) return;
   const a = list[index]!;
   list[index] = list[j]!;
   list[j] = a;
-  extractors.value = list;
-  await persistExtractors(list);
+  rules.value = list;
+  await persistExtractRules(list);
   refreshSmartClipConfig();
   showHint(t('smart.extractors_reordered'));
-}
-
-/** 恢复内置：只补齐被删掉的内置项（按 id 判定），已存在或被改过的保持原样 */
-async function restoreExtractors(): Promise<void> {
-  const missing = missingBuiltinExtractors(extractors.value, t as Translator);
-  if (missing.length === 0) {
-    showHint(t('smart.extractors_restore_none'), 'info');
-    return;
-  }
-  extractors.value = [...extractors.value, ...missing];
-  await persistExtractors(extractors.value);
-  refreshSmartClipConfig();
-  showHint(t('smart.extractors_restored', { count: String(missing.length) }));
 }
 
 // ===== 灵动岛 API（第三方应用集成）：开关/端口/令牌任一变化即持久化 + 应用（非法端口不应用，避免打字过程误触发） =====
@@ -1340,13 +1179,9 @@ async function testWebhook() {
   }
 }
 
-// 处理开关/默认方案变化：持久化 + 推送配置快照给处理层
+// 处理开关变化：持久化 + 推送配置快照给处理层
 watch(smartMode, (val) => {
   void dbService.setKeyValue('smart_clip_mode', val);
-  refreshSmartClipConfig();
-});
-watch(defaultSchemeId, (val) => {
-  void dbService.setKeyValue('smart_default_scheme_id', val);
   refreshSmartClipConfig();
 });
 
@@ -2066,6 +1901,26 @@ onMounted(async () => {
   aiBaseUrl.value = await dbService.getKeyValue('ai_base_url');
   aiModel.value = await dbService.getKeyValue('ai_model');
   aiAnalysisMax.value = (await dbService.getKeyValue('ai_analysis_max_chars')) || '1000';
+  // 三个功能开关（设计文档 §23）：缺省均开启；旧单开关 ai_analysis_enabled 显式关闭时迁移为双关闭
+  const [kwKV, smKV, legacyKV, splitKV, kwMinKV, kwMaxKV] = await Promise.all([
+    dbService.getKeyValue('ai_keywords_enabled'),
+    dbService.getKeyValue('ai_summary_enabled'),
+    dbService.getKeyValue('ai_analysis_enabled'),
+    dbService.getKeyValue('local_split_enabled'),
+    dbService.getKeyValue('ai_keywords_min'),
+    dbService.getKeyValue('ai_keywords_max'),
+  ]);
+  const legacyOff = legacyKV === '0';
+  aiKeywordsEnabled.value = kwKV === null ? !legacyOff : kwKV !== '0';
+  aiSummaryEnabled.value = smKV === null ? !legacyOff : smKV !== '0';
+  // 互斥约束：AI 关键字关闭时本地切分不得为开启态（读入即归一，必要时回写）
+  localSplitEnabled.value = (splitKV === null ? true : splitKV !== '0') && aiKeywordsEnabled.value;
+  aiKeywordsMin.value = kwMinKV || String(KEYWORDS_MIN_DEFAULT);
+  aiKeywordsMax.value = kwMaxKV || String(KEYWORDS_MAX_DEFAULT);
+  // 迁移/归一结果落库，保证下次启动与本次一致
+  if (kwKV === null) await dbService.setKeyValue('ai_keywords_enabled', aiKeywordsEnabled.value ? '1' : '0');
+  if (smKV === null) await dbService.setKeyValue('ai_summary_enabled', aiSummaryEnabled.value ? '1' : '0');
+  if (!localSplitEnabled.value && splitKV !== '0') await dbService.setKeyValue('local_split_enabled', '0');
   // 自定义 JSON 模板恢复（custom 模式编辑器内容）；为空时编辑器显示占位提示
   aiCustomConfig.value = (await dbService.getKeyValue('ai_custom_config')) || '';
   // 智能剪贴板配置恢复（设计文档 §4.3/§4.5）+ 推送处理层快照
@@ -2073,15 +1928,13 @@ onMounted(async () => {
     // 'off' 尊重用户选择；'auto'/'scheme'/'ai'（旧值）及空值/未知值统一归一为 'on'（单一管线）
     const rawMode = await dbService.getKeyValue('smart_clip_mode');
     smartMode.value = rawMode === 'off' ? 'off' : 'on';
-    // 默认方案指向：新键优先，兼容旧键 smart_default_template_id
-    defaultSchemeId.value =
-      (await dbService.getKeyValue('smart_default_scheme_id')) ||
-      (await dbService.getKeyValue('smart_default_template_id'));
-    schemes.value = await dbService.fetchClipSchemes();
-    // 提取器：首次进入用内置提取器 seed 并落库，之后以库中的（用户可改的）列表为准
-    extractors.value = await loadExtractors(t as Translator);
-    // 方案对账：清理旧内置方案行、保证至少一条方案存在、修正默认方案指向
-    await ensureSchemes();
+    // 自定义提取规则：首次读取自动迁移旧的提取器配置
+    // （内置项丢弃由代码内置，自定义 regex/separator 保留，自定义 AI 提取器只计数停用）
+    const ruleState = await loadExtractRules();
+    rules.value = ruleState.rules;
+    aiDisabledCount.value = ruleState.disabledAiCount;
+    // 推送一次配置快照：保证处理层拿到迁移后的规则（而非首次解析时的空列表）
+    refreshSmartClipConfig();
     islandApiEnabled.value = (await dbService.getKeyValue('island_api_enabled')) === '1';
     islandApiPort.value = (await dbService.getKeyValue('island_api_port')) || String(ISLAND_API_DEFAULT_PORT);
     // 令牌强制（v1.5.0）：为空时自动生成并持久化（老配置升级 / 首次开启均覆盖）；发生在 islandApiLoading=true 期间，不触发 watch
@@ -2385,239 +2238,170 @@ onMounted(async () => {
               />
             </div>
 
-            <!-- 方案：可自由 CRUD；默认方案作为开启态的叠加加工层，AI 可生成专属方案 -->
+            <!-- 三个独立功能开关（设计文档 §23）：本地切分 / AI 分析关键字 / AI 总结。
+                 互斥约束：AI 关键字关闭时本地切分被置灰并强制关闭。 -->
             <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
-              <div class="mb-3 flex items-center justify-between gap-2">
-                <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.schemes_section') }}</span>
-                <div class="flex items-center gap-2">
-                  <button type="button" class="btn-soft px-2 py-0.5 text-xs"
-                          @click="addingAiScheme = !addingAiScheme">{{ t('smart.ai_generate_scheme') }}</button>
-                  <button type="button" class="btn-soft btn-circle p-1"
-                          v-tip="t('smart.add_scheme')"
-                          @click="addScheme">
-                    <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                  </button>
+              <div class="mb-3 text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.switches_section') }}</div>
+              <div class="flex flex-col gap-3">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="min-w-0">
+                    <div class="text-ink">{{ t('smart.split_enabled') }}</div>
+                    <p v-if="!aiKeywordsEnabled" class="mt-0.5 text-[10px] leading-relaxed text-ink-faint">
+                      {{ t('smart.split_blocked') }}
+                    </p>
+                  </div>
+                  <UiToggleSwitch
+                      :model-value="localSplitEnabled"
+                      :disabled="!aiKeywordsEnabled"
+                      :disabled-tip="t('smart.split_blocked')"
+                      :tip-on="t('smart.split_tip_on')"
+                      :tip-off="t('smart.split_tip_off')"
+                      :label="t('smart.split_enabled')"
+                      @change="onLocalSplitToggle"
+                  />
+                </div>
+                <div class="flex items-center justify-between gap-4">
+                  <span class="text-ink">{{ t('smart.keywords_enabled') }}</span>
+                  <UiToggleSwitch
+                      :model-value="aiKeywordsEnabled"
+                      :tip-on="t('smart.keywords_tip_on')"
+                      :tip-off="t('smart.keywords_tip_off')"
+                      :label="t('smart.keywords_enabled')"
+                      @change="onAiKeywordsToggle"
+                  />
+                </div>
+                <div class="flex items-center justify-between gap-4">
+                  <span class="text-ink">{{ t('smart.summary_enabled') }}</span>
+                  <UiToggleSwitch
+                      :model-value="aiSummaryEnabled"
+                      :tip-on="t('smart.summary_tip_on')"
+                      :tip-off="t('smart.summary_tip_off')"
+                      :label="t('smart.summary_enabled')"
+                      @change="onSummaryToggle"
+                  />
                 </div>
               </div>
-
-              <!-- AI 生成专属方案：一句话描述 → 标题/描述 + 成员组合 -->
-              <div class="collapse-wrap" :class="{ 'is-open': addingAiScheme }">
-                <div>
-                  <div class="mb-2 rounded-xl border border-gold/40 bg-surface-field/60 p-2">
-                    <div class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.ai_generate_scheme') }}</div>
-                    <textarea v-model="aiSchemeDesc" rows="3"
-                              class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                              :placeholder="t('smart.ai_scheme_desc_ph')"></textarea>
-                    <div class="mt-1.5 flex justify-end gap-2">
-                      <button type="button" class="btn-soft px-2 py-0.5 text-xs"
-                              @click="addingAiScheme = false">{{ t('common.cancel') }}</button>
-                      <button type="button" class="btn-gold px-2 py-0.5 text-xs"
-                              :disabled="generatingScheme"
-                              @click="generateSchemeByAi">
-                        {{ generatingScheme ? t('smart.ai_generating') : t('smart.ai_generate') }}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div v-for="s in schemes" :key="s.id" class="mb-2 rounded-xl border border-line bg-surface-field/40 p-2">
-                <!-- 折叠态：标题 + 描述，点「编辑」展开 -->
-                <div class="flex items-center gap-2">
-                  <div class="min-w-0 flex-1 cursor-pointer"
-                       @click="editingSchemeId = editingSchemeId === s.id ? null : s.id">
-                    <div class="truncate text-xs text-ink">{{ s.title }}</div>
-                    <div class="truncate text-[10px] text-ink-faint">{{ schemeSummary(s) }}</div>
-                  </div>
-                  <span v-if="defaultSchemeId === s.id"
-                        class="shrink-0 rounded-full border border-gold/50 bg-gold/10 px-1.5 py-0.5 text-[10px] text-gold"
-                        :title="t('smart.unset_default')" @click="toggleDefaultScheme(s)">{{ t('smart.default_tag') }}</span>
-                  <button v-else type="button" class="btn-soft shrink-0 px-2 py-0.5 text-xs"
-                          :title="t('smart.set_default')" @click="toggleDefaultScheme(s)">{{ t('smart.set_default') }}</button>
-                  <UiToggleSwitch :model-value="s.enabled === 1" :label="''"
-                                  @update:model-value="(v: boolean) => { s.enabled = v ? 1 : 0; saveScheme(s); }" />
-                  <button type="button" class="btn-soft shrink-0 px-2 py-0.5 text-xs"
-                          @click="editingSchemeId = editingSchemeId === s.id ? null : s.id">
-                    {{ editingSchemeId === s.id ? t('smart.collapse') : t('common.edit') }}
-                  </button>
-                  <button type="button" class="text-ink-faint transition-colors hover:text-danger"
-                          @click="removeScheme(s)">✕</button>
-                </div>
-                <div class="collapse-wrap" :class="{ 'is-open': editingSchemeId === s.id }">
-                  <div>
-                    <div class="pt-2">
-                      <input v-model="s.title" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                             :placeholder="t('smart.scheme_title_ph')" @change="saveScheme(s)" />
-                      <input v-model="s.description" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-[10px] text-ink"
-                             :placeholder="t('smart.scheme_desc_ph')" @change="saveScheme(s)" />
-
-                      <!-- 成员提取器：空 = 自动接入全部；芯片可移除 -->
-                      <div class="mb-1 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.scheme_members_label') }}</div>
-                      <p v-if="(s.members ?? []).length === 0" class="mb-1 text-[10px] text-ink-faint">{{ t('smart.scheme_members_auto') }}</p>
-                      <div v-else class="mb-1 flex flex-wrap gap-1">
-                        <span v-for="mid in s.members" :key="mid"
-                              class="flex items-center gap-1 rounded-full border border-line bg-surface-field px-2 py-0.5 text-[10px] text-ink">
-                          {{ extractorName(mid) }}
-                          <button type="button" class="text-ink-faint transition-colors hover:text-danger"
-                                  @click="removeMember(s, mid)">✕</button>
-                        </span>
-                        <button type="button" class="rounded-full border border-line px-2 py-0.5 text-[10px] text-ink-faint transition-colors hover:text-gold"
-                                @click="resetMembers(s)">{{ t('smart.scheme_reset_members') }}</button>
-                      </div>
-                      <p class="mb-1.5 text-[10px] leading-relaxed text-ink-faint">{{ t('smart.scheme_members_hint') }}</p>
-
-                      <textarea v-model="s.body" rows="5"
-                                class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
-                                :placeholder="t('smart.scheme_body_ph')" @change="saveScheme(s)"></textarea>
-                    </div>
-                  </div>
-                </div>
+              <div class="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
+                <span class="text-xs text-ink-soft">{{ t('smart.keywords_count') }}</span>
+                <span class="flex items-center gap-2">
+                  <span class="w-16"><SettingInput v-model="aiKeywordsMin" :placeholder="t('smart.keywords_min')"
+                                                  @save="showHint(t('smart.keywords_saved'))" /></span>
+                  <span class="text-xs text-ink-faint">–</span>
+                  <span class="w-16"><SettingInput v-model="aiKeywordsMax" :placeholder="t('smart.keywords_max')"
+                                                  @save="showHint(t('smart.keywords_saved'))" /></span>
+                </span>
               </div>
             </div>
 
-            <!-- 提取器：单个内容的提取单元（内置项同样可改可删，可恢复、可转为规则） -->
+            <!-- 自定义提取规则（高级）：默认折叠，不配置即用内置切分器。
+                 原「方案 / 提取器」两级编辑区已下线（见设计文档 §14.3）：普通用户无需触碰。 -->
             <div class="glass-card mt-4 rounded-2xl p-4 shadow-soft">
-              <div class="mb-3 flex items-center justify-between gap-2">
-                <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.extractors_section') }}</span>
-                <div class="flex items-center gap-2">
-                  <button type="button" class="btn-soft px-2 py-0.5 text-xs"
-                          @click="restoreExtractors">{{ t('smart.extractors_restore') }}</button>
-                  <!-- 新增入口收成一个 SVG 图标，点击展开新增面板（分隔符/正则/AI 指令三合一） -->
-                  <button type="button" class="btn-soft btn-circle p-1"
-                          v-tip="t('smart.add_extractor')"
-                          @click="addingExtractor = !addingExtractor">
-                    <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
+              <button type="button" class="flex w-full items-center justify-between gap-2 text-left"
+                      :aria-expanded="advancedRulesOpen"
+                      @click="advancedRulesOpen = !advancedRulesOpen">
+                <span class="text-xs uppercase tracking-wide text-ink-faint">{{ t('smart.rules_section') }}</span>
+                <span class="flex items-center gap-2">
+                  <span v-if="rules.length > 0"
+                        class="rounded-full border border-line px-1.5 py-0.5 text-[10px] leading-none text-ink-faint">{{ rules.length }}</span>
+                  <svg class="size-3 shrink-0 text-ink-faint transition-transform duration-300 ease-soft"
+                       :class="advancedRulesOpen ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </span>
+              </button>
 
-              <!-- 新增提取器：AI 快捷生成（一句话回填表单）+ 手动配置；生成后确认再添加 -->
-              <div class="collapse-wrap" :class="{ 'is-open': addingExtractor }">
+              <!-- 迁移提示放在折叠区外：自定义 AI 提取器失效的用户进设置页即可看到 -->
+              <p v-if="aiDisabledCount > 0" class="mt-2 text-[10px] leading-relaxed text-gold">
+                {{ t('smart.ai_extractors_disabled', { n: String(aiDisabledCount) }) }}
+              </p>
+
+              <div class="collapse-wrap" :class="{ 'is-open': advancedRulesOpen }">
                 <div>
-                  <div class="mb-2 rounded-xl border border-gold/40 bg-surface-field/60 p-2">
-                    <div class="mb-1.5 text-[10px] uppercase tracking-wide text-ink-faint">{{ t('smart.add_extractor') }}</div>
-                    <!-- AI 快捷生成：单行输入，回车即生成，产出回填下方表单 -->
-                    <div class="mb-1.5 flex items-center gap-1">
-                      <input v-model="aiExtractorDesc"
-                             class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                             :placeholder="t('smart.ai_desc_ph')"
-                             @keydown.enter.prevent="generateExtractorByAi" />
-                      <button type="button" class="btn-soft shrink-0 px-2 py-0.5 text-xs"
-                              :disabled="generatingExtractor || !aiExtractorDesc.trim()"
-                              @click="generateExtractorByAi">
-                        {{ generatingExtractor ? t('smart.ai_generating') : t('smart.ai_generate') }}
-                      </button>
-                    </div>
-                    <div class="mb-1.5 grid grid-cols-2 gap-1.5">
-                      <input v-model="newExtractorName"
-                             class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                             :placeholder="t('smart.extractor_name_ph')" />
-                      <input v-model="newExtractorDesc"
-                             class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                             :placeholder="t('smart.extractor_desc_ph')" />
-                    </div>
-                    <div class="mb-1.5">
-                      <UiSegmented :model-value="newExtractorMethod" :options="EXTRACTOR_METHOD_OPTIONS"
-                                   :label="t('smart.extractor_method')"
-                                   @update:model-value="(v: string) => newExtractorMethod = v as ClipExtractor['method']" />
-                    </div>
-                    <input v-if="newExtractorMethod === 'separator'" v-model="draftSeparator"
-                           class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                           :placeholder="t('smart.extractor_separator_ph')" />
-                    <textarea v-else-if="newExtractorMethod === 'regex'" v-model="draftRegex" rows="3"
-                              class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
-                              :placeholder="t('smart.extractor_regex_ph')"></textarea>
-                    <textarea v-else v-model="draftAi" rows="5"
-                              class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
-                              :placeholder="t('smart.extractor_ai_ph')"></textarea>
-                    <div class="mt-1.5 flex justify-end gap-2">
-                      <button type="button" class="btn-soft px-2 py-0.5 text-xs"
-                              @click="resetExtractorDrafts(); addingExtractor = false">{{ t('common.cancel') }}</button>
-                      <button type="button" class="btn-gold px-2 py-0.5 text-xs"
-                              @click="submitNewExtractor">{{ t('smart.add_extractor_submit') }}</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                  <div class="pt-3">
+                    <p class="mb-1.5 text-[10px] leading-relaxed text-ink-faint">{{ t('smart.rules_hint') }}</p>
 
-              <p v-if="extractors.length === 0" class="text-xs text-ink-faint">{{ t('smart.no_extractors') }}</p>
-              <!-- 长按拖动排序（与导航配置同一套交互），TransitionGroup 提供平滑让位 -->
-              <TransitionGroup name="reorder-list" tag="div" data-extractor-list>
-                <div v-for="(x, index) in extractors" :key="x.id"
-                     class="extractor-item mb-2 cursor-pointer rounded-xl border border-line bg-surface-field/40 p-2 transition-all duration-200 ease-soft"
-                     :class="extractorDraggingKey === x.id ? 'cursor-grabbing opacity-50 scale-[0.98] shadow-float' : ''"
-                     :data-reorder-key="x.id"
-                     @pointerdown="onExtractorPointerDown(x, $event)">
-                  <!-- 折叠态：手柄 + 名称/描述，点「编辑」展开；列表顺序 = 方案执行顺序 -->
-                  <div class="flex items-center gap-2">
-                    <svg class="h-4 w-4 shrink-0 cursor-grab text-ink-faint/70" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M8 9h.01M8 15h.01M16 9h.01M16 15h.01M12 9h.01M12 15h.01" />
-                      <circle cx="8" cy="9" r="0.1" /><circle cx="8" cy="15" r="0.1" />
-                      <circle cx="12" cy="9" r="0.1" /><circle cx="12" cy="15" r="0.1" />
-                      <circle cx="16" cy="9" r="0.1" /><circle cx="16" cy="15" r="0.1" />
-                    </svg>
-                    <div class="min-w-0 flex-1 cursor-pointer" @click="onExtractorRowClick(x)">
-                      <div class="truncate text-xs text-ink">{{ x.name }}</div>
-                      <div class="truncate text-[10px] text-ink-faint">{{ extractorSummary(x) }}</div>
-                    </div>
-                    <span v-if="x.builtin === 1"
-                          class="shrink-0 rounded-full border border-line px-1.5 py-0.5 text-[10px] text-ink-faint">{{ t('smart.extractor_builtin') }}</span>
-                    <div class="flex shrink-0 flex-col leading-none">
-                      <button type="button" class="text-ink-faint transition-colors hover:text-gold disabled:opacity-30"
-                              :disabled="index === 0" :title="t('common.move_up')"
-                              @click="moveExtractor(index, -1)">
-                        <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg>
-                      </button>
-                      <button type="button" class="text-ink-faint transition-colors hover:text-gold disabled:opacity-30"
-                              :disabled="index === extractors.length - 1" :title="t('common.move_down')"
-                              @click="moveExtractor(index, 1)">
-                        <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-                      </button>
-                    </div>
-                    <button type="button" class="btn-soft shrink-0 px-2 py-0.5 text-xs"
-                            @click="editingExtractorId = editingExtractorId === x.id ? null : x.id">
-                      {{ editingExtractorId === x.id ? t('smart.collapse') : t('common.edit') }}
-                    </button>
-                    <button type="button" class="text-ink-faint transition-colors hover:text-danger"
-                            @click="removeExtractor(x)">✕</button>
-                  </div>
-                <div class="collapse-wrap" :class="{ 'is-open': editingExtractorId === x.id }">
-                  <div>
-                    <div class="pt-2">
-                      <input v-model="x.name" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
-                             :placeholder="t('smart.extractor_name_ph')" @change="saveExtractor(x)" />
-                      <input v-model="x.desc" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-[10px] text-ink"
-                             :placeholder="t('smart.extractor_desc_ph')" @change="saveExtractor(x)" />
-                      <div class="mb-1.5">
-                        <UiSegmented :model-value="x.method" :options="EXTRACTOR_METHOD_OPTIONS"
-                                     :label="t('smart.extractor_method')"
-                                     @update:model-value="(v: string) => { x.method = v as ClipExtractor['method']; saveExtractor(x); }" />
+                    <p v-if="rules.length === 0" class="mb-2 text-xs text-ink-faint">{{ t('smart.rules_empty') }}</p>
+                    <!-- 长按拖动排序（与导航配置同一套交互）：列表顺序 = 规则执行顺序 -->
+                    <TransitionGroup name="reorder-list" tag="div" data-rule-list>
+                      <div v-for="(rule, index) in rules" :key="rule.id"
+                           class="rule-item mb-2 cursor-pointer rounded-xl border bg-surface-field/40 p-2 transition-all duration-200 ease-soft"
+                           :class="[
+                             isRuleBroken(rule) ? 'border-danger/60' : 'border-line',
+                             ruleDraggingKey === rule.id ? 'cursor-grabbing opacity-50 scale-[0.98] shadow-float' : '',
+                           ]"
+                           :data-reorder-key="rule.id"
+                           @pointerdown="onRulePointerDown(rule, $event)">
+                        <div class="flex items-center gap-2">
+                          <svg class="h-4 w-4 shrink-0 cursor-grab text-ink-faint/70" viewBox="0 0 24 24" fill="none"
+                               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M8 9h.01M8 15h.01M16 9h.01M16 15h.01M12 9h.01M12 15h.01" />
+                            <circle cx="8" cy="9" r="0.1" /><circle cx="8" cy="15" r="0.1" />
+                            <circle cx="12" cy="9" r="0.1" /><circle cx="12" cy="15" r="0.1" />
+                            <circle cx="16" cy="9" r="0.1" /><circle cx="16" cy="15" r="0.1" />
+                          </svg>
+                          <div class="min-w-0 flex-1 cursor-pointer" @click="onRuleRowClick(rule)">
+                            <div class="truncate text-xs text-ink">{{ rule.name }}</div>
+                            <div class="truncate text-[10px] text-ink-faint">{{ ruleSummary(rule) }}</div>
+                          </div>
+                          <div class="flex shrink-0 flex-col leading-none">
+                            <button type="button" class="text-ink-faint transition-colors hover:text-gold disabled:opacity-30"
+                                    :disabled="index === 0" :title="t('common.move_up')"
+                                    @click="moveRule(index, -1)">
+                              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg>
+                            </button>
+                            <button type="button" class="text-ink-faint transition-colors hover:text-gold disabled:opacity-30"
+                                    :disabled="index === rules.length - 1" :title="t('common.move_down')"
+                                    @click="moveRule(index, 1)">
+                              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+                            </button>
+                          </div>
+                          <UiToggleSwitch :model-value="rule.enabled === 1" :label="''"
+                                          @update:model-value="(v: boolean) => { rule.enabled = v ? 1 : 0; saveRule(rule); }" />
+                          <button type="button" class="btn-soft shrink-0 px-2 py-0.5 text-xs"
+                                  @click="editingRuleId = editingRuleId === rule.id ? null : rule.id">
+                            {{ editingRuleId === rule.id ? t('smart.collapse') : t('common.edit') }}
+                          </button>
+                          <button type="button" class="text-ink-faint transition-colors hover:text-danger"
+                                  @click="removeRule(rule)">✕</button>
+                        </div>
+                        <div class="collapse-wrap" :class="{ 'is-open': editingRuleId === rule.id }">
+                          <div>
+                            <div class="pt-2">
+                              <input v-model="rule.name" class="mb-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-xs text-ink"
+                                     :placeholder="t('smart.extractor_name_ph')" @change="saveRule(rule)" />
+                              <div class="mb-1.5">
+                                <UiSegmented :model-value="rule.type" :options="RULE_TYPE_OPTIONS"
+                                             :label="t('smart.extractor_method')"
+                                             @update:model-value="(v: string) => { rule.type = v as ExtractRule['type']; saveRule(rule); }" />
+                              </div>
+                              <textarea v-model="rule.expression" rows="5"
+                                        class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
+                                        :placeholder="rule.type === 'separator' ? t('smart.extractor_separator_ph') : t('smart.extractor_regex_ph')"
+                                        @change="saveRule(rule)"></textarea>
+                              <p v-if="isRuleBroken(rule)" class="mt-1 text-[10px] text-danger">{{ t('smart.rule_broken') }}</p>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <textarea v-model="x.expression" rows="6"
-                                class="w-full rounded-lg border border-line bg-surface-field px-2 py-1 font-mono text-xs leading-relaxed text-ink"
-                                :placeholder="x.method === 'ai' ? t('smart.extractor_ai_ph') : (x.method === 'separator' ? t('smart.extractor_separator_ph') : t('smart.extractor_regex_ph'))"
-                                @change="saveExtractor(x)"></textarea>
-                      <textarea v-model="x.sample" rows="3"
-                                class="mt-1.5 w-full rounded-lg border border-line bg-surface-field px-2 py-1 text-[10px] text-ink"
-                                :placeholder="t('smart.extractor_sample_ph')" @change="saveExtractor(x)"></textarea>
+                    </TransitionGroup>
+
+                    <div class="mt-2 flex items-center justify-between gap-2">
+                      <button type="button" class="btn-soft px-2 py-0.5 text-xs"
+                              :disabled="rules.length >= MAX_EXTRACT_RULES" @click="addRule">
+                        {{ t('smart.add_extractor') }}
+                      </button>
+                      <span class="text-[10px] text-ink-faint">{{ t('smart.rules_limit', { n: String(MAX_EXTRACT_RULES) }) }}</span>
+                    </div>
+                    <div class="mt-2 flex items-center justify-between gap-2 border-t border-line pt-2">
+                      <span class="text-[10px] text-ink-faint">{{ t('smart.ai_cache_window') }}</span>
+                      <input v-model="aiCacheWindow"
+                             class="w-24 rounded-lg border border-line bg-surface-field px-2 py-1 text-right text-xs tabular-nums text-ink" />
                     </div>
                   </div>
                 </div>
-              </div>
-              </TransitionGroup>
-              <div class="mt-2 flex items-center justify-between gap-2 border-t border-line pt-2">
-                <span class="text-[10px] text-ink-faint">{{ t('smart.ai_cache_window') }}</span>
-                <input v-model="aiCacheWindow"
-                       class="w-24 rounded-lg border border-line bg-surface-field px-2 py-1 text-right text-xs tabular-nums text-ink" />
               </div>
             </div>
           </div>
