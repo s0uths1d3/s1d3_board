@@ -113,7 +113,10 @@ export function analyzeVerdict(raw: string, maxChars: number): VerdictResult {
     if (content.length > maxChars) return { verdict: 'too_long' };
 
     const layer = detectStructured(content);
-    if (layer) return { verdict: 'structured', layer };
+    // 机器结构（JSON / 链接列表 / 日志行 / 路径）不送 AI，本地切分即是终点；
+    // 分隔符与多行多为自然语言排版（顿号、分号、分段说明文），允许继续走散文判定，
+    // 否则这类最值得总结的内容会被永远跳过——技术/高熵/噪声仍由下游判定拦截。
+    if (layer && layer !== 'separators' && layer !== 'multiline') return { verdict: 'structured', layer };
 
     // 高熵：token 长度对无空白文本的覆盖率 > 60% → 整段编码/密钥
     const hi = highEntropyTokens(content);
