@@ -1,9 +1,8 @@
-import type { ClipExtractor, ClipScheme } from '../entities';
+import type { ExtractRule } from '../entities';
 import type { CopyEventDetail, ProcessContext, Segment, SmartClipEntry, SmartClipMode } from './types';
 import { bus } from '../core/events';
-import { runScheme, renderSchemeBody } from './template';
-import { autoSplit } from './autoSplit';
-import { readStoredExtractors } from './extractors';
+import { splitByPipeline } from './pipeline';
+import { loadExtractRules } from './extractors';
 import dbService from '../db/dbService';
 
 /**
@@ -22,8 +21,9 @@ const MAX_ENTRIES = 30;
 const entries: SmartClipEntry[] = [];
 
 let mode: SmartClipMode = 'on';
-let activeScheme: ClipScheme | null = null;
-let activeExtractors: ClipExtractor[] = [];
+let activeRules: ExtractRule[] = [];
+/** 本地切分开关（settings: local_split_enabled）；AI 关键字关闭时恒为 false（互斥约束） */
+let splitEnabled = true;
 let configReady = false;
 /** 配置快照版本号：每次配置变更递增，用于判定已有解析结果是否过期（需重解析） */
 let configVersion = 0;
@@ -31,44 +31,29 @@ let configVersion = 0;
 /** 设置页 / 启动时推送配置快照（高内聚：调用方无需感知内部缓存形态） */
 export function updateSmartClipConfig(cfg: {
     mode: SmartClipMode;
-    scheme: ClipScheme | null;
-    extractors: ClipExtractor[];
+    rules: ExtractRule[];
+    splitEnabled?: boolean;
 }): void {
     mode = cfg.mode;
-    activeScheme = cfg.scheme;
-    activeExtractors = cfg.extractors;
+    activeRules = cfg.rules;
+    // 未显式传入时沿用当前值（旧调用点兼容）
+    splitEnabled = cfg.splitEnabled ?? splitEnabled;
     configReady = true;
-    // 方案/提取器变化后旧解析结果不再可信：递增版本号，Ctrl+B 等按需解析会重跑管道
+    // 规则变化后旧解析结果不再可信：递增版本号，Ctrl+B 等按需解析会重跑管道
     configVersion += 1;
 }
 
-/** 处理管道统一入口：off 直通单段原文 / on 单一管线（默认方案叠加在智能切分之上） */
+/** 处理管道统一入口：off / 本地切分关闭 → 直通单段原文；on → 单层切分管线 */
 async function processContent(content: string, ctx: ProcessContext, onSoftError?: (e: unknown) => void): Promise<Segment[]> {
-    if (ctx.mode === 'off') return single(content, 'rule');
-
-    // 有启用中的默认方案 → 执行方案（成员为空 = 全部提取器；非空 = 指定子集）+ 可选 body 排版；
-    // 无方案 → 直接智能切分。方案零产出、仅产出「原文整段」（提取器实际没切分任何东西：
-    // 如单行内容过换行分隔提取器，split 后仍是整段）或执行失败时，一律降级为智能切分，
-    // 保证数据不丢；降级同时经 onSoftError 把错误暴露给调用方（Ctrl+B 弹岛提示失败原因）。
-    if (ctx.scheme && ctx.scheme.enabled === 1) {
-        try {
-            const segs = await runScheme(ctx.scheme, ctx.extractors, content);
-            if (segs.length === 0 || isUnsplitPassThrough(segs, content)) return autoSplit(content);
-            return renderSchemeBody(ctx.scheme, content, segs);
-        } catch (e) {
-            console.error('[smart-clip] 方案加工失败，降级为智能切分:', e);
-            onSoftError?.(e);
-            return autoSplit(content);
-        }
+    if (ctx.mode === 'off' || !ctx.splitEnabled) return single(content, 'rule');
+    try {
+        return splitByPipeline(content, ctx.rules);
+    } catch (e) {
+        // 管线内部已逐层兜底，这里只兜「管线本身抛错」的极端情况：保内容不丢 + 暴露原因
+        console.error('[smart-clip] 切分管线失败，降级为原文单段:', e);
+        onSoftError?.(e);
+        return single(content, 'rule');
     }
-    return autoSplit(content);
-}
-
-/** 方案产出是否只是「原文整段直通」：单段且与原文空白归一化后相同 = 无有效加工 */
-function isUnsplitPassThrough(segs: Segment[], content: string): boolean {
-    if (segs.length !== 1) return false;
-    const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
-    return norm(segs[0]?.text ?? '') === norm(content);
 }
 
 function single(content: string, source: Segment['source']): Segment[] {
@@ -77,24 +62,26 @@ function single(content: string, source: Segment['source']): Segment[] {
 
 /** 配置快照未就绪时的兜底：从 settings 按需拉取一次（此后以推送为准） */
 async function resolveContext(): Promise<ProcessContext> {
-    if (configReady) return { mode, scheme: activeScheme, extractors: activeExtractors };
+    if (configReady) return { mode, rules: activeRules, splitEnabled };
     try {
-        const [m, schemeId, legacySchemeId, schemes] = await Promise.all([
+        const [m, splitKV, keywordsKV, legacyKV, state] = await Promise.all([
             dbService.getKeyValue('smart_clip_mode'),
-            dbService.getKeyValue('smart_default_scheme_id'),
-            dbService.getKeyValue('smart_default_template_id'),
-            dbService.fetchClipSchemes(),
+            dbService.getKeyValue('local_split_enabled'),
+            dbService.getKeyValue('ai_keywords_enabled'),
+            dbService.getKeyValue('ai_analysis_enabled'),
+            loadExtractRules(),
         ]);
-        // 旧值 'auto'/'scheme'/'ai' 及已移除的 'rule'、未知值统一归一为 'on'（单一管线）
+        // 旧值 'auto'/'scheme'/'ai' 及已移除的 'rule'、未知值统一归一为 'on'（单层管线）
         mode = m === 'off' ? 'off' : 'on';
-        const schemeIdStr = (typeof schemeId === 'string' && schemeId) ? schemeId : (typeof legacySchemeId === 'string' ? legacySchemeId : '');
-        activeScheme = schemes.find((t) => t.id === schemeIdStr && t.enabled === 1) ?? null;
-        activeExtractors = await readStoredExtractors();
+        // 互斥约束：AI 关键字关闭时本地切分不得启用（缺省均视为开启；旧单开关显式关闭等同关键字关闭）
+        const keywordsOn = keywordsKV === null && legacyKV === '0' ? false : keywordsKV !== '0';
+        splitEnabled = keywordsOn && splitKV !== '0';
+        activeRules = state.rules;
         configReady = true;
     } catch (e) {
         console.error('[smart-clip] 处理配置恢复失败，按关闭模式处理:', e);
     }
-    return { mode, scheme: activeScheme, extractors: activeExtractors };
+    return { mode, rules: activeRules, splitEnabled };
 }
 
 /** 同 id 覆盖 + 新条目置顶 + 容量截断 */
@@ -121,16 +108,16 @@ async function handleCopyEvent(detail: CopyEventDetail): Promise<void> {
 }
 
 /**
- * 按需解析指定剪贴板条目（Ctrl+B 气泡窗口对「当前选中项」调用）。
+ * 按需解析指定内容（Ctrl+B 气泡窗口对「本次剪贴板内容」调用；id 固定传 0）。
  *
- * - 命中缓存（同 id、同内容、且规则/模板配置未变）直接复用，避免重复调用 AI；
- * - 否则走与复制事件一致的处理管道（off 直通 / on 单一管线：方案叠加在智能切分之上），结果写入内存 store。
+ * - 命中缓存（同 id、同内容、且规则配置未变）直接复用；
+ * - 否则走与复制事件一致的处理管道（off 直通 / on 单层切分管线），结果写入内存 store。
  */
 export async function parseClipItem(
     id: number,
     content: string,
     ts: number,
-    /** 降级软错误回调（AI 提取失败等，管道仍返回降级结果）；Ctrl+B 用它弹岛提示失败原因 */
+    /** 降级软错误回调（管线失败但已降级返回原文）；Ctrl+B 用它弹岛提示失败原因 */
     onSoftError?: (e: unknown) => void,
 ): Promise<SmartClipEntry> {
     const cached = entries.find((e) => e.id === id && e.content === content && e.configVersion === configVersion);

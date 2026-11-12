@@ -1,103 +1,62 @@
-import type { ClipExtractor } from '../entities';
+import type { ExtractRule } from '../entities';
 import dbService from '../db/dbService';
 
 /**
- * 提取器（原「预设」）：智能剪贴板里**单个内容的提取单元**。
+ * 自定义提取规则（单层模型，设计文档 .docs/ctrl-b-refactor-design.md §14）。
  *
- * 与「方案」的分工：
- * - 提取器 = 一个单元：一次正则/分隔符/AI 指令，产出 0..n 条片段（如"提取链接"）；
- * - 方案 = 集成体：按序引用多个提取器，把各自的产出合并成最终片段序列。
+ * 概念收敛：原「提取器（regex/separator/ai）+ 方案（成员编排 + body 模板）」两级模型
+ * 替换为「内置切分器（编译进代码、用户不可见）+ 用户自定义规则（可选列表）」。
  *
- * 存储：settings 表 KV `clip_extractors`（整表 JSON 数组）。数量少、无需迁移，
- * 与导航配置 `nav_tab_config` 同一模式；首次读取为空/损坏时用内置提取器 seed。
+ * 存储：settings 表 KV `clip_extract_rules`（{v, list, disabledAi}）。
+ * 旧键 `clip_extractors` 只读保留：首次读取时把自定义 regex/separator 迁移过来，
+ * 自定义 AI 提取器只计数（停用提示）不迁移执行。
  */
 
-export type Translator = (key: string) => string;
+/** settings 表 KV 键：单层提取规则 JSON */
+const RULES_KEY = 'clip_extract_rules';
+/** 旧键：提取器列表（提取器+方案时代），仅迁移读取，不删除 */
+const LEGACY_EXTRACTORS_KEY = 'clip_extractors';
 
-/** settings 表 KV 键：提取器列表 JSON */
-const EXTRACTORS_KEY = 'clip_extractors';
+/** KV 存储结构版本 */
+const SCHEMA_VERSION = 1;
+
+/** 自定义规则数量上限：规则按序执行，过多会拖慢每次 Ctrl+B 的本地切分 */
+export const MAX_EXTRACT_RULES = 10;
+
+interface StoredRules {
+    v: number;
+    /** KV 原文的列表（脏数据由 normalizeRule 逐项校验） */
+    list: unknown[];
+    /** 迁移时发现的、已停用的自定义 AI 提取器数量（设置页提示用） */
+    disabledAi: number;
+}
 
 /**
- * seed 版本：内置提取器集合或文案调整时 +1。加载时若存量版本更低，做一次对账：
- * - 移除已从内置集合中下线的内置项（如不再需要的默认提取器）；
- * - 把仍在的内置项刷新为当前语言的最新文案（自定义项不动）。
- * 注意：这会覆盖用户对内置项的手工编辑。
+ * 内置切分器：链接 → 邮箱 → 分词。编译进代码，用户不可见、不可编辑。
+ * id 参与片段习惯统计（`Segment.extractorId`），不可变更。
+ * 分词排在最后：用户自定义规则优先于默认分词（规则配置才有意义）。
  */
-const SEED_VERSION = 4;
+export const BUILTIN_SPLIT_RULES: readonly ExtractRule[] = [
+    { id: 'url_extract', name: 'URL', type: 'regex', expression: 'https?://\\S+', enabled: 1 },
+    { id: 'email_extract', name: 'Email', type: 'regex', expression: '[\\w.+-]+@[\\w-]+\\.[\\w.-]+', enabled: 1 },
+    { id: 'smart_tokenize', name: 'Tokenize', type: 'regex', expression: '([^\\n,，、]+)', enabled: 1 },
+];
 
-/** KV 存储结构：版本号 + 列表 */
-interface StoredExtractors {
-    v: number;
-    list: ClipExtractor[];
-}
+/** 内置切分器 id：按此顺序先跑（分词作为自定义规则之后的兜底） */
+const BUILTIN_PRECISE_IDS = ['url_extract', 'email_extract'] as const;
+
+/** 精确内置切分器（自定义规则之前执行） */
+export const BUILTIN_PRECISE_RULES: readonly ExtractRule[] = BUILTIN_SPLIT_RULES.filter(
+    (r) => (BUILTIN_PRECISE_IDS as readonly string[]).includes(r.id),
+);
+
+/** 分词兜底切分器（自定义规则之后执行） */
+export const BUILTIN_TOKENIZE_RULE: ExtractRule =
+    BUILTIN_SPLIT_RULES.find((r) => r.id === 'smart_tokenize')!;
 
 function uid(): string {
     if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
     return 'x-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
-}
-
-/** 内置提取器定义（i18n key + 内容）：seed 与「恢复内置」共用的唯一来源 */
-interface BuiltinExtractorDef {
-    id: string;
-    method: ClipExtractor['method'];
-    nameKey: string;
-    descKey: string;
-    sampleKey?: string;
-    /** 表达式：正则/分隔符直接给字面量；AI 走 instructionKey（i18n） */
-    expression?: string;
-    instructionKey?: string;
-}
-
-export const BUILTIN_EXTRACTOR_DEFS: BuiltinExtractorDef[] = [
-    {
-        id: 'url_extract',
-        method: 'regex',
-        nameKey: 'extractor.url_extract.name',
-        descKey: 'extractor.url_extract.desc',
-        expression: 'https?://\\S+',
-    },
-    {
-        id: 'email_extract',
-        method: 'regex',
-        nameKey: 'extractor.email_extract.name',
-        descKey: 'extractor.email_extract.desc',
-        expression: '[\\w.+-]+@[\\w-]+\\.[\\w.-]+',
-    },
-    {
-        id: 'smart_tokenize',
-        method: 'regex',
-        nameKey: 'extractor.smart_tokenize.name',
-        descKey: 'extractor.smart_tokenize.desc',
-        sampleKey: 'extractor.smart_tokenize.sample',
-        expression: '([^\\n,，、]+)',
-    },
-    {
-        id: 'ai_netdisk',
-        method: 'ai',
-        nameKey: 'extractor.ai_netdisk.name',
-        descKey: 'extractor.ai_netdisk.desc',
-        instructionKey: 'extractor.ai_netdisk.instruction',
-    },
-    {
-        id: 'ai_summarize',
-        method: 'ai',
-        nameKey: 'extractor.ai_summarize.name',
-        descKey: 'extractor.ai_summarize.desc',
-        instructionKey: 'extractor.ai_summarize.instruction',
-    },
-];
-
-/** 按当前语言生成内置提取器（id 固定 = 内置 def id，供「恢复内置」去重） */
-export function buildBuiltinExtractors(t: Translator): ClipExtractor[] {
-    return BUILTIN_EXTRACTOR_DEFS.map((d) => ({
-        id: d.id,
-        name: t(d.nameKey),
-        desc: t(d.descKey),
-        method: d.method,
-        expression: d.expression ?? (d.instructionKey ? t(d.instructionKey) : ''),
-        sample: d.sampleKey ? t(d.sampleKey) : '',
-        builtin: 1 as const,
-    }));
 }
 
 function str(v: unknown): string {
@@ -105,98 +64,133 @@ function str(v: unknown): string {
 }
 
 /** 反序列化兜底：脏数据（手改 KV）不导致设置页白屏 */
-function normalize(raw: unknown): ClipExtractor | null {
+function normalizeRule(raw: unknown): ExtractRule | null {
     if (!raw || typeof raw !== 'object') return null;
     const r = raw as Record<string, unknown>;
-    const method = r.method === 'separator' || r.method === 'ai' ? r.method : 'regex';
+    const expression = str(r.expression);
+    if (!expression.trim()) return null;
     return {
         id: str(r.id) || uid(),
         name: str(r.name),
-        desc: str(r.desc),
-        method,
-        expression: str(r.expression),
-        sample: str(r.sample),
-        builtin: r.builtin === 1 ? 1 : 0,
+        type: r.type === 'separator' ? 'separator' : 'regex',
+        expression,
+        enabled: r.enabled === 0 ? 0 : 1,
     };
 }
 
-/** 内置项对账：移除已下线的内置项，其余内置项刷新为当前语言最新文案（自定义项原样保留） */
-function reconcileBuiltinExtractors(list: ClipExtractor[], t: Translator): ClipExtractor[] {
-    const built = new Map(buildBuiltinExtractors(t).map((p) => [p.id, p]));
-    return list
-        .filter((p) => p.builtin !== 1 || built.has(p.id))
-        .map((p) => (p.builtin === 1 && built.has(p.id) ? { ...built.get(p.id)! } : p));
+/** 列表解析：兼容裸数组与 {v,list} 两种历史形态 */
+function parseList(raw: string): unknown[] {
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    const list = (parsed as { list?: unknown } | null)?.list;
+    return Array.isArray(list) ? list : [];
 }
 
-/**
- * 只读已存储的提取器（**不 seed、不翻译**）：处理层 smartClip 解析时使用，
- * 避免在管道里依赖 i18n（文案由设置页 seed 时确定）。
- */
-export async function readStoredExtractors(): Promise<ClipExtractor[]> {
+async function readStoredRules(): Promise<StoredRules | null> {
+    const raw = await dbService.getKeyValue(RULES_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    const obj = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+    return {
+        v: Number(obj.v) || SCHEMA_VERSION,
+        list: Array.isArray(obj.list) ? (obj.list as unknown[]) : [],
+        disabledAi: Number(obj.disabledAi) || 0,
+    };
+}
+
+/** 旧「提取器」列表（只读，供迁移）：字段做最小校验，非法项跳过 */
+async function readLegacyExtractors(): Promise<Array<{
+    id: string; name: string; method: string; expression: string; builtin: number;
+}>> {
     try {
-        const raw = await dbService.getKeyValue(EXTRACTORS_KEY);
+        const raw = await dbService.getKeyValue(LEGACY_EXTRACTORS_KEY);
         if (!raw) return [];
-        const parsed: unknown = JSON.parse(raw);
-        const list: unknown[] = Array.isArray(parsed)
-            ? parsed
-            : Array.isArray((parsed as StoredExtractors | null)?.list)
-                ? ((parsed as StoredExtractors).list as unknown[])
-                : [];
-        return list.map(normalize).filter((x): x is ClipExtractor => x !== null);
-    } catch (e) {
-        console.warn('[smart-clip] 读取提取器失败，按无提取器处理:', e);
+        return parseList(raw)
+            .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+            .map((x) => ({
+                id: str(x.id) || uid(),
+                name: str(x.name),
+                method: str(x.method) || 'regex',
+                expression: str(x.expression),
+                builtin: x.builtin === 1 ? 1 : 0,
+            }));
+    } catch {
         return [];
     }
 }
 
-/** 读取提取器列表；首次（KV 为空/损坏）用内置 seed 并落库，旧版本刷新内置文案 */
-export async function loadExtractors(t: Translator): Promise<ClipExtractor[]> {
+export interface ExtractRulesState {
+    rules: ExtractRule[];
+    /** 已停用的自定义 AI 提取器数量（>0 时设置页给出提示） */
+    disabledAiCount: number;
+}
+
+/**
+ * 读取自定义规则；新键不存在时执行一次性迁移（幂等：迁移完即写入新键，后续直读）。
+ * 迁移规则：内置项丢弃（由代码内置）；自定义 regex/separator 保留；自定义 ai 不迁移、只计数。
+ */
+export async function loadExtractRules(): Promise<ExtractRulesState> {
     try {
-        const raw = await dbService.getKeyValue(EXTRACTORS_KEY);
-        if (raw) {
-            const parsed: unknown = JSON.parse(raw);
-            const stored: StoredExtractors | null = Array.isArray(parsed)
-                ? { v: 1, list: parsed }
-                : parsed && typeof parsed === 'object' && Array.isArray((parsed as StoredExtractors).list)
-                    ? { v: Number((parsed as StoredExtractors).v) || 1, list: (parsed as StoredExtractors).list }
-                    : null;
-            if (stored) {
-                const list = stored.list.map(normalize).filter((x): x is ClipExtractor => x !== null);
-                if (list.length > 0) {
-                    if (stored.v < SEED_VERSION) {
-                        const refreshed = reconcileBuiltinExtractors(list, t);
-                        await persistExtractors(refreshed);
-                        return refreshed;
-                    }
-                    return list;
-                }
-            }
+        const stored = await readStoredRules();
+        if (stored) {
+            return {
+                rules: stored.list.map(normalizeRule).filter((x): x is ExtractRule => x !== null),
+                disabledAiCount: stored.disabledAi,
+            };
         }
+        const legacy = await readLegacyExtractors();
+        const rules = legacy
+            .filter((x) => x.builtin !== 1 && x.method !== 'ai')
+            .slice(0, MAX_EXTRACT_RULES)
+            .map((x) => ({
+                id: x.id,
+                name: x.name,
+                type: (x.method === 'separator' ? 'separator' : 'regex') as ExtractRule['type'],
+                expression: x.expression,
+                enabled: 1 as const,
+            }))
+            .filter((x) => x.expression.trim().length > 0);
+        const disabledAiCount = legacy.filter((x) => x.method === 'ai').length;
+        await dbService.setKeyValue(RULES_KEY, JSON.stringify({
+            v: SCHEMA_VERSION,
+            list: rules,
+            disabledAi: disabledAiCount,
+        }));
+        return { rules, disabledAiCount };
     } catch (e) {
-        console.warn('[smart-clip] 提取器读取失败，回退内置:', e);
+        console.warn('[smart-clip] 读取提取规则失败，按无自定义规则处理:', e);
+        return { rules: [], disabledAiCount: 0 };
     }
-    const seeded = buildBuiltinExtractors(t);
-    await persistExtractors(seeded);
-    return seeded;
 }
 
-/** 整体写回提取器列表，带当前 seed 版本号 */
-export async function persistExtractors(list: ClipExtractor[]): Promise<void> {
+/** 整体写回自定义规则（保留迁移时记录的停用计数，供设置页持续提示） */
+export async function persistExtractRules(list: ExtractRule[]): Promise<void> {
     try {
-        const payload: StoredExtractors = { v: SEED_VERSION, list };
-        await dbService.setKeyValue(EXTRACTORS_KEY, JSON.stringify(payload));
+        const stored = await readStoredRules().catch(() => null);
+        await dbService.setKeyValue(RULES_KEY, JSON.stringify({
+            v: SCHEMA_VERSION,
+            list: list.slice(0, MAX_EXTRACT_RULES),
+            disabledAi: stored?.disabledAi ?? 0,
+        }));
     } catch (e) {
-        console.error('[smart-clip] 提取器写入失败:', e);
+        console.error('[smart-clip] 提取规则写入失败:', e);
     }
 }
 
-/** 当前列表中缺失的内置提取器（按 id 判定，已存在/已改过的不覆盖） */
-export function missingBuiltinExtractors(list: ClipExtractor[], t: Translator): ClipExtractor[] {
-    const has = new Set(list.map((p) => p.id));
-    return buildBuiltinExtractors(t).filter((p) => !has.has(p.id));
+/** 新建空白规则 */
+export function createExtractRule(name: string): ExtractRule {
+    return { id: uid(), name, type: 'regex', expression: '', enabled: 1 };
 }
 
-/** 新建空白提取器 */
-export function createExtractor(name: string): ClipExtractor {
-    return { id: uid(), name, desc: '', method: 'regex', expression: '', sample: '', builtin: 0 };
+/** 规则可用性：空表达式、非法正则都视为不可执行（设置页标红，执行时跳过） */
+export function isExtractRuleValid(rule: ExtractRule): boolean {
+    const expression = rule.expression.trim();
+    if (!expression) return false;
+    if (rule.type === 'separator') return true;
+    try {
+        new RegExp(expression);
+        return true;
+    } catch {
+        return false;
+    }
 }

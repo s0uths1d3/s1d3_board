@@ -163,3 +163,18 @@ export interface ClipExtractor {
     /** 是否内置：仅用于角标与「恢复内置」补齐，不限制编辑/删除 */
     builtin: 0 | 1;
 }
+
+/**
+ * 智能剪贴板：**自定义提取规则**（单层模型，取代「提取器 + 方案」两级概念）。
+ *
+ * - 内置切分器（链接/邮箱/分词）编译进代码、用户不可见，不属于本结构；
+ * - type 只允许 regex / separator，从类型层面杜绝隐式 AI 调用（规则不得联网）；
+ * - 执行顺序 = 列表顺序，**首个产出 ≥2 段的规则生效**（first-match-wins）。
+ */
+export interface ExtractRule {
+    id: string;
+    name: string;
+    type: 'regex' | 'separator';
+    expression: string;
+    enabled: 0 | 1;
+}

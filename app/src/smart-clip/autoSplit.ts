@@ -368,7 +368,20 @@ export function detectStructured(raw: string): StructuredLayer | null {
     }
 }
 
-export function autoSplit(raw: string): Segment[] {
+/**
+ * 扩展切分器：内置切分器与用户自定义规则统一成该签名，返回 null = 本层不命中。
+ * 调用方（pipeline）按「内置精确 → 自定义规则 → 内置分词」组装，命中即停止。
+ */
+export type LocalSplitter = (content: string) => Segment[] | null;
+
+/**
+ * 本地切分管线（设计文档 §14.1）：
+ * 结构层 → 技术/代码保护 → 扩展切分器（optional，按序首个产出 ≥2 段即采用）
+ * → 简单词串 → 短文本拆词 → 关键词 → 超长分块 → 原文单段。
+ *
+ * `autoSplit` = 无扩展切分器的纯智能切分（行为与改造前完全一致）。
+ */
+export function splitLocal(raw: string, splitters: LocalSplitter[] = []): Segment[] {
     try {
         const content = sanitize(raw);
         if (!content) return single(raw);
@@ -382,6 +395,14 @@ export function autoSplit(raw: string): Segment[] {
         // 代码相关（代码形态 token 占比 ≥ 20%）不分词：跳过空格拆词与关键词提取，
         // 结构层切分（多行/JSON/路径/分隔符）保留——对代码仍是正确粒度；预判落 tech
         const codeRelated = isCodeRelated(content);
+
+        // 技术/代码保护之后的扩展切分（内置链接/邮箱切分器、用户自定义规则、内置分词）
+        if (!codeRelated) {
+            for (const split of splitters) {
+                const segments = split(content);
+                if (segments && segments.length >= 2) return segments;
+            }
+        }
 
         // 简单词串直拆：无句读的空格词串（含 20~60 字区间）本地按空格切分，不走 AI（仅非代码内容）
         if (!codeRelated && isSimpleWords(content)) return toSegments(clean(content.split(/\s+/)));
@@ -406,4 +427,9 @@ export function autoSplit(raw: string): Segment[] {
         console.error('[smart-clip] 智能切分失败，降级为原文单段:', e);
         return single(raw);
     }
+}
+
+/** 纯智能切分（无用户规则）：与改造前行为完全一致 */
+export function autoSplit(raw: string): Segment[] {
+    return splitLocal(raw);
 }

@@ -1,4 +1,4 @@
-import type { ClipExtractor, ClipScheme } from '../entities';
+import type { ExtractRule } from '../entities';
 
 /**
  * 智能剪贴板类型定义（设计文档 §2/§4）
@@ -16,17 +16,16 @@ export interface Segment {
     extractorId?: string;
 }
 
-/** 处理开关（settings: smart_clip_mode）：off 关闭直通原文 / on 开启单一管线
- *  （有启用中的默认方案 → 执行方案并保留降级；无方案 = 纯智能切分） */
+/** 处理开关（settings: smart_clip_mode）：off 关闭直通原文 / on 开启单层管线 */
 export type SmartClipMode = 'off' | 'on';
 
 /** 一次复制事件解析所需的配置快照（由设置页变更时推送，避免每次解析都查库） */
 export interface ProcessContext {
     mode: SmartClipMode;
-    /** 默认方案（多个提取器的集成体）；on 态的叠加加工层，null = 纯智能切分 */
-    scheme: ClipScheme | null;
-    /** 方案引用的提取器全集（按 id 解析成员） */
-    extractors: ClipExtractor[];
+    /** 用户自定义提取规则（内置切分器编译在代码里，不在此列表） */
+    rules: ExtractRule[];
+    /** 本地切分开关（settings: local_split_enabled）；AI 关键字关闭时强制为 false（设计文档 §23 互斥约束） */
+    splitEnabled: boolean;
 }
 
 /** 最近解析结果内存条目（气泡窗口消费） */
@@ -36,8 +35,8 @@ export interface SmartClipEntry {
     content: string;
     segments: Segment[];
     ts: number;
-    /** 解析时使用的配置版本（mode/rule/template 快照版本号）：
-     *  规则或模板变更后版本号递增，据此判定缓存结果已过期需重解析 */
+    /** 解析时使用的配置版本（mode/rule 快照版本号）：
+     *  规则变更后版本号递增，据此判定缓存结果已过期需重解析 */
     configVersion?: number;
 }
 
@@ -48,4 +47,4 @@ export interface CopyEventDetail {
     ts: number;
 }
 
-export type { ClipScheme, ClipExtractor };
+export type { ExtractRule };

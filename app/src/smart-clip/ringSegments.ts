@@ -54,17 +54,22 @@ export function normalizeSegments(
 }
 
 /**
- * AI 产出（关键词 + 总结）并入基础片段：仅返回去重后的**新增**部分（总结排最后），
- * 总长度封顶 cap，调用方直接追加到基础列表尾部。
+ * AI 产出（关键词 + 要点 + 总结）并入基础片段：仅返回去重后的**新增**部分，
+ * 固定顺序「关键词 → 要点 → 总结」（总结排最后），总长度封顶 cap，
+ * 调用方直接追加到基础列表尾部。要点为可选字段（旧缓存无此项）。
  */
 export function mergeAiSegments(
     base: RingSegment[],
-    outcome: { keywords: string[]; summary: string },
+    outcome: { keywords: string[]; bullets?: string[]; summary: string },
     cap: number = RING_MAX_SEGMENTS,
 ): RingSegment[] {
     const seen = buildSeen(base);
     const added: RingSegment[] = [];
-    const candidates = [...outcome.keywords, ...(outcome.summary ? [outcome.summary] : [])];
+    const candidates = [
+        ...outcome.keywords,
+        ...(outcome.bullets ?? []),
+        ...(outcome.summary ? [outcome.summary] : []),
+    ];
     for (const text of candidates) {
         if (base.length + added.length >= cap) break;
         const trimmed = text.trim();
