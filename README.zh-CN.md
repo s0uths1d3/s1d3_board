@@ -46,13 +46,39 @@ S1d3 Board 想做的不是"再来一个效率应用"，而是把这些高频琐�
 
 ## 🖼️ 界面预览
 
-| 剪贴板 | 待办 |
-|:---:|:---:|
-| ![剪贴板](.docs/images/clips.png) | ![待办](.docs/images/todos.png) |
-| **便签** | **常用剪贴板** |
-| ![便签](.docs/images/notes.png) | ![常用剪贴板](.docs/images/pinned.png) |
-| **统计** | **应用时长** |
-| ![统计](.docs/images/stats.png) | ![应用时长](.docs/images/app_usage.png) |
+<p align="center"><sub>以下动图均由公开示例数据生成，不含个人剪贴板内容或本地截屏；点击任意图片可查看全尺寸动图。</sub></p>
+
+<p align="center">
+  <a href=".docs/images/clipboard.gif"><img src=".docs/images/clipboard.gif" width="800" alt="剪贴板：搜索、高亮与粘贴"></a><br>
+  <sub><b>剪贴板</b> — 即时搜索、命中高亮与键盘粘贴</sub>
+</p>
+
+<p align="center">
+  <a href=".docs/images/todos.gif"><img src=".docs/images/todos.gif" width="800" alt="待办：勾选任务并更新进度"></a><br>
+  <sub><b>待办</b> — 勾选任务、实时进度与提醒</sub>
+</p>
+
+<p align="center">
+  <a href=".docs/images/notes.gif"><img src=".docs/images/notes.gif" width="800" alt="便签：新建并保存便签"></a><br>
+  <sub><b>便签</b> — 彩色便签与就地新建</sub>
+</p>
+
+<p align="center">
+  <a href=".docs/images/pinned.gif"><img src=".docs/images/pinned.gif" width="800" alt="常用剪贴板：方向键选择并粘贴"></a><br>
+  <sub><b>常用剪贴板</b> — 方向键选择与一键粘贴</sub>
+</p>
+
+<p align="center">
+  <a href=".docs/images/statistics.gif"><img src=".docs/images/statistics.gif" width="800" alt="统计：切换时间范围"></a><br>
+  <sub><b>统计</b> — 范围切换、活跃趋势与趣味数据</sub>
+</p>
+
+<p align="center">
+  <a href=".docs/images/app-usage.gif"><img src=".docs/images/app-usage.gif" width="800" alt="应用时长：切换时间范围"></a><br>
+  <sub><b>应用时长</b> — 前台时长、环形图与应用排行</sub>
+</p>
+
+<sub>所有预览均由 <a href="scripts/readme-shots/generate.py"><code>scripts/readme-shots/generate.py</code></a> 可复现生成（Chrome/Edge + Pillow），统一为 1120×700 画布；示例数据为虚构内容或来自 MDN、RFC 9110、npm 文档与 <code>vuejs/core</code> 仓库等公开来源。</sub>
 
 ## 🎯 核心功能
 

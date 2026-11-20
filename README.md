@@ -45,13 +45,39 @@ It isn't a window you keep open all day. It stays in the tray until a global sho
 
 ## 🖼️ Screenshots
 
-| Clipboard | Todos |
-|:---:|:---:|
-| ![Clipboard](.docs/images/clips.png) | ![Todos](.docs/images/todos.png) |
-| **Notes** | **Pinned clips** |
-| ![Notes](.docs/images/notes.png) | ![Pinned clips](.docs/images/pinned.png) |
-| **Statistics** | **App usage** |
-| ![Statistics](.docs/images/stats.png) | ![App usage](.docs/images/app_usage.png) |
+<p align="center"><sub>Animated previews generated from public sample data — no personal clipboard history or local captures. Click any preview to open the full-size GIF.</sub></p>
+
+<p align="center">
+  <a href=".docs/images/clipboard.gif"><img src=".docs/images/clipboard.gif" width="800" alt="Clipboard: search, highlight and paste"></a><br>
+  <sub><b>Clipboard</b> — instant search, match highlighting and keyboard paste</sub>
+</p>
+
+<p align="center">
+  <a href=".docs/images/todos.gif"><img src=".docs/images/todos.gif" width="800" alt="Todo: check off a task and update progress"></a><br>
+  <sub><b>Todo</b> — check off tasks, live progress and reminders</sub>
+</p>
+
+<p align="center">
+  <a href=".docs/images/notes.gif"><img src=".docs/images/notes.gif" width="800" alt="Notes: create and save a note"></a><br>
+  <sub><b>Notes</b> — color-coded notes with inline creation</sub>
+</p>
+
+<p align="center">
+  <a href=".docs/images/pinned.gif"><img src=".docs/images/pinned.gif" width="800" alt="Pinned clips: arrow-key selection and paste"></a><br>
+  <sub><b>Pinned clips</b> — arrow-key selection and one-key paste</sub>
+</p>
+
+<p align="center">
+  <a href=".docs/images/statistics.gif"><img src=".docs/images/statistics.gif" width="800" alt="Statistics: switch time ranges"></a><br>
+  <sub><b>Statistics</b> — range switching, activity trends and fun facts</sub>
+</p>
+
+<p align="center">
+  <a href=".docs/images/app-usage.gif"><img src=".docs/images/app-usage.gif" width="800" alt="App usage: switch time ranges"></a><br>
+  <sub><b>App usage</b> — foreground time, donut chart and app ranking</sub>
+</p>
+
+<sub>Every preview is generated reproducibly by <a href="scripts/readme-shots/generate.py"><code>scripts/readme-shots/generate.py</code></a> (Chrome/Edge + Pillow). All frames share the same 1120×700 canvas; the sample data is fictional or drawn from public sources such as MDN, RFC 9110, npm docs and the <code>vuejs/core</code> repository.</sub>
 
 ## 🎯 Core features
 
