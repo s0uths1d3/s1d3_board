@@ -12,6 +12,7 @@
 | 设置搜索 | 跨分组搜索，右侧直接列出命中项（可经「前往分组」落到具体分组）；分组静态清单单一来源 `settingGroups.ts`，与全局搜索面板共用 | 设置页搜索框 / `Ctrl+P` |
 | 快捷键管理 | 逐项录制（按下新键，Esc 取消）/ 启停 / 重置（仅修改过的项显示重置钮）；全局组与局部组 + 两组数字粘贴折叠组（一键开启/关闭/还原）；冲突检测、注册失败标红与回滚 | 设置 → 快捷键设置 |
 | 配色主题 | 跟随系统（默认）/ 琥珀 / 浅色 / 深色；托盘菜单与全部子窗口同步换肤，窗口原生主题跟随 | 设置 → 通用设置 → 外观 |
+| 主题方案管理 | 自定义主题（第五档 `custom`）：三锚点编辑（底色/主色/文字色）、实时预览与对比度校验、命名模板（最多 24）、快捷起点、浅/深双变体 | 设置 → 通用设置 → 外观 |
 | 语言 | 跟随系统 / 中文 / English；切换后跨窗口同步刷新 | 设置 → 通用设置 → 外观 |
 | 蒙版模糊度 | 全局面板蒙层背景模糊强度（0-1，默认 1；0 回归纯半透明黑） | 设置 → 通用设置 → 外观 |
 | 节日彩蛋 | 节日限时主题总开关（默认开），控制灵动岛换装与主窗口点缀 | 设置 → 通用设置 → 外观 |
@@ -56,7 +57,18 @@
 - 同时驱动 Rust 原生托盘菜单深浅色（Windows SetPreferredAppMode，菜单需重建才生效）与各窗口原生主题（标题栏/原生控件；跟随系统模式传 null 恢复系统跟随）。
 - 快速切换命令 `cycle_color_scheme` 循环四模式（默认未绑定键，用户可自行录制）。
 
-见 `app/composables/useColorScheme.ts:64`（setColorScheme 124、cycleColorScheme 139）。
+见 `app/composables/useColorScheme.ts`（setColorScheme / cycleColorScheme）。
+
+### 自定义主题方案（第五档）
+- `color_scheme` 新增 `custom`，外观分组内嵌面板常驻；原四档（跟随系统/米色/浅色/深色）与 `cycle_color_scheme` 循环保持原样，分段控件多出第五档。
+- 只暴露三个锚点（底色 = `primary`、主色 = `accent`、文字色 = `ink`），其余令牌由 `deriveTokens` 感知派生；深色变体由浅色锚点自动推导（保留色相、调整明度）。
+- 文字/主色自动修正到 4.5:1；黑白都无法达标的组合（如中灰底）阻断「应用此主题」。
+- 「应用此主题」写入独立的工作主题（`theme_working_v1`，不占模板名额）；「我的模板」同名覆盖，最多 24 套；快捷起点（墨绿/靛蓝/赭石）只读入锚点、不落库。
+- 模板行 hover 浮现删除图标，删除需经确认框二次确认，结果以灵动岛提示；面板操作反馈统一走灵动岛。系统明暗切换只重注入变量，不刷新页面。
+- 令牌白名单见 `app/src/theme/themeTokens.ts`，运行时以 `<html>` 内联 CSS 变量注入（RGB 通道）；切回内置主题时逐项清除，无颜色残留。
+- 存储以 settings KV 为准（`theme_custom_themes_v1` / `theme_working_v1` / `theme_active_id_v1`），localStorage 快照保障首帧；跨窗口广播 `theme:changed`。
+
+见 `app/composables/useTheme.ts`、`app/src/theme/`。
 
 ### 语言（i18n）
 - 语言模式持久化到 settings KV（`app_locale`，默认 system）；system 模式按 `navigator.language` 探测（zh* → zh-cn，其余 → en-us）。

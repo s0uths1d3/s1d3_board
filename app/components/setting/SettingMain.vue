@@ -106,7 +106,8 @@ import { useIslandEnabled, setIslandEnabled, useIslandTiming, ensureIslandTiming
 import { setFestivalEggEnabled, useFestivalEggEnabled } from '~/festival-eggs';
 import { useMaskBlur, ensureMaskBlurLoaded, setMaskBlur, MASK_BLUR_DEFAULT } from '~/composables/useMaskBlur';
 import { usePopupPosition, setPopupPositionMode, type PopupPositionMode } from '~/composables/usePopupPosition';
-import { useColorScheme, setColorScheme, COLOR_SCHEME_LABELS, COLOR_SCHEME_ORDER, type ColorSchemeMode } from '~/composables/useColorScheme';
+import { useColorScheme, setColorScheme, type ColorSchemeMode } from '~/composables/useColorScheme';
+import { useTheme } from '~/composables/useTheme';
 import { useI18n, setLocaleMode, LOCALES, type LocaleMode } from '~/composables/useI18n';
 import { briefAiError, parseAiError } from '~/utils/aiError';
 import { useTodoSmartRemind, setTodoSmartRemindEnabled } from '~/composables/useTodoSmartRemind';
@@ -131,6 +132,7 @@ import appIcon from '~/assets/icon/icon.png';
 import authorAvatarS1d3 from '~/assets/authtor_avator/79643224.png';
 import authorAvatarZhang from '~/assets/authtor_avator/18749843.png';
 import ShortcutRow from '~/components/setting/ShortcutRow.vue';
+import ThemeManager from '~/components/theme/ThemeManager.vue';
 import HighlightText from '~/components/mainpage/HighlightText.vue';
 
 const osType = ref('');
@@ -143,14 +145,21 @@ const aiKeyPlaintext = ref(false);
 const maxLimit = ref('');
 /** 图片缓存磁盘上限（MB）：留空/无效时清理策略回落默认 256MB（DEFAULT_IMAGE_CACHE_MB） */
 const imageLimit = ref('');
-// ===== 配色：琥珀（当前暖米色）/ 跟随系统 / 浅色 / 深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 =====
+// ===== 配色：跟随系统 / 米色 / 浅色 / 深色 / 自定义，与标题栏按钮共用同一状态 =====
 const { scheme } = useColorScheme();
-const colorSchemeOptions = computed(() => COLOR_SCHEME_ORDER.map(value => ({ value, label: t(`color_scheme.${value}`) })));
-const colorSchemeLabel = computed(() => t(`color_scheme.${scheme.value}`));
+const { ensureCustomApplied } = useTheme();
+/** 外观分段控件用五档（快捷键循环仍只走原四档） */
+const COLOR_SCHEME_UI_ORDER: ColorSchemeMode[] = ['system', 'default', 'light', 'dark', 'custom'];
+const colorSchemeOptions = computed(() => COLOR_SCHEME_UI_ORDER.map(value => ({ value, label: t(`color_scheme.${value}`) })));
 async function selectColorScheme(value: ColorSchemeMode) {
   if (scheme.value === value) return;
-  await setColorScheme(value);
+  // 首次切到自定义：没有可用主题时先以默认锚点落一套，避免落到空白自定义态
+  if (value === 'custom') await ensureCustomApplied();
+  else await setColorScheme(value);
   showHint(t('setting.general.color_scheme_saved', { name: t(`color_scheme.${value}`) }));
+}
+function onColorSchemeChange(value: string) {
+  void selectColorScheme(value as ColorSchemeMode);
 }
 // ===== 语言：跟随系统 / 中文 / English（useI18n 统一管理，含首次系统探测与跨窗口同步）=====
 const { localeMode, t } = useI18n();
@@ -775,10 +784,11 @@ function selectAiProvider(v: string) {
   const opt = AI_PROVIDER_OPTIONS.value.find(o => o.value === v);
   showHint(t('setting.general.ai_provider_saved', { name: opt?.label ?? v }));
 }
-/** 宽控件设置项：控件需要整行宽度（纵向布局，标签在上）——AI 提供商（分段器 + 自定义 JSON 编辑器） */
+/** 宽控件设置项：控件需要整行宽度（纵向布局，标签在上）——配色分段器 / AI 提供商 / 忽略名单 */
 function isWideSettingItem(item: { label: string }): boolean {
-  // AI 提供商（分段器 + JSON 编辑器）/ 来源应用忽略名单（展开管理面板）：纵向布局占满整行
-  return item.label === 'setting.general.ai_provider' || item.label === 'setting.general.ignored_apps';
+  return item.label === 'setting.general.color_scheme'
+    || item.label === 'setting.general.ai_provider'
+    || item.label === 'setting.general.ignored_apps';
 }
 watch(aiProvider, (val) => {
   debouncePersist('ai_provider', () => dbService.setKeyValue('ai_provider', val));
@@ -2028,8 +2038,8 @@ onMounted(async () => {
               :data-reorder-key="setting.title"
               @pointerdown="settingReorder.pressStart(setting.title, $event)"
           >
-            <!-- 选中指示竖条：叠于按钮左缘内侧（Tailwind v4 important 为后缀语法，
-                 叠加 btn-soft 难以保证覆盖——选中态改用完整独立样式类，零优先级冲突） -->
+            <!-- 选中指示竖条：叠于按钮左缘内侧；选中态用主色实底 + on-gold 文字，
+                 让主题主色在导航区形成清晰、可读的色块（10% 点缀层） -->
             <span
                 v-if="isGroupActive(setting)"
                 class="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-full bg-gold"
@@ -2414,15 +2424,26 @@ onMounted(async () => {
             <!-- 子分组分节卡片：每子组一张（标题行 + 该节设置项）；
                  无命中项的子组（如搜索空结果）不渲染空卡片 -->
             <template v-for="(child, ci) in displaySetting.children ?? []" :key="ci">
-              <ul v-if="child.items.length" class="glass-card relative z-10 rounded-2xl shadow-soft">
+              <ul
+                  v-if="child.items.length"
+                  class="glass-card relative z-10 rounded-2xl shadow-soft"
+                  :class="child.title === 'setting.subgroups.appearance'
+                    ? 'before:absolute before:inset-x-6 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-gold/50 before:to-transparent before:content-[\'\']'
+                    : ''"
+              >
               <li class="border-b border-accent p-4 pb-2 text-xs uppercase tracking-wide text-ink-faint">
                 {{ t(child.title) }}
+                <div
+                    v-if="child.title === 'setting.subgroups.appearance'"
+                    class="mt-1 text-xs font-normal normal-case leading-relaxed tracking-normal text-ink-soft"
+                >{{ t('setting.subgroups.appearance_desc') }}</div>
               </li>
-              <!-- 宽控件项（AI 提供商：分段器 + JSON 编辑器）纵向布局占满整行，其余保持左标签右控件两栏 -->
-              <li v-for="(item, itemIndex) in child.items" :key="itemIndex"
+              <!-- 宽控件项（配色分段器 / AI 提供商：分段器 + JSON 编辑器）纵向布局占满整行，其余保持左标签右控件两栏 -->
+              <template v-for="(item, itemIndex) in child.items" :key="itemIndex">
+              <li
                   class="p-4"
                   :class="isWideSettingItem(item) ? 'flex flex-col items-stretch gap-2' : 'flex flex-wrap items-center justify-between gap-4'">
-                <div>
+                <div v-if="item.label !== 'setting.general.color_scheme' || searchMode">
                   <!-- 图片缓存折叠：label 行本身即点击区（与其他设置行同构，箭头内联在名称前，不引入额外按钮盒撑高行距） -->
                   <div
                       v-if="item.type === 'input' && item.label === 'setting.general.image_limit'"
@@ -2495,7 +2516,7 @@ onMounted(async () => {
                   <!-- 数据备份：导出 JSON（图片以 dataUrl 自包含），一键换机迁移；
                        范围说明（备份不含设置与快捷键）走 v-tip：贴按钮弹出、自动避让，不再压住下方行 -->
                   <template v-else-if="item.type === 'action' && item.label === 'setting.general.export_data'">
-                    <button type="button" class="btn-soft w-full"
+                    <button type="button" class="btn-soft w-full disabled:opacity-50"
                             v-tip="t('setting.general.export_scope_note')"
                             :disabled="exportingData" @click="exportData">
                       {{ exportingData ? t('setting.general.export_data_doing') : t('setting.general.export_data') }}
@@ -2724,7 +2745,7 @@ onMounted(async () => {
                         <input
                             v-model="ignoredAppInput"
                             type="text"
-                            class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-3 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                            class="min-w-0 flex-1 rounded-lg border border-line bg-surface-field px-3 py-1.5 text-xs text-ink outline-none focus:border-gold"
                             :placeholder="t('setting.general.ignored_apps_input_hint')"
                             @keydown.enter="addManualIgnoredApp"
                             @focus="appSuggestOpen = true"
@@ -3073,33 +3094,42 @@ onMounted(async () => {
                       :placeholder="t('setting.general.mask_blur_placeholder')"
                       @save="saveMaskBlur"
                   />
-                  <!-- 配色：琥珀/跟随系统/浅色/深色，与标题栏按钮、配色快捷键（默认不绑定）共用同一状态 -->
+                  <!-- 配色：跟随系统 / 米色 / 浅色 / 深色 / 自定义（全宽分段控件） -->
+                  <UiSegmented
+                      v-else-if="item.type === 'select' && item.label === 'setting.general.color_scheme'"
+                      :model-value="scheme"
+                      :options="colorSchemeOptions"
+                      block
+                      :label="t('setting.general.color_scheme')"
+                      @update:model-value="onColorSchemeChange"
+                  />
+                  <!-- 其余下拉项（语言等） -->
                   <UiDropdown
                       v-else-if="item.type === 'select'"
                       class="w-full"
                       align="end"
                       match-trigger-width
-                      :aria-label="t('setting.general.color_scheme')"
+                      :aria-label="t('setting.general.locale')"
                       panel-class="glass-card menu w-full rounded-2xl p-2"
                   >
                     <template #trigger="{ open }">
                       <button type="button" tabindex="-1" class="btn-soft flex w-full items-center justify-between rounded-xl border border-accent bg-surface-field px-3 py-2 text-ink">
-                        <span>{{ colorSchemeLabel }}</span>
+                        <span>{{ localeLabel }}</span>
                         <svg class="h-4 w-4 opacity-60 transition-transform duration-200" :class="open ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                           <path d="m6 9 6 6 6-6" />
                         </svg>
                       </button>
                     </template>
                     <ul class="menu p-2">
-                      <li v-for="opt in colorSchemeOptions" :key="opt.value">
+                      <li v-for="opt in localeOptions" :key="opt.value">
                         <button
                             type="button"
                             class="flex w-full items-center justify-between rounded-xl"
-                            :class="scheme === opt.value ? 'text-gold' : ''"
-                            @click="selectColorScheme(opt.value)"
+                            :class="localeMode === opt.value ? 'text-gold' : ''"
+                            @click="selectLocale(opt.value)"
                         >
                           <span>{{ opt.label }}</span>
-                          <svg v-if="scheme === opt.value" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <svg v-if="localeMode === opt.value" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M20 6 9 17l-5-5" />
                           </svg>
                         </button>
@@ -3194,6 +3224,14 @@ onMounted(async () => {
                   </div>
                 </div>
               </li>
+              <!-- 外观分组：配色分段器正下方直接内嵌自定义主题面板 -->
+              <li
+                  v-if="child.title === 'setting.subgroups.appearance' && item.label === 'setting.general.color_scheme' && !searchMode"
+                  class="border-t border-accent p-4"
+              >
+                <ThemeManager />
+              </li>
+              </template>
               </ul>
             </template>
 
