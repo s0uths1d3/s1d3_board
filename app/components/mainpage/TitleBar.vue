@@ -184,6 +184,7 @@ const schemeDot: Record<ColorSchemeMode, string> = {
   default: '#c4a77d',
   light: '#dfe3ea',
   dark: '#3a352e',
+  custom: 'linear-gradient(135deg, rgb(var(--c-gold)) 50%, rgb(var(--c-surface-field)) 50%)',
 };
 const { t } = useI18n();
 async function onSchemeClick() {
@@ -236,7 +237,7 @@ onBeforeUnmount(() => {
             :data-reorder-key="tab.key"
             class="nav-tab flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-all duration-300 ease-soft"
             :class="[
-              activeTab === tab.key ? 'is-active text-gold' : 'text-ink-soft hover:text-ink',
+              activeTab === tab.key ? 'is-active bg-gold/10 text-gold' : 'text-ink-soft hover:text-ink',
               draggingTabKey === tab.key ? 'relative z-10 scale-110 opacity-60 cursor-grabbing shadow-float' : '',
               dragOverTab === tab.key ? 'ring-2 ring-gold/70 bg-gold/10' : ''
             ]"

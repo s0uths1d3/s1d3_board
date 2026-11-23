@@ -2,7 +2,7 @@
   <div
       class="glass-card todo-item group rounded-2xl p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
       :class="[
-        selected ? '!border-gold ring-2 ring-gold/60 bg-gold/10 shadow-[0_0_22px_-2px_rgba(196,167,125,0.6)]' : '',
+        selected ? '!border-gold ring-2 ring-gold/60 bg-gold/10 shadow-[0_0_22px_-2px_rgb(var(--c-gold)/0.6)]' : '',
         // 回收站多选勾选态（Ctrl+点击 加选 / Shift+点击 范围选）：金色描边，与便签批量态同视觉语言
         batchSelected ? '!border-gold ring-2 ring-gold/50' : '',
         // 手动排序拖拽落点指示：before/after 高亮卡片，child（变子任务）金色描边
@@ -45,7 +45,7 @@
             <Transition name="check-pop">
               <svg
                   v-if="visualCompleted"
-                  class="h-3 w-3 text-white"
+                  class="h-3 w-3 text-on-gold"
                   fill="none" stroke="currentColor" viewBox="0 0 24 24"
                   stroke-width="3"
               >
@@ -421,7 +421,7 @@
             :class="child.completed === 1 ? 'border-gold bg-gold' : 'border-line bg-surface-field hover:border-gold'"
         >
           <input type="checkbox" :checked="child.completed === 1" class="sr-only" @change="$emit('toggle', child.id)" />
-          <svg v-if="child.completed === 1" class="h-2.5 w-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+          <svg v-if="child.completed === 1" class="h-2.5 w-2.5 text-on-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
             <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </label>

@@ -63,7 +63,8 @@
   --c-line: 203 191 169;
   --c-gold: 196 167 125;
   --c-gold-soft: 217 195 163;
-  --c-on-gold: 255 255 255;
+  /* 琥珀主色明度较高，实底按钮/选中态用深墨字保证 ≥4.5:1（原白字仅约 2.2:1） */
+  --c-on-gold: 27 28 30;
   --c-ink: 74 68 56;
   --c-ink-soft: 107 99 84;
   --c-ink-faint: 154 144 128;
@@ -158,6 +159,13 @@
   --glass-border-alpha: 0.08;
   --tip-bg: 223 225 229;
   --tip-text: 30 31 34;
+}
+
+/* 自定义主题（第五档）：令牌由 src/theme/themeApply.ts 在 <html> 上内联注入，
+   浅/深变体随系统或用户策略切换。此选择器仅作兜底：变量未注入时沿用
+   :root 暖米色，保证任何情况下界面都可读。 */
+[data-scheme='custom'] {
+  color-scheme: light;
 }
 
 /* 全局背景：斜向渐变 + 两处大尺寸光晕（颜色随配色切换） */
@@ -448,10 +456,10 @@ body.note-drag-selecting * {
 /* Ctrl+Enter 保存成功：金色光晕向外扩散脉冲 */
 @keyframes note-saved-pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(196, 167, 125, 0.55);
+    box-shadow: 0 0 0 0 rgb(var(--c-gold) / 0.55);
   }
   100% {
-    box-shadow: 0 0 0 14px rgba(196, 167, 125, 0);
+    box-shadow: 0 0 0 14px rgb(var(--c-gold) / 0);
   }
 }
 .note-saved {

@@ -296,7 +296,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <div v-else-if="line.kind === 'checklist'" class="flex items-start gap-1.5">
               <span
                   class="mt-[3px] flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border"
-                  :class="line.checked ? 'border-gold bg-gold text-white' : 'border-ink-faint/60'"
+                  :class="line.checked ? 'border-gold bg-gold text-on-gold' : 'border-ink-faint/60'"
               >
                 <svg v-if="line.checked" class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
               </span>

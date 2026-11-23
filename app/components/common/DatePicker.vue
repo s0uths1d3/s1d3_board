@@ -564,9 +564,9 @@ const clearable = computed(() => hasValue.value);
                     isDisabled(d) ? 'cursor-not-allowed opacity-30' : 'hover:bg-secondary',
                     isToday(d) && !isSelected(d) && !isRangeEdge(d) ? 'border border-gold text-gold' : '',
                     // 区间模式：端点实心 + 区间中段浅金；普通模式：单值实心
-                    props.range && isRangeEdge(d) ? 'bg-gold font-semibold text-white shadow-soft' : '',
+                    props.range && isRangeEdge(d) ? 'bg-gold font-semibold text-on-gold shadow-soft' : '',
                     props.range && inRange(d) && !isRangeEdge(d) ? 'rounded-none bg-gold/25 text-ink' : '',
-                    !props.range && isSelected(d) ? 'bg-gold font-semibold text-white shadow-soft' : '',
+                    !props.range && isSelected(d) ? 'bg-gold font-semibold text-on-gold shadow-soft' : '',
                   ]"
                   :disabled="isDisabled(d)"
                   @mousedown="onDayDown(d)"

@@ -3,7 +3,7 @@
       ref="cardEl"
       class="sticky-note-card glass-card group relative flex min-h-[200px] flex-col rounded-2xl border p-4 shadow-soft transition-all duration-300 ease-soft hover:-translate-y-1 hover:shadow-float"
       :class="[
-        selected ? '!border-gold ring-2 ring-gold/60 shadow-[0_0_22px_-2px_rgba(196,167,125,0.6)]' : '',
+        selected ? '!border-gold ring-2 ring-gold/60 shadow-[0_0_22px_-2px_rgb(var(--c-gold)/0.6)]' : '',
         saved ? 'note-saved' : '',
         batchMode && batchSelected ? '!border-gold ring-2 ring-gold/50' : '',
         // 拖出钉桌：拖动中原卡片半透明缩小让位给幽灵卡，光标抓手
@@ -22,7 +22,7 @@
         v-if="batchMode"
         type="button"
         class="absolute left-2 top-2 z-20 flex h-5 w-5 items-center justify-center rounded-full border transition-colors"
-        :class="batchSelected ? 'border-gold bg-gold text-white' : 'border-ink-faint/50 bg-white/50 text-transparent hover:border-gold'"
+        :class="batchSelected ? 'border-gold bg-gold text-on-gold' : 'border-ink-faint/50 bg-white/50 text-transparent hover:border-gold'"
         v-tip="batchSelected ? t('clip.batch_cancel') : t('note.select')"
         @click.stop="$emit('toggle-batch-select')"
     >
@@ -181,7 +181,7 @@
           >
             <span
                 class="mt-[3px] flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors"
-                :class="line.checked ? 'border-gold bg-gold text-white' : 'border-ink-faint/60'"
+                :class="line.checked ? 'border-gold bg-gold text-on-gold' : 'border-ink-faint/60'"
             >
               <svg v-if="line.checked" class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg>
             </span>
@@ -203,7 +203,7 @@
           v-model="editContent"
           ref="textareaRef"
           rows="1"
-          class="w-full resize-none overflow-hidden rounded-lg bg-transparent px-1 py-0.5 text-ink outline-hidden focus:bg-white/30 focus:shadow-[inset_0_0_0_1px_rgba(196,167,125,0.35)] transition-colors"
+          class="w-full resize-none overflow-hidden rounded-lg bg-transparent px-1 py-0.5 text-ink outline-hidden focus:bg-white/30 focus:shadow-[inset_0_0_0_1px_rgb(var(--c-gold)/0.35)] transition-colors"
           :placeholder="t('note.content_placeholder')"
           @blur="saveAndClose"
           @input="autoResize"

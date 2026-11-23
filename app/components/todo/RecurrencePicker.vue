@@ -152,7 +152,7 @@ const monthDayInput = (e: Event) => {
                 :key="d"
                 type="button"
                 class="rounded-md py-1 text-xs transition-colors"
-                :class="(draft.weekdays ?? []).includes(d) ? 'bg-gold text-white' : 'border border-accent text-ink-soft hover:bg-secondary'"
+                :class="(draft.weekdays ?? []).includes(d) ? 'bg-gold text-on-gold' : 'border border-accent text-ink-soft hover:bg-secondary'"
                 @click="toggleWeekday(d)"
             >
               {{ t(`todo.day_${d}`) }}

@@ -332,7 +332,7 @@ const detailLunar = computed(() => lunarDayInfo(ymdToDate(selectedDate.value)))
                 v-tip="task.completed === 1 ? t('todo.island_uncompleted_short') : t('common.mark_complete')"
                 @click.stop="$emit('toggle', task.id)"
             >
-              <svg v-if="task.completed === 1" class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" /><path d="M7 12.5l3.5 3.5L17 9" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              <svg v-if="task.completed === 1" class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" /><path d="M7 12.5l3.5 3.5L17 9" stroke="rgb(var(--c-on-gold))" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
               <svg v-else class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9" /></svg>
             </button>
             <span class="tabular-nums" :class="task.completed === 1 ? 'line-through' : ''">{{ timeOf(task) }}</span>
